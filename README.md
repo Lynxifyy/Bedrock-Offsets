@@ -231,6 +231,8 @@ rejected by the prologue check.
 - [`docs/OUTPUT_FORMAT.md`](docs/OUTPUT_FORMAT.md) -- the JSON a loader reads.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) -- JNI crashes, empty
   scans and build problems.
+- [`docs/QA_CHECKLIST.md`](docs/QA_CHECKLIST.md) -- what CI proves and the
+  device pass it cannot replace.
 - [`SECURITY.md`](SECURITY.md) -- the threat model and how to report a problem.
 
 ## License
