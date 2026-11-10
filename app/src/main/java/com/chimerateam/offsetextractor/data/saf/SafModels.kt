@@ -41,12 +41,12 @@ sealed interface ApkOpenResult {
     /**
      * The APK is readable.
      *
-     * @property handle owned descriptor; the caller must close it.
+     * @property handle owned source; the caller must close it.
      * @property usedCacheCopy whether the descriptor points at a private cache
      *   copy because the provider could not hand out a usable one.
      */
     data class Success(
-        val handle: ApkHandle,
+        val handle: ApkSource,
         val usedCacheCopy: Boolean,
     ) : ApkOpenResult
 

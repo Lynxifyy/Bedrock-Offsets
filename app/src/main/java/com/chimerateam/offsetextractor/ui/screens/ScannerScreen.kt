@@ -14,7 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.chimerateam.offsetextractor.data.saf.ApkHandle
+import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.ui.components.LiveLogPane
 import com.chimerateam.offsetextractor.ui.components.SelectedApkCard
 import com.chimerateam.offsetextractor.ui.theme.PanelGap
@@ -40,7 +40,7 @@ fun ScannerScreen(
     progress: Int,
     busyMessage: String,
     messages: List<String>,
-    selectedApk: ApkHandle?,
+    selectedApk: ApkSource?,
     onSelectApk: () -> Unit,
     onCancelSelection: () -> Unit,
     modifier: Modifier = Modifier,
@@ -109,7 +109,7 @@ private fun ControlsPane(
     isBusy: Boolean,
     progress: Int,
     busyMessage: String,
-    selectedApk: ApkHandle?,
+    selectedApk: ApkSource?,
     onSelectApk: () -> Unit,
     onCancelSelection: () -> Unit,
 ) {

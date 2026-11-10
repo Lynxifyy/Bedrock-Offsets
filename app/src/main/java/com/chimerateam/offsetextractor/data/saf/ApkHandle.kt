@@ -18,17 +18,17 @@ import java.io.File
  *   when the provider and descriptor could not report it.
  */
 class ApkHandle internal constructor(
-    val metadata: ApkMetadata,
-    val usedCacheCopy: Boolean,
-    val lengthBytes: Long,
+    override val metadata: ApkMetadata,
+    override val usedCacheCopy: Boolean,
+    override val lengthBytes: Long,
     private val descriptor: ParcelFileDescriptor,
     private val cacheFile: File?,
-) : Closeable {
+) : ApkSource {
 
     private var closed = false
 
     /** The integer descriptor to hand to native code via JNI. */
-    val rawFd: Int
+    override val rawFd: Int
         get() = descriptor.fd
 
     /**

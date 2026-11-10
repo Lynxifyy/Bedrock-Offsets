@@ -36,7 +36,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
 import com.chimerateam.offsetextractor.data.saf.AndroidSafApkAccess
-import com.chimerateam.offsetextractor.data.saf.ApkHandle
+import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
@@ -62,7 +62,7 @@ fun BedrockOffsetExtractorApp() {
     var isBusy by remember { mutableStateOf(false) }
     var progress by remember { mutableIntStateOf(0) }
     var busyMessage by remember { mutableStateOf("") }
-    var selectedApk by remember { mutableStateOf<ApkHandle?>(null) }
+    var selectedApk by remember { mutableStateOf<ApkSource?>(null) }
     val messages = remember { mutableStateListOf<String>() }
 
     val context = LocalContext.current
