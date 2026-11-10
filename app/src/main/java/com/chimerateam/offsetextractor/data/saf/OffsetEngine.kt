@@ -3,6 +3,7 @@ package com.chimerateam.offsetextractor.data.saf
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.data.native.SectionMap
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.SymbolReport
 import com.chimerateam.offsetextractor.data.native.VtableMap
@@ -67,12 +68,15 @@ interface OffsetEngine {
      *
      * @param library the library produced by [extractNativeLibrary].
      * @param patterns signatures to look for.
+     * @param progress receives progress reports, called from a background
+     *   thread. Pass `null` to scan without progress reporting.
      * @return every verified hit, with its file offset and virtual address.
      * @throws EngineException when the library or a pattern is unusable.
      */
     suspend fun scanText(
         library: ExtractedNativeLibrary,
         patterns: List<PatternSpec>,
+        progress: ProgressCallback? = null,
     ): ScanOutcome
 
     /**

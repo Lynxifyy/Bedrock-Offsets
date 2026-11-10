@@ -15,9 +15,13 @@ use crate::elf::MappedLibrary;
 use crate::error::{CoreError, CoreResult};
 use crate::memory::peak_resident_bytes;
 use crate::patterns::PatternSet;
+use crate::progress::JniProgressSink;
 use crate::prologue::PrologueVerifier;
 use crate::rtti::resolve_vtables;
-use crate::scanner::{scan_section, verify_prologues, ScanControl, ScanOutcome};
+use crate::scanner::{
+    scan_section_with_progress, verify_prologues_with_progress, ProgressSink, ScanControl,
+    ScanOutcome,
+};
 use crate::sections::build_section_map;
 use crate::symbols::build_symbol_report;
 use crate::zip_extract::extract_so_from_zip;
@@ -326,6 +330,7 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
     path: JString,
     sha256: JString,
     patterns_json: JString,
+    callback: JObject,
 ) -> jstring {
     install();
 
@@ -342,8 +347,23 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
         None => return std::ptr::null_mut(),
     };
 
+    // A null callback is allowed: the scan then runs without progress reports.
+    let sink = if callback.is_null() {
+        None
+    } else {
+        match JniProgressSink::new(&mut env, &callback) {
+            Ok(sink) => Some(sink),
+            Err(detail) => {
+                throw_engine_failure(&mut env, "invalid_descriptor", &detail);
+                return std::ptr::null_mut();
+            }
+        }
+    };
+
     let outcome = catch_panics("scanning text", move || {
-        scan_text_json(&library_path, &library_hash, &specs)
+        let sink: Option<&dyn ProgressSink> =
+            sink.as_ref().map(|sink| sink.as_ref() as &dyn ProgressSink);
+        scan_text_json_with_progress(&library_path, &library_hash, &specs, sink)
     });
 
     match outcome {
@@ -380,18 +400,33 @@ struct ScanPayload {
 ///
 /// Propagates any mapping, section, pattern or cancellation failure.
 pub fn scan_text_json(path: &str, sha256: &str, patterns_json: &str) -> CoreResult<String> {
+    scan_text_json_with_progress(path, sha256, patterns_json, None)
+}
+
+/// Maps `path`, scans `.text`, and serialises the result, reporting progress.
+///
+/// # Errors
+///
+/// Same as [`scan_text_json`].
+pub fn scan_text_json_with_progress(
+    path: &str,
+    sha256: &str,
+    patterns_json: &str,
+    sink: Option<&dyn ProgressSink>,
+) -> CoreResult<String> {
     let specs = parse_pattern_specs(patterns_json)?;
     let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
     let map = build_section_map(library.bytes())?;
     let set = PatternSet::new(&specs)?;
 
     let control = ScanControl::new();
-    let outcome = scan_section(&map, library.bytes(), &set, &control)?;
+    let outcome = scan_section_with_progress(&map, library.bytes(), &set, &control, sink)?;
 
     // A byte signature only says "these bytes occur here"; decoding the bytes
     // at each match is what separates a function start from a coincidence.
     let verifier = PrologueVerifier::new()?;
-    let outcome = verify_prologues(outcome, &map, library.bytes(), &verifier, &control)?;
+    let outcome =
+        verify_prologues_with_progress(outcome, &map, library.bytes(), &verifier, &control, sink)?;
 
     let payload = ScanPayload {
         outcome,

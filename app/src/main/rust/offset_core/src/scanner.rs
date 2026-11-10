@@ -101,6 +101,32 @@ impl ScanControl {
     }
 }
 
+/// Receives progress while a scan runs.
+///
+/// Implemented by the JNI bridge, which forwards each report to Kotlin. The
+/// trait keeps this module free of any JNI types, so the scanner stays testable
+/// on the host.
+pub trait ProgressSink {
+    /// Reports progress.
+    ///
+    /// @param percent completion between 0 and 100.
+    /// @param message short description of the current step.
+    fn report(&self, percent: u32, message: &str);
+}
+
+/// Percent of the scan budget spent matching patterns; the rest is verification.
+const MATCH_PERCENT: u32 = 55;
+
+/// Number of progress updates a scan emits, so the cost is independent of size.
+const PROGRESS_STEPS: usize = 16;
+
+/// Reports progress to an optional sink, ignoring the sink when absent.
+fn report(sink: Option<&dyn ProgressSink>, percent: u32, message: &str) {
+    if let Some(sink) = sink {
+        sink.report(percent.min(100), message);
+    }
+}
+
 /// Scans the `.text` section of `map` for every pattern in `set`.
 ///
 /// # Errors
@@ -112,6 +138,25 @@ pub fn scan_section(
     image: &[u8],
     set: &PatternSet,
     control: &ScanControl,
+) -> CoreResult<ScanOutcome> {
+    scan_section_with_progress(map, image, set, control, None)
+}
+
+/// Scans the `.text` section, reporting progress to `sink` as it goes.
+///
+/// The chunk ranges are scanned in waves. Each wave runs in parallel, and a
+/// progress update is emitted between waves, so the caller sees movement during
+/// a long scan without any worker thread having to reach into the JVM.
+///
+/// # Errors
+///
+/// Same as [`scan_section`].
+pub fn scan_section_with_progress(
+    map: &SectionMap,
+    image: &[u8],
+    set: &PatternSet,
+    control: &ScanControl,
+    sink: Option<&dyn ProgressSink>,
 ) -> CoreResult<ScanOutcome> {
     let section = &map.text;
     let bytes = map.bytes_of(&section.name, image);
@@ -129,23 +174,39 @@ pub fn scan_section(
         return Err(CoreError::Cancelled);
     }
 
+    report(sink, 0, "Matching signatures");
+
     // Each worker scans its own chunk and returns its own hits, so no lock is
-    // taken inside the hot loop and the mapping is only read.
-    let mut per_chunk: Vec<Vec<(usize, usize)>> = ranges
-        .par_iter()
-        .map(|range| {
-            if control.is_cancelled() {
-                return Vec::new();
-            }
-            let start = range.start;
-            let end = range.end.min(bytes.len());
-            let chunk = &bytes[start..end];
-            set.find_all(chunk)
-                .into_iter()
-                .map(|(pattern_index, offset)| (pattern_index, start + offset))
-                .collect()
-        })
-        .collect();
+    // taken inside the hot loop and the mapping is only read. The ranges are
+    // processed in waves so a progress update can be emitted between them.
+    let wave = (ranges.len() / PROGRESS_STEPS).max(1);
+    let mut per_chunk: Vec<Vec<(usize, usize)>> = Vec::with_capacity(ranges.len());
+    let mut done = 0usize;
+    for batch in ranges.chunks(wave) {
+        if control.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        let mut scanned: Vec<Vec<(usize, usize)>> = batch
+            .par_iter()
+            .map(|range| {
+                if control.is_cancelled() {
+                    return Vec::new();
+                }
+                let start = range.start;
+                let end = range.end.min(bytes.len());
+                let chunk = &bytes[start..end];
+                set.find_all(chunk)
+                    .into_iter()
+                    .map(|(pattern_index, offset)| (pattern_index, start + offset))
+                    .collect()
+            })
+            .collect();
+        per_chunk.append(&mut scanned);
+
+        done += batch.len();
+        let percent = ((done as u64 * u64::from(MATCH_PERCENT)) / ranges.len() as u64) as u32;
+        report(sink, percent, "Matching signatures");
+    }
 
     if control.is_cancelled() {
         return Err(CoreError::Cancelled);
@@ -205,11 +266,27 @@ pub fn scan_section(
 /// verifying, and [`CoreError::MissingSection`] when the section body is
 /// unavailable.
 pub fn verify_prologues(
+    outcome: ScanOutcome,
+    map: &SectionMap,
+    image: &[u8],
+    verifier: &PrologueVerifier,
+    control: &ScanControl,
+) -> CoreResult<ScanOutcome> {
+    verify_prologues_with_progress(outcome, map, image, verifier, control, None)
+}
+
+/// Verifies every hit's prologue, reporting progress to `sink`.
+///
+/// # Errors
+///
+/// Same as [`verify_prologues`].
+pub fn verify_prologues_with_progress(
     mut outcome: ScanOutcome,
     map: &SectionMap,
     image: &[u8],
     verifier: &PrologueVerifier,
     control: &ScanControl,
+    sink: Option<&dyn ProgressSink>,
 ) -> CoreResult<ScanOutcome> {
     let bytes = map.bytes_of(&outcome.section, image);
     if bytes.is_empty() {
@@ -219,12 +296,25 @@ pub fn verify_prologues(
         )));
     }
 
+    let total = outcome.hits.len().max(1);
+    let step = (total / PROGRESS_STEPS).max(1);
     let mut kept = Vec::with_capacity(outcome.hits.len());
     let mut discarded = 0usize;
+    let mut examined = 0usize;
+
+    report(sink, MATCH_PERCENT, "Verifying prologues");
 
     for hit in outcome.hits.drain(..) {
         if control.is_cancelled() {
             return Err(CoreError::Cancelled);
+        }
+
+        examined += 1;
+        if examined.is_multiple_of(step) {
+            let span = 100 - MATCH_PERCENT;
+            let percent =
+                MATCH_PERCENT + ((examined as u64 * u64::from(span)) / total as u64) as u32;
+            report(sink, percent, "Verifying prologues");
         }
 
         let offset = hit.section_offset as usize;
@@ -243,6 +333,7 @@ pub fn verify_prologues(
     outcome.hits = kept;
     outcome.discarded = discarded;
     outcome.verified = true;
+    report(sink, 100, "Scan complete");
     Ok(outcome)
 }
 
@@ -297,6 +388,105 @@ mod tests {
             .map(|(name, source)| ((*name).to_string(), (*source).to_string()))
             .collect();
         PatternSet::new(&owned).expect("pattern set")
+    }
+
+    /// Records every report so a test can inspect the sequence.
+    struct RecordingSink {
+        reports: std::sync::Mutex<Vec<(u32, String)>>,
+    }
+
+    impl RecordingSink {
+        fn new() -> Self {
+            Self {
+                reports: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn reports(&self) -> Vec<(u32, String)> {
+            self.reports.lock().expect("sink lock").clone()
+        }
+    }
+
+    impl ProgressSink for RecordingSink {
+        fn report(&self, percent: u32, message: &str) {
+            self.reports
+                .lock()
+                .expect("sink lock")
+                .push((percent, message.to_string()));
+        }
+    }
+
+    #[test]
+    fn a_scan_reports_monotonic_progress_and_finishes_at_one_hundred() {
+        let image = vec![0x48u8, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00];
+        let map = crate::sections::SectionMap {
+            image_base: 0x1000,
+            text: crate::sections::SectionInfo {
+                kind: crate::sections::SectionKind::Text,
+                name: ".text".to_string(),
+                address: 0x1000,
+                size: image.len() as u64,
+                offset: 0,
+                align: 16,
+                delta: 0x1000,
+                allocated: true,
+                executable: true,
+                writable: false,
+                occupies_file: true,
+            },
+            sections: Vec::new(),
+        };
+        let set = set_of(&[("prologue", "48 8B 05")]);
+        let control = ScanControl::new();
+        let sink = RecordingSink::new();
+
+        let outcome =
+            scan_section_with_progress(&map, &image, &set, &control, Some(&sink)).expect("scan");
+        assert_eq!(outcome.hits.len(), 1);
+
+        // The 100% report comes from the verification stage, so run it too.
+        let verifier = crate::prologue::PrologueVerifier::new().expect("capstone");
+        verify_prologues_with_progress(outcome, &map, &image, &verifier, &control, Some(&sink))
+            .expect("verify");
+
+        let reports = sink.reports();
+        assert!(
+            reports.len() >= 2,
+            "expected progress reports, got {reports:?}"
+        );
+        assert_eq!(reports.first().expect("first").0, 0);
+        assert_eq!(reports.last().expect("last").0, 100);
+        assert!(
+            reports.windows(2).all(|pair| pair[0].0 <= pair[1].0),
+            "progress must never go backwards: {reports:?}",
+        );
+    }
+
+    #[test]
+    fn a_scan_without_a_sink_still_works() {
+        let image = vec![0x48u8, 0x8b, 0x05, 0x00, 0x00, 0x00, 0x00];
+        let map = crate::sections::SectionMap {
+            image_base: 0x1000,
+            text: crate::sections::SectionInfo {
+                kind: crate::sections::SectionKind::Text,
+                name: ".text".to_string(),
+                address: 0x1000,
+                size: image.len() as u64,
+                offset: 0,
+                align: 16,
+                delta: 0x1000,
+                allocated: true,
+                executable: true,
+                writable: false,
+                occupies_file: true,
+            },
+            sections: Vec::new(),
+        };
+        let set = set_of(&[("prologue", "48 8B 05")]);
+        let control = ScanControl::new();
+
+        let outcome = scan_section(&map, &image, &set, &control).expect("scan");
+        assert_eq!(outcome.hits.len(), 1);
     }
 
     #[test]

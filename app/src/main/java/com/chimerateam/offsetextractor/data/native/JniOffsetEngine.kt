@@ -90,12 +90,14 @@ class JniOffsetEngine(
     override suspend fun scanText(
         library: ExtractedNativeLibrary,
         patterns: List<PatternSpec>,
+        progress: ProgressCallback?,
     ): ScanOutcome {
         val json = call("scanning the executable section") {
             nativeLibrary.scanText(
                 library.path,
                 library.sha256,
                 EnginePayloads.encodePatternSpecs(patterns),
+                progress,
             )
         }
         return EnginePayloads.parseScanOutcome(json)
@@ -181,7 +183,12 @@ interface NativeLibrary {
      * @param patternsJson JSON array of `{"name": ..., "pattern": ...}` objects.
      * @return a JSON payload describing the scan and every hit.
      */
-    fun scanText(path: String, sha256: String, patternsJson: String): String
+    fun scanText(
+        path: String,
+        sha256: String,
+        patternsJson: String,
+        callback: ProgressCallback? = null,
+    ): String
 
     /**
      * Resolves the RTTI vtables of the library at [path].
@@ -209,8 +216,12 @@ object JniNativeLibrary : NativeLibrary {
     override fun describeSymbols(path: String, sha256: String): String =
         NativeLib.describeSymbols(path, sha256)
 
-    override fun scanText(path: String, sha256: String, patternsJson: String): String =
-        NativeLib.scanText(path, sha256, patternsJson)
+    override fun scanText(
+        path: String,
+        sha256: String,
+        patternsJson: String,
+        callback: ProgressCallback?,
+    ): String = NativeLib.scanText(path, sha256, patternsJson, callback)
 
     override fun resolveVtables(path: String, sha256: String): String =
         NativeLib.resolveVtables(path, sha256)

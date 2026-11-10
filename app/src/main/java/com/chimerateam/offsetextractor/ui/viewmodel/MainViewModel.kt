@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
@@ -345,7 +346,17 @@ class MainViewModel(
         }
 
         _uiState.update { it.copy(progressTask = "Scanning executable section") }
-        val outcome = engine.scanText(extracted, patterns)
+
+        // The engine reports from its own worker threads, so the callback only
+        // touches thread-safe state: the state flow and the log flow.
+        val lastStep = java.util.concurrent.atomic.AtomicReference("")
+        val reporter = ProgressCallback { percent, message ->
+            _uiState.update { it.copy(progress = percent, progressTask = message) }
+            if (lastStep.getAndSet(message) != message) {
+                emit(Logs.info(TAG_RUST, message))
+            }
+        }
+        val outcome = engine.scanText(extracted, patterns, reporter)
         emit(
             Logs.info(
                 TAG_RUST,

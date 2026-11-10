@@ -22,6 +22,7 @@ import com.chimerateam.offsetextractor.data.native.TypeVTable
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.SymbolReport
 import com.chimerateam.offsetextractor.data.native.SymbolTable
@@ -116,6 +117,7 @@ class MainViewModelTest {
         assertEquals(0, state.result?.discardedMatches)
         assertEquals(32L * 1024 * 1024, state.result?.peakResidentBytes)
         assertEquals(1, engine.vtableCalls)
+        assertNotNull("the ViewModel must pass a progress callback", engine.lastProgress)
         assertEquals("ClientInstance", state.result?.vtables?.entries?.keys?.first())
         assertEquals(
             "0x403000",
@@ -123,6 +125,42 @@ class MainViewModelTest {
         )
         assertEquals("abcdef0123456789", state.result?.buildId)
         assertEquals(1, state.result?.jniSymbolCount)
+    }
+
+    @Test
+    fun progressReportsUpdateTheStateAndTheLog() = runTest(dispatcher) {
+        val engine = FakeEngine()
+        // Ten reports, the count the engine sends on a real scan.
+        engine.progressReports = listOf(
+            0 to "Matching signatures",
+            7 to "Matching signatures",
+            14 to "Matching signatures",
+            21 to "Matching signatures",
+            28 to "Matching signatures",
+            35 to "Matching signatures",
+            42 to "Matching signatures",
+            49 to "Matching signatures",
+            55 to "Verifying prologues",
+            100 to "Scan complete",
+        )
+        val viewModel = newViewModel(engine = engine)
+        val logs = mutableListOf<LogEntry>()
+        val collector = launch { viewModel.logs.collect { logs += it } }
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+        collector.cancel()
+
+        val state = viewModel.uiState.value
+        assertEquals(ScannerPhase.Success, state.phase)
+        assertEquals(100, state.progress)
+        assertEquals(10, engine.progressReports.size)
+        val messages = logs.map { it.message }
+        assertTrue("Matching signatures not logged: $messages", messages.any { it.contains("Matching signatures") })
+        assertTrue("Verifying prologues not logged: $messages", messages.any { it.contains("Verifying prologues") })
+        assertTrue("Scan complete not logged: $messages", messages.any { it.contains("Scan complete") })
+        // Each step is logged once, not once per percent point.
+        assertEquals(1, messages.count { it.contains("Matching signatures") })
     }
 
     @Test
@@ -458,11 +496,20 @@ private class FakeEngine(
     var scanCalls = 0
         private set
 
+    /** Progress reports the double replays to the ViewModel. */
+    var progressReports: List<Pair<Int, String>> = listOf(0 to "Matching", 55 to "Verifying", 100 to "Done")
+
+    var lastProgress: ProgressCallback? = null
+        private set
+
     override suspend fun scanText(
         library: ExtractedNativeLibrary,
         patterns: List<PatternSpec>,
+        progress: ProgressCallback?,
     ): ScanOutcome {
         scanCalls++
+        lastProgress = progress
+        progressReports.forEach { (percent, message) -> progress?.onProgress(percent, message) }
         if (delayMillis > 0) {
             delay(delayMillis)
         }

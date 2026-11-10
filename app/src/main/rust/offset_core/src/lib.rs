@@ -11,6 +11,7 @@ pub mod fd;
 pub mod jni_bridge;
 pub mod memory;
 pub mod patterns;
+pub mod progress;
 pub mod prologue;
 pub mod rtti;
 pub mod scanner;

@@ -104,12 +104,18 @@ object NativeLib {
      * @param path absolute path of the extracted library.
      * @param sha256 SHA-256 recorded during extraction.
      * @param patternsJson JSON array of `{"name": ..., "pattern": ...}` objects.
+     * @param callback receives progress reports, or `null` to scan silently.
      * @return a JSON object describing the scan and every hit.
      * @throws EngineFailure when the library or a pattern is unusable.
      */
-    fun scanText(path: String, sha256: String, patternsJson: String): String {
+    fun scanText(
+        path: String,
+        sha256: String,
+        patternsJson: String,
+        callback: ProgressCallback? = null,
+    ): String {
         ensureLoaded()
-        return scanTextNative(path, sha256, patternsJson)
+        return scanTextNative(path, sha256, patternsJson, callback)
     }
 
     /**
@@ -145,6 +151,7 @@ object NativeLib {
         path: String,
         sha256: String,
         patternsJson: String,
+        callback: ProgressCallback?,
     ): String
 
     private external fun resolveVtablesNative(path: String, sha256: String): String

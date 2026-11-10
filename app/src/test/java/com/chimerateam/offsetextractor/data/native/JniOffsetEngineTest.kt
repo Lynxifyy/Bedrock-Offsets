@@ -4,11 +4,13 @@ import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -287,6 +289,19 @@ class JniOffsetEngineTest {
     }
 
     @Test
+    fun theProgressCallbackIsForwardedToTheEngine() = runTest {
+        val bindings = FakeBindings(scan = SCAN_JSON)
+        val engine = JniOffsetEngine(bindings)
+        val seen = mutableListOf<Pair<Int, String>>()
+        val callback = ProgressCallback { percent, message -> seen += percent to message }
+
+        engine.scanText(extracted, listOf(PatternSpec("x", "41")), callback)
+
+        assertSame("the callback must reach the native binding", callback, bindings.lastCallback)
+        assertTrue("the engine reported no progress", seen.isEmpty())
+    }
+
+    @Test
     fun malformedPayloadIsRejected() = runTest {
         val engine = JniOffsetEngine(FakeBindings(extraction = "{not json"))
 
@@ -326,6 +341,7 @@ class JniOffsetEngineTest {
         private val scan: String = "",
         private val vtables: String = "",
         var lastPatterns: String = "",
+        var lastCallback: ProgressCallback? = null,
 
         private val failure: Throwable? = null,
     ) : NativeLibrary {
@@ -340,9 +356,15 @@ class JniOffsetEngineTest {
             return symbols
         }
 
-        override fun scanText(path: String, sha256: String, patternsJson: String): String {
+        override fun scanText(
+            path: String,
+            sha256: String,
+            patternsJson: String,
+            callback: ProgressCallback?,
+        ): String {
             failure?.let { throw it }
             lastPatterns = patternsJson
+            lastCallback = callback
             return scan
         }
 
