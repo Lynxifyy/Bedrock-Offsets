@@ -32,6 +32,38 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # The Gradle build cross-compiles the Rust engine, so this job needs the
+      # same toolchain the release job uses. `cargo` alone is not enough:
+      # cargo-ndk and the NDK are what actually target arm64-v8a.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache the cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src/main/rust/offset_core/target
+          key: cargo-test-${{ runner.os }}-${{ hashFiles('app/src/main/rust/offset_core/Cargo.lock') }}
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Set up the Android NDK
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      - name: Point the engine build at the NDK
+        run: |
+          echo "ANDROID_NDK_HOME=${{ steps.ndk.outputs.ndk-path }}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${{ steps.ndk.outputs.ndk-path }}" >> "$GITHUB_ENV"
+
       - name: Run unit tests
         run: ./gradlew test --stacktrace --no-daemon
 

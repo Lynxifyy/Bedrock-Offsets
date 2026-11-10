@@ -47,7 +47,7 @@ explains each stage and where the boundaries are.
 The Rust engine is cross-compiled for `arm64-v8a` and staged in
 `app/src/main/jniLibs/`, where the Android Gradle plugin packages it. A machine
 without the Rust toolchain still builds and tests the Kotlin code: the staging
-script warns and exits `0` when `cargo` is absent.
+script warns and exits `0` when `cargo` or `cargo-ndk` is absent.
 
 To build the engine alone:
 
@@ -127,8 +127,9 @@ python3 scripts/build_rust.py --offline  # use only the local registry cache
 python3 scripts/build_rust.py --check-only  # validate the staged library
 ```
 
-If `cargo` is absent the script warns and exits `0`, so a machine that only
-needs the Kotlin code can still build. A build that runs and fails exits `1`.
+If `cargo` or `cargo-ndk` is absent the script warns and exits `0`, so a machine
+that only needs the Kotlin code can still build. A build that runs and fails
+exits `1`; a missing toolchain is not a failure, because nothing was attempted.
 
 ### `scripts/verify_offsets.py`
 

@@ -7,8 +7,10 @@ into ``app/src/main/jniLibs/arm64-v8a`` so the Android Gradle plugin packages
 it without any extra wiring.
 
 Exit codes:
-    0  the library was built and staged, or the Rust toolchain is absent so the
-       step was skipped with a warning.
+    0  the library was built and staged, or the cross-compile toolchain is
+       absent so the step was skipped with a warning. A GitHub runner ships
+       `cargo` but not `cargo-ndk`, and a Kotlin-only build must not depend on
+       the Android cross-compile toolchain being installed.
     1  the build ran but failed, or the produced file is not a valid
        AArch64 ELF shared object.
 """
@@ -33,7 +35,15 @@ EM_AARCH64 = 183
 
 
 class BuildError(RuntimeError):
-    """Raised when the build cannot produce a usable library."""
+    """Raised when the build ran but could not produce a usable library."""
+
+
+class ToolchainMissing(RuntimeError):
+    """Raised when the cross-compile toolchain is not installed.
+
+    Distinct from `BuildError`: nothing was attempted, so the caller can skip
+    the engine and carry on with the Kotlin build.
+    """
 
 
 def find_cargo() -> str | None:
@@ -90,8 +100,8 @@ def run_cargo_build(cargo: str, *, offline: bool) -> None:
     """Cross-compile the crate for ``arm64-v8a``.
 
     Raises:
-        BuildError: if cargo is missing, cargo-ndk is not installed, or the
-            compile fails.
+        ToolchainMissing: if cargo-ndk is not installed, so nothing was built.
+        BuildError: if the compile was attempted and failed.
     """
     command = [cargo, "ndk", "-t", TARGET, "build", "--release"]
     if offline:
@@ -112,7 +122,7 @@ def run_cargo_build(cargo: str, *, offline: bool) -> None:
         text=True,
     )
     if probe.returncode != 0:
-        raise BuildError(
+        raise ToolchainMissing(
             "cargo-ndk is not installed. Install it with:\n"
             "    cargo install cargo-ndk --locked\n"
             "and ensure the Android NDK is available via ANDROID_NDK_HOME or the SDK."
@@ -165,7 +175,16 @@ def main() -> int:
             )
             return 0
 
-        run_cargo_build(cargo, offline=args.offline)
+        try:
+            run_cargo_build(cargo, offline=args.offline)
+        except ToolchainMissing as error:
+            print(
+                f"[build_rust] {error}\n"
+                "[build_rust] skipping the Rust engine build; the app still "
+                "runs and reports the engine as unavailable.",
+                file=sys.stderr,
+            )
+            return 0
         stage_library()
         return 0
     except BuildError as error:
