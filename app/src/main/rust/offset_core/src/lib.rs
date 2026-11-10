@@ -9,6 +9,7 @@ pub mod elf;
 pub mod error;
 pub mod fd;
 pub mod jni_bridge;
+pub mod patterns;
 pub mod sections;
 pub mod symbols;
 pub mod zip_extract;

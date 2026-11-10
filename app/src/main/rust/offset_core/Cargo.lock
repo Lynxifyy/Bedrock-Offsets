@@ -313,6 +313,7 @@ dependencies = [
 name = "offset_core"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "android_logger",
  "goblin",
  "jni",
