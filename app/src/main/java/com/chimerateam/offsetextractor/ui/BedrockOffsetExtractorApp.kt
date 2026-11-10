@@ -46,6 +46,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
 import com.chimerateam.offsetextractor.ui.log.LogTimestamp
+import com.chimerateam.offsetextractor.ui.components.BatchProgressDialog
+import com.chimerateam.offsetextractor.ui.components.BatchSummaryDialog
 import com.chimerateam.offsetextractor.ui.components.LowMemoryDialog
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
@@ -86,6 +88,10 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
         }
     }
 
+    val batchPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris: List<Uri> -> viewModel.onApksSelected(uris) }
+
     val context = LocalContext.current
     val copyLog = {
         val text = logEntries.joinToString("\n") { entry ->
@@ -103,6 +109,20 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val saveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri: Uri? -> viewModel.onExportDestinationChosen(uri) }
+
+    state.batch?.let { batch ->
+        BatchProgressDialog(
+            progress = batch,
+            onCancel = { viewModel.cancelBatch() },
+        )
+    }
+
+    state.batchSummary?.let { summary ->
+        BatchSummaryDialog(
+            summary = summary,
+            onDismiss = { viewModel.onBatchSummaryShown() },
+        )
+    }
 
     if (state.lowMemory) {
         LowMemoryDialog(
@@ -224,6 +244,14 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                                     saveJson()
                                 },
                             )
+                            DropdownMenuItem(
+                                text = { Text("Scan several APKs") },
+                                enabled = state.batch == null,
+                                onClick = {
+                                    menuOpen = false
+                                    batchPicker.launch(arrayOf(APK_MIME_TYPE))
+                                },
+                            )
                         }
                     },
                 )
@@ -258,6 +286,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         onCopyLog = copyLog,
                         onClearLog = { viewModel.clearLog() },
                         onSelectApk = { picker.launch(arrayOf(APK_MIME_TYPE)) },
+                        onSelectApks = { batchPicker.launch(arrayOf(APK_MIME_TYPE)) },
                         onCancelSelection = { viewModel.cancel() },
                         onRetry = { viewModel.retry() },
                         onCopyJson = copyJson,

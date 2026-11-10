@@ -45,6 +45,7 @@ import com.chimerateam.offsetextractor.ui.theme.PanelGap
  * @param onCopyLog copies the log to the clipboard.
  * @param onClearLog discards the log.
  * @param onSelectApk invoked when the user requests the system file picker.
+ * @param onSelectApks invoked when the user requests a multi-APK batch.
  * @param onCancelSelection releases the descriptor and resets the selection.
  * @param onRetry clears an error and returns the scanner to idle.
  * @param onCopyJson copies the exported JSON to the clipboard.
@@ -59,6 +60,7 @@ fun ScannerScreen(
     onCopyLog: () -> Unit,
     onClearLog: () -> Unit,
     onSelectApk: () -> Unit,
+    onSelectApks: () -> Unit,
     onCancelSelection: () -> Unit,
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
@@ -74,6 +76,7 @@ fun ScannerScreen(
             ControlsPane(
                 state = state,
                 onSelectApk = onSelectApk,
+                onSelectApks = onSelectApks,
                 onCancelSelection = onCancelSelection,
                 onRetry = onRetry,
                 onCopyJson = onCopyJson,
@@ -131,6 +134,7 @@ fun ScannerScreen(
 private fun ControlsPane(
     state: ScannerUiState,
     onSelectApk: () -> Unit,
+    onSelectApks: () -> Unit,
     onCancelSelection: () -> Unit,
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
@@ -151,6 +155,7 @@ private fun ControlsPane(
             phase = phase,
             state = state,
             onSelectApk = onSelectApk,
+            onSelectApks = onSelectApks,
             onCancelSelection = onCancelSelection,
             onRetry = onRetry,
             onCopyJson = onCopyJson,
@@ -165,6 +170,7 @@ private fun PhasePane(
     phase: ScannerPhase,
     state: ScannerUiState,
     onSelectApk: () -> Unit,
+    onSelectApks: () -> Unit,
     onCancelSelection: () -> Unit,
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
@@ -200,7 +206,7 @@ private fun PhasePane(
                 onSelectApk = onSelectApk,
             )
         } else {
-            IdleScreen(onSelectApk = onSelectApk)
+            IdleScreen(onSelectApk = onSelectApk, onSelectApks = onSelectApks)
         }
     }
 }

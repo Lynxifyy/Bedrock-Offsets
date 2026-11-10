@@ -796,6 +796,137 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aBatchScansEveryApkAndSummarisesTheRun() = runTest(dispatcher) {
+        val access = FakeSafAccess(
+            failFor = setOf("content://test.provider/second.apk"),
+        )
+        val viewModel = newViewModel(access = access)
+
+        viewModel.onApksSelected(
+            listOf(
+                Uri.parse("content://test.provider/first.apk"),
+                Uri.parse("content://test.provider/second.apk"),
+                Uri.parse("content://test.provider/third.apk"),
+            ),
+        )
+        advanceUntilIdle()
+
+        val summary = viewModel.uiState.value.batchSummary
+        assertNotNull(summary)
+        assertEquals(3, summary?.total)
+        assertEquals(2, summary?.succeeded)
+        assertEquals(1, summary?.failed)
+        assertEquals("Processed 3 APKs. 2 succeeded, 1 failed.", summary?.message)
+        assertEquals(3, access.openCalls)
+    }
+
+    @Test
+    fun aBatchClearsItsProgressWhenItFinishes() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.onApksSelected(
+            listOf(
+                Uri.parse("content://test.provider/first.apk"),
+                Uri.parse("content://test.provider/second.apk"),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertNull("the queue must be cleared once the run ends", viewModel.uiState.value.batch)
+    }
+
+    @Test
+    fun aBatchReportsOneFailureWithoutSinkingTheRun() = runTest(dispatcher) {
+        val access = FakeSafAccess(
+            failFor = setOf("content://test.provider/broken.apk"),
+        )
+        val viewModel = newViewModel(access = access)
+
+        viewModel.onApksSelected(
+            listOf(
+                Uri.parse("content://test.provider/broken.apk"),
+                Uri.parse("content://test.provider/good.apk"),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.uiState.value.batchSummary?.succeeded)
+        assertTrue(
+            "the run must be logged",
+            viewModel.logEntries.value.any { it.message.contains("Processed 2 APKs") },
+        )
+    }
+
+    @Test
+    fun aSingleApkSelectionSkipsTheBatchQueue() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.onApksSelected(listOf(uri))
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertNull("a single APK is not a batch", viewModel.uiState.value.batch)
+        assertNull(viewModel.uiState.value.batchSummary)
+    }
+
+    @Test
+    fun anEmptySelectionIsTreatedAsACancellation() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.onApksSelected(emptyList())
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Idle, viewModel.uiState.value.phase)
+    }
+
+    @Test
+    fun cancellingABatchClearsTheQueue() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+        val engine = FakeEngine(delayMillis = 500)
+        val busy = newViewModel(engine = engine)
+
+        busy.onApksSelected(
+            listOf(
+                Uri.parse("content://test.provider/first.apk"),
+                Uri.parse("content://test.provider/second.apk"),
+            ),
+        )
+        runCurrent()
+
+        assertNotNull("the queue must be visible while running", busy.uiState.value.batch)
+
+        busy.cancelBatch()
+        advanceUntilIdle()
+
+        assertNull(busy.uiState.value.batch)
+        assertTrue(
+            "the cancellation must be logged",
+            busy.logEntries.value.any { it.message.contains("Batch cancelled") },
+        )
+        // A ViewModel with nothing running reports no batch to cancel.
+        viewModel.cancelBatch()
+        assertNull(viewModel.uiState.value.batch)
+    }
+
+    @Test
+    fun dismissingTheBatchSummaryClearsIt() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.onApksSelected(
+            listOf(
+                Uri.parse("content://test.provider/first.apk"),
+                Uri.parse("content://test.provider/second.apk"),
+            ),
+        )
+        advanceUntilIdle()
+        assertNotNull(viewModel.uiState.value.batchSummary)
+
+        viewModel.onBatchSummaryShown()
+
+        assertNull(viewModel.uiState.value.batchSummary)
+    }
+
+    @Test
     fun progressTrackerClampsOutOfRangeValues() {
         assertEquals(0, ProgressTracker.of(-5, "x").percent)
         assertEquals(100, ProgressTracker.of(250, "x").percent)
@@ -1055,14 +1186,23 @@ private class FakeSafAccess(
         displayName = "minecraft.apk",
         sizeBytes = 1_024,
     ),
+    /** URIs that must fail to open, so a batch can contain a bad APK. */
+    private val failFor: Set<String> = emptySet(),
 ) : SafApkAccess {
 
     var lastHandle: FakeHandle? = null
         private set
 
-    override fun queryMetadata(uri: Uri): ApkMetadata = metadata
+    var openCalls = 0
+        private set
+
+    override fun queryMetadata(uri: Uri): ApkMetadata = metadata.copy(uri = uri)
 
     override fun openApk(uri: Uri): ApkOpenResult {
+        openCalls++
+        if (uri.toString() in failFor) {
+            return ApkOpenResult.Failure(SafFailure.NotFound, "not found")
+        }
         openResult?.let { return it }
         val handle = FakeHandle(metadata)
         lastHandle = handle

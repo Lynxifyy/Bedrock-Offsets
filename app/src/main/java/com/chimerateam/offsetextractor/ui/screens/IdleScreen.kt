@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -23,12 +24,14 @@ import com.chimerateam.offsetextractor.ui.theme.Honey300
  * Welcome state shown before an APK has been chosen.
  *
  * @param onSelectApk invoked when the user requests the system file picker.
+ * @param onSelectApks invoked when the user requests a multi-APK batch.
  * @param modifier layout modifier for the column.
  */
 @Composable
 fun IdleScreen(
     onSelectApk: () -> Unit,
     modifier: Modifier = Modifier,
+    onSelectApks: () -> Unit = onSelectApk,
 ) {
     Column(
         modifier = modifier
@@ -55,6 +58,10 @@ fun IdleScreen(
         Spacer(Modifier.height(24.dp))
         Button(onClick = onSelectApk) {
             Text("Select APK")
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onSelectApks) {
+            Text("Select several APKs")
         }
     }
 }

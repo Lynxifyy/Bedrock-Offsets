@@ -21,6 +21,8 @@ import com.chimerateam.offsetextractor.ui.error.ErrorMapper
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.Logs
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
+import com.chimerateam.offsetextractor.ui.state.BatchProgress
+import com.chimerateam.offsetextractor.ui.state.BatchSummary
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.state.ScannerUiState
 import com.chimerateam.offsetextractor.data.saf.EngineException
@@ -156,45 +158,156 @@ class MainViewModel(
                 result = null,
                 error = null,
                 errorHint = null,
+                batch = null,
+                batchSummary = null,
             )
         }
 
         extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
-            emit(Logs.info(TAG_SAF, "Opening selected APK..."))
+            processApk(uri)
+        }
+    }
 
-            val metadata = safAccess.queryMetadata(uri)
-            when (val opened = safAccess.openApk(uri)) {
-                is ApkOpenResult.Failure -> {
-                    val mapped = ErrorMapper.fromSaf(opened.reason, metadata.displayName)
-                    fail(mapped.message, mapped.hint, tag = TAG_SAF)
-                    return@launch
-                }
+    /**
+     * Scans several APKs one after another.
+     *
+     * The queue is sequential because the engine maps an entire library at
+     * once; running two scans at the same time would double the peak memory
+     * for no gain on a phone. A failure on one APK is counted and the queue
+     * moves on, so one bad file cannot sink a batch.
+     *
+     * @param uris document URIs returned by the multi-document picker.
+     */
+    fun onApksSelected(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) {
+            onSelectionCancelled()
+            return
+        }
+        if (uris.size == 1) {
+            onApkSelected(uris.first())
+            return
+        }
 
-                is ApkOpenResult.Success -> {
-                    releaseActiveApk()
-                    activeApk = opened.handle
-                    emit(Logs.info(TAG_SAF, "Opened APK File Descriptor successfully."))
-                    emit(
-                        Logs.info(
-                            TAG_SAF,
-                            "${metadata.displayName}: ${opened.handle.lengthBytes} bytes" +
-                                if (opened.usedCacheCopy) " (streamed cache copy)" else "",
+        extractionJob?.cancel()
+        _uiState.update {
+            it.copy(
+                phase = ScannerPhase.Extracting,
+                progress = 0,
+                progressTask = "Opening APK",
+                result = null,
+                error = null,
+                errorHint = null,
+                batchSummary = null,
+                batch = BatchProgress(total = uris.size),
+            )
+        }
+
+        extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
+            var succeeded = 0
+            var failed = 0
+            uris.forEachIndexed { index, uri ->
+                _uiState.update { current ->
+                    current.copy(
+                        batch = BatchProgress(
+                            total = uris.size,
+                            completed = index,
+                            succeeded = succeeded,
+                            failed = failed,
                         ),
                     )
-                    _uiState.update {
-                        it.copy(
-                            phase = ScannerPhase.Extracting,
-                            progress = 0,
-                            progressTask = "Extracting native library",
-                            selectedApk = metadata,
-                            usedCacheCopy = opened.usedCacheCopy,
-                            result = null,
-                            error = null,
-                            errorHint = null,
-                        )
-                    }
-                    extractNativeLibrary(opened.handle)
                 }
+                emit(Logs.info(TAG_UI, "Batch ${index + 1} of ${uris.size}."))
+
+                val ok = try {
+                    processApk(uri)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (throwable: Throwable) {
+                    // processApk already reports its own failures; this is the
+                    // belt-and-braces case where something escaped it.
+                    val mapped = ErrorMapper.fromThrowable(throwable)
+                    fail(mapped.message, mapped.hint, tag = TAG_UI)
+                    false
+                }
+                if (ok) succeeded++ else failed++
+            }
+
+            _uiState.update { current ->
+                current.copy(
+                    batch = null,
+                    batchSummary = BatchSummary(
+                        total = uris.size,
+                        succeeded = succeeded,
+                        failed = failed,
+                    ),
+                )
+            }
+            emit(
+                Logs.info(
+                    TAG_UI,
+                    "Processed ${uris.size} APKs. $succeeded success, $failed error.",
+                ),
+            )
+        }
+    }
+
+    /** Aborts a running batch; the in-flight APK is cancelled with it. */
+    fun cancelBatch() {
+        if (_uiState.value.batch == null) return
+        val job = extractionJob
+        extractionJob = null
+        job?.cancel()
+        releaseActiveApk()
+        emit(Logs.warn(TAG_UI, "Batch cancelled."))
+        _uiState.update { it.copy(batch = null) }
+    }
+
+    /** Clears the batch summary once the dialog has been dismissed. */
+    fun onBatchSummaryShown() {
+        _uiState.update { it.copy(batchSummary = null) }
+    }
+
+    /**
+     * Opens one APK and extracts its library, leaving the result in the state.
+     *
+     * @param uri document URI of the APK to process.
+     * @return whether the APK produced a result.
+     */
+    private suspend fun processApk(uri: android.net.Uri): Boolean {
+        emit(Logs.info(TAG_SAF, "Opening selected APK..."))
+
+        val metadata = safAccess.queryMetadata(uri)
+        when (val opened = safAccess.openApk(uri)) {
+            is ApkOpenResult.Failure -> {
+                val mapped = ErrorMapper.fromSaf(opened.reason, metadata.displayName)
+                fail(mapped.message, mapped.hint, tag = TAG_SAF)
+                return false
+            }
+
+            is ApkOpenResult.Success -> {
+                releaseActiveApk()
+                activeApk = opened.handle
+                emit(Logs.info(TAG_SAF, "Opened APK File Descriptor successfully."))
+                emit(
+                    Logs.info(
+                        TAG_SAF,
+                        "${metadata.displayName}: ${opened.handle.lengthBytes} bytes" +
+                            if (opened.usedCacheCopy) " (streamed cache copy)" else "",
+                    ),
+                )
+                _uiState.update {
+                    it.copy(
+                        phase = ScannerPhase.Extracting,
+                        progress = 0,
+                        progressTask = "Extracting native library",
+                        selectedApk = metadata,
+                        usedCacheCopy = opened.usedCacheCopy,
+                        result = null,
+                        error = null,
+                        errorHint = null,
+                    )
+                }
+                return extractNativeLibrary(opened.handle)
             }
         }
     }
@@ -382,7 +495,7 @@ class MainViewModel(
         releaseActiveApk()
     }
 
-    private suspend fun extractNativeLibrary(source: ApkSource) {
+    private suspend fun extractNativeLibrary(source: ApkSource): Boolean {
         try {
             val extracted = engine.extractNativeLibrary(source.rawFd, cacheDir)
             emit(
@@ -471,7 +584,7 @@ class MainViewModel(
                         errorHint = null,
                     )
                 }
-                return
+                return true
             }
 
             val scan = scanForOffsets(extracted)
@@ -509,11 +622,13 @@ class MainViewModel(
             reportVerification(scan?.verification)
 
             rememberScan(symbols.identity.buildId, _uiState.value.result)
+            return true
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (throwable: Throwable) {
             val mapped = ErrorMapper.fromThrowable(throwable, source.metadata.displayName)
             fail(mapped.message, mapped.hint, tag = TAG_RUST)
+            return false
         }
     }
 
