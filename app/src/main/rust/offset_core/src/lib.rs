@@ -12,6 +12,7 @@ pub mod jni_bridge;
 pub mod memory;
 pub mod patterns;
 pub mod prologue;
+pub mod rtti;
 pub mod scanner;
 pub mod sections;
 pub mod symbols;

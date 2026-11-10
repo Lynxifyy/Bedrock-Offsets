@@ -5,6 +5,7 @@ import com.chimerateam.offsetextractor.data.native.SectionMap
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.SymbolReport
+import com.chimerateam.offsetextractor.data.native.VtableMap
 import java.io.File
 
 /**
@@ -73,6 +74,18 @@ interface OffsetEngine {
         library: ExtractedNativeLibrary,
         patterns: List<PatternSpec>,
     ): ScanOutcome
+
+    /**
+     * Resolves the RTTI vtables the library declares.
+     *
+     * A library that carries no C++ RTTI, which is the case for the Rust engine
+     * itself, yields an empty map rather than an error.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @return the resolved vtables keyed by class name.
+     * @throws EngineException when the library cannot be parsed.
+     */
+    suspend fun resolveVtables(library: ExtractedNativeLibrary): VtableMap
 }
 
 /**

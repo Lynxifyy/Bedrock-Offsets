@@ -16,6 +16,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::memory::peak_resident_bytes;
 use crate::patterns::PatternSet;
 use crate::prologue::PrologueVerifier;
+use crate::rtti::resolve_vtables;
 use crate::scanner::{scan_section, verify_prologues, ScanControl, ScanOutcome};
 use crate::sections::build_section_map;
 use crate::symbols::build_symbol_report;
@@ -258,6 +259,55 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
     }
 }
 
+/// Resolves the RTTI vtables of a library.
+///
+/// # Returns
+///
+/// A JSON object describing how the vtables were found, how many `type_info`
+/// pointers were seen, how many relocations were read, and every resolved
+/// vtable keyed by class name.
+///
+/// # Errors
+///
+/// Throws `EngineFailure` when the library cannot be mapped or parsed.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_resolveVtablesNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    path: JString,
+    sha256: JString,
+) -> jstring {
+    install();
+
+    let library_path = match read_jstring(&mut env, &path, "library path") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let library_hash = match read_jstring(&mut env, &sha256, "library hash") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+
+    let outcome = catch_panics("resolving vtables", move || {
+        resolve_vtables_json(&library_path, &library_hash)
+    });
+
+    match outcome {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(string) => string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(core_error)) => {
+            throw_core_error(&mut env, &core_error);
+            std::ptr::null_mut()
+        }
+        Err(panic_message) => {
+            throw_engine_failure(&mut env, "unknown", &panic_message);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Scans the `.text` section of a library for the supplied patterns.
 ///
 /// # Returns
@@ -371,6 +421,17 @@ fn parse_pattern_specs(patterns_json: &str) -> CoreResult<Vec<(String, String)>>
         .into_iter()
         .map(|spec| (spec.name, spec.pattern))
         .collect())
+}
+
+/// Maps `path` and serialises its RTTI vtables, exposed for host tests.
+///
+/// # Errors
+///
+/// Propagates any mapping or vtable-resolution failure.
+pub fn resolve_vtables_json(path: &str, sha256: &str) -> CoreResult<String> {
+    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let map = resolve_vtables(library.bytes())?;
+    Ok(serde_json::to_string(&map).unwrap_or_default())
 }
 
 /// Maps `path` and serialises its symbols, exposed for host tests.

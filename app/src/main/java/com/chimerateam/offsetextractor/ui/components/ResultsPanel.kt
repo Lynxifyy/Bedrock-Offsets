@@ -14,6 +14,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
+import com.chimerateam.offsetextractor.data.native.TypeVTable
+import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.MonoText
@@ -21,6 +23,9 @@ import com.chimerateam.offsetextractor.util.formatBytes
 
 /** Number of signature hits rendered in the panel before it truncates. */
 private const val MAX_SHOWN_HITS = 12
+
+/** Number of resolved vtables rendered in the panel before it truncates. */
+private const val MAX_SHOWN_VTABLES = 8
 
 /**
  * Summary of a completed scan: identity of the library and where `.text` lives.
@@ -59,6 +64,24 @@ fun ResultsPanel(
             if (result.patternHits.size > MAX_SHOWN_HITS) {
                 Text(
                     text = "and ${result.patternHits.size - MAX_SHOWN_HITS} more",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        if (!result.vtables.isEmpty) {
+            Spacer(Modifier.height(12.dp))
+            Text(text = "RTTI vtables", style = MonoText.headline)
+            Spacer(Modifier.height(4.dp))
+            Field("Resolved", result.vtables.size.toString())
+            Field("Source", result.vtables.source)
+            result.vtables.entries.values.take(MAX_SHOWN_VTABLES).forEach { vtable ->
+                Field(vtable.name, vtable.vtableHex)
+            }
+            if (result.vtables.size > MAX_SHOWN_VTABLES) {
+                Text(
+                    text = "and ${result.vtables.size - MAX_SHOWN_VTABLES} more",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -129,6 +152,21 @@ private fun ResultsPanelPreview() {
                 ),
                 discardedMatches = 3,
                 peakResidentBytes = 42L * 1024 * 1024,
+                vtables = VtableMap(
+                    source = VtableMap.SOURCE_RELOCATIONS,
+                    typeInfoCandidates = 1,
+                    relocationsExamined = 4,
+                    entries = mapOf(
+                        "ClientInstance" to TypeVTable(
+                            name = "ClientInstance",
+                            mangled = "14ClientInstance",
+                            vtableAddress = 0x403000,
+                            vtableHex = "0x403000",
+                            vtableOffset = 0x3000,
+                            typeInfoAddress = 0x403080,
+                        ),
+                    ),
+                ),
                 textSection = SectionInfo(
                     name = ".text",
                     kind = "text",

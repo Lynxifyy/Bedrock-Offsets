@@ -101,6 +101,20 @@ class JniOffsetEngine(
         return EnginePayloads.parseScanOutcome(json)
     }
 
+    /**
+     * Resolves the RTTI vtables the library declares.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @return the resolved vtables keyed by class name.
+     * @throws EngineException when the library cannot be parsed.
+     */
+    override suspend fun resolveVtables(library: ExtractedNativeLibrary): VtableMap {
+        val json = call("resolving vtables") {
+            nativeLibrary.resolveVtables(library.path, library.sha256)
+        }
+        return EnginePayloads.parseVtableMap(json)
+    }
+
     private inline fun call(what: String, block: () -> String): String =
         try {
             block()
@@ -168,6 +182,16 @@ interface NativeLibrary {
      * @return a JSON payload describing the scan and every hit.
      */
     fun scanText(path: String, sha256: String, patternsJson: String): String
+
+    /**
+     * Resolves the RTTI vtables of the library at [path].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @return a JSON object describing every resolved vtable.
+     * @throws EngineFailure when the library cannot be parsed.
+     */
+    fun resolveVtables(path: String, sha256: String): String
 }
 
 /** Production bindings, backed by [NativeLib]. */
@@ -187,4 +211,7 @@ object JniNativeLibrary : NativeLibrary {
 
     override fun scanText(path: String, sha256: String, patternsJson: String): String =
         NativeLib.scanText(path, sha256, patternsJson)
+
+    override fun resolveVtables(path: String, sha256: String): String =
+        NativeLib.resolveVtables(path, sha256)
 }

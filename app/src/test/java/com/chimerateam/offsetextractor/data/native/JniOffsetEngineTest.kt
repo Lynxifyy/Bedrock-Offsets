@@ -4,9 +4,11 @@ import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.VtableMap
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -198,6 +200,62 @@ class JniOffsetEngineTest {
         assertEquals(1, outcome.countOf("prologue"))
         assertEquals(0, outcome.countOf("absent"))
         assertEquals(64L * 1024 * 1024, outcome.peakResidentBytes)
+        assertTrue(outcome.verified)
+        assertEquals(3, outcome.discarded)
+        assertTrue(outcome.hits[0].isVerified)
+        assertEquals("frame_push", outcome.hits[0].prologueKind)
+        assertEquals("stp x29, x30, [sp, #-16]!", outcome.hits[0].prologueInstruction)
+    }
+
+    @Test
+    fun vtablePayloadIsParsedIntoEntries() = runTest {
+        val engine = JniOffsetEngine(FakeBindings(vtables = VTABLE_JSON))
+
+        val map = engine.resolveVtables(extracted)
+
+        assertEquals(VtableMap.SOURCE_RELOCATIONS, map.source)
+        assertTrue(map.usedRelocations)
+        assertEquals(2, map.typeInfoCandidates)
+        assertEquals(7, map.relocationsExamined)
+        assertEquals(1, map.size)
+        val entry = map.entries.getValue("ClientInstance")
+        assertEquals("14ClientInstance", entry.mangled)
+        assertEquals(0x403000L, entry.vtableAddress)
+        assertEquals("0x403000", entry.vtableHex)
+        assertEquals(0x3000L, entry.vtableOffset)
+        assertEquals(0x403080L, entry.typeInfoAddress)
+    }
+
+    @Test
+    fun aLibraryWithNoVtablesParsesToAnEmptyMap() = runTest {
+        val engine = JniOffsetEngine(
+            FakeBindings(
+                vtables = """
+                    {
+                      "source": "direct_scan",
+                      "type_info_candidates": 0,
+                      "relocations_examined": 0,
+                      "entries": {}
+                    }
+                """,
+            ),
+        )
+
+        val map = engine.resolveVtables(extracted)
+
+        assertTrue(map.isEmpty)
+        assertEquals(0, map.size)
+        assertFalse(map.usedRelocations)
+    }
+
+    @Test
+    fun aVtablePayloadWithoutEntriesIsRejected() = runTest {
+        val engine = JniOffsetEngine(FakeBindings(vtables = "{not json"))
+
+        val error = runCatching { engine.resolveVtables(extracted) }.exceptionOrNull()
+
+        assertTrue("expected EngineException but was $error", error is EngineException)
+        assertTrue(error!!.message!!.contains("malformed"))
     }
 
     @Test
@@ -266,6 +324,7 @@ class JniOffsetEngineTest {
         private val sections: String = "",
         private val symbols: String = "",
         private val scan: String = "",
+        private val vtables: String = "",
         var lastPatterns: String = "",
 
         private val failure: Throwable? = null,
@@ -285,6 +344,11 @@ class JniOffsetEngineTest {
             failure?.let { throw it }
             lastPatterns = patternsJson
             return scan
+        }
+
+        override fun resolveVtables(path: String, sha256: String): String {
+            failure?.let { throw it }
+            return vtables
         }
 
         override fun extractNativeLibrary(fd: Int, destinationDir: String): String {
@@ -332,15 +396,37 @@ class JniOffsetEngineTest {
               "chunks": 19,
               "workers": 8,
               "peak_resident_bytes": 67108864,
+              "discarded": 3,
+              "verified": true,
               "hits": [
                 {
                   "name": "prologue",
                   "section_offset": 0,
                   "file_offset": 12288,
                   "address": 4194304,
-                  "address_hex": "0x400000"
+                  "address_hex": "0x400000",
+                  "prologue_kind": "frame_push",
+                  "prologue_instruction": "stp x29, x30, [sp, #-16]!"
                 }
               ]
+            }
+        """
+
+        const val VTABLE_JSON = """
+            {
+              "source": "relocations",
+              "type_info_candidates": 2,
+              "relocations_examined": 7,
+              "entries": {
+                "ClientInstance": {
+                  "name": "ClientInstance",
+                  "mangled": "14ClientInstance",
+                  "vtable_address": 4206592,
+                  "vtable_hex": "0x403000",
+                  "vtable_offset": 12288,
+                  "type_info_address": 4206720
+                }
+              }
             }
         """
 

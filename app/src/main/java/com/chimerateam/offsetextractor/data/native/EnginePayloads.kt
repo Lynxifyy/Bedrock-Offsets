@@ -237,6 +237,23 @@ object EnginePayloads {
         else -> EngineErrorKind.Unknown
     }
 
+    /**
+     * Parses the payload returned by the vtable resolver.
+     *
+     * @param json raw payload from the engine.
+     * @return the resolved vtables.
+     * @throws EngineException when the payload is missing or malformed.
+     */
+    fun parseVtableMap(json: String?): VtableMap {
+        val payload = decode(json, VtableMapPayload::class.java, "vtable")
+        return VtableMap(
+            source = payload.source ?: VtableMap.SOURCE_DIRECT_SCAN,
+            typeInfoCandidates = payload.typeInfoCandidates ?: 0,
+            relocationsExamined = payload.relocationsExamined ?: 0,
+            entries = payload.entries ?: emptyMap(),
+        )
+    }
+
     private fun <T> decode(json: String?, type: Class<T>, what: String): T {
         if (json.isNullOrBlank()) {
             throw EngineException(

@@ -6,6 +6,7 @@ import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
+import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.ui.error.ErrorMapper
@@ -14,6 +15,7 @@ import com.chimerateam.offsetextractor.ui.log.Logs
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.state.ScannerUiState
+import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.util.formatBytes
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -36,6 +38,9 @@ private const val TAG_UI = "UI"
 
 /** Origin tag used for lines describing engine work. */
 private const val TAG_RUST = "RUST"
+
+/** Number of resolved vtables written to the live log. */
+private const val MAX_LOGGED_VTABLES = 10
 
 /** Origin tag used for storage-access lines. */
 private const val TAG_SAF = "SAF"
@@ -253,6 +258,7 @@ class MainViewModel(
             )
 
             val scan = scanForOffsets(extracted)
+            val vtables = resolveVtables(extracted)
 
             _uiState.update {
                 it.copy(
@@ -273,6 +279,7 @@ class MainViewModel(
                         patternHits = scan?.hits.orEmpty(),
                         discardedMatches = scan?.discarded ?: 0,
                         peakResidentBytes = scan?.peakResidentBytes,
+                        vtables = vtables,
                     ),
                     error = null,
                     errorHint = null,
@@ -284,6 +291,43 @@ class MainViewModel(
             val mapped = ErrorMapper.fromThrowable(throwable, source.metadata.displayName)
             fail(mapped.message, mapped.hint, tag = TAG_RUST)
         }
+    }
+
+    /**
+     * Resolves the RTTI vtables the library declares.
+     *
+     * A library with no C++ RTTI yields an empty map, which is reported rather
+     * than treated as a failure: the offset scan is still useful on its own.
+     *
+     * @param extracted the library to inspect.
+     * @return the resolved vtables, or an empty map when the pass fails.
+     */
+    private suspend fun resolveVtables(
+        extracted: com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary,
+    ): VtableMap = try {
+        val map = engine.resolveVtables(extracted)
+        if (map.isEmpty) {
+            emit(Logs.info(TAG_RUST, "No RTTI vtables present in this library."))
+        } else {
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Resolved ${map.size} RTTI vtables from ${map.source}.",
+                ),
+            )
+            map.entries.values.take(MAX_LOGGED_VTABLES).forEach { vtable ->
+                emit(
+                    Logs.info(
+                        TAG_RUST,
+                        "Resolved ${vtable.name} vtable at ${vtable.vtableHex}",
+                    ),
+                )
+            }
+        }
+        map
+    } catch (failure: EngineException) {
+        emit(Logs.warn(TAG_RUST, "Vtable resolution skipped: ${failure.message}"))
+        VtableMap.EMPTY
     }
 
     /**

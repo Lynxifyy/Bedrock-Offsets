@@ -112,6 +112,19 @@ object NativeLib {
         return scanTextNative(path, sha256, patternsJson)
     }
 
+    /**
+     * Resolves the RTTI vtables the library at [path] declares.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @return a JSON object describing every resolved vtable.
+     * @throws EngineFailure when the library cannot be parsed.
+     */
+    fun resolveVtables(path: String, sha256: String): String {
+        ensureLoaded()
+        return resolveVtablesNative(path, sha256)
+    }
+
     private fun ensureLoaded() {
         if (!isAvailable) {
             throw EngineFailure(
@@ -133,4 +146,6 @@ object NativeLib {
         sha256: String,
         patternsJson: String,
     ): String
+
+    private external fun resolveVtablesNative(path: String, sha256: String): String
 }

@@ -18,6 +18,8 @@ import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.BuildIdentity
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
 import com.chimerateam.offsetextractor.data.native.SectionMap
+import com.chimerateam.offsetextractor.data.native.TypeVTable
+import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
@@ -113,6 +115,12 @@ class MainViewModelTest {
         assertEquals("prologue", state.result?.patternHits?.first()?.name)
         assertEquals(0, state.result?.discardedMatches)
         assertEquals(32L * 1024 * 1024, state.result?.peakResidentBytes)
+        assertEquals(1, engine.vtableCalls)
+        assertEquals("ClientInstance", state.result?.vtables?.entries?.keys?.first())
+        assertEquals(
+            "0x403000",
+            state.result?.vtables?.entries?.get("ClientInstance")?.vtableHex,
+        )
         assertEquals("abcdef0123456789", state.result?.buildId)
         assertEquals(1, state.result?.jniSymbolCount)
     }
@@ -475,6 +483,35 @@ private class FakeEngine(
             ),
             peakResidentBytes = 32L * 1024 * 1024,
         )
+    }
+
+    var vtableCalls = 0
+        private set
+
+    /** Vtable map the double returns; set to `null` to simulate a failure. */
+    var vtableResult: VtableMap? = VtableMap(
+        source = VtableMap.SOURCE_RELOCATIONS,
+        typeInfoCandidates = 1,
+        relocationsExamined = 3,
+        entries = mapOf(
+            "ClientInstance" to TypeVTable(
+                name = "ClientInstance",
+                mangled = "14ClientInstance",
+                vtableAddress = 0x403000,
+                vtableHex = "0x403000",
+                vtableOffset = 0x3000,
+                typeInfoAddress = 0x403080,
+            ),
+        ),
+    )
+
+    override suspend fun resolveVtables(library: ExtractedNativeLibrary): VtableMap {
+        vtableCalls++
+        if (delayMillis > 0) {
+            delay(delayMillis)
+        }
+        failure?.let { throw it }
+        return vtableResult ?: throw EngineException(EngineErrorKind.InvalidElf, "no vtables")
     }
 
     override suspend fun describeSymbols(library: ExtractedNativeLibrary): SymbolReport {
