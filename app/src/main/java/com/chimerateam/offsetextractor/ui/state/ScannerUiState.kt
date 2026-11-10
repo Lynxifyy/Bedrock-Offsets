@@ -5,6 +5,7 @@ import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.VtableMap
+import androidx.compose.runtime.Immutable
 import com.chimerateam.offsetextractor.data.saf.ApkMetadata
 
 /**
@@ -27,6 +28,7 @@ import com.chimerateam.offsetextractor.data.saf.ApkMetadata
  *   shows a warning and offers to free the cache; the app never guesses that
  *   the scan itself caused it.
  */
+@Immutable
 data class ScannerUiState(
     val phase: ScannerPhase = ScannerPhase.Idle,
     val progress: Int = 0,
@@ -79,6 +81,7 @@ enum class ScannerPhase {
  * @property expectedPatterns every signature the app looked for, so a missing
  *   one can be reported rather than silently omitted.
  */
+@Immutable
 data class ScanResultSummary(
     val displayName: String,
     val sha256: String,

@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.data.export.OffsetCategory
+import com.chimerateam.offsetextractor.ui.components.HoneycombCell
 import com.chimerateam.offsetextractor.data.export.OffsetRow
 import com.chimerateam.offsetextractor.data.export.OffsetRows
 import com.chimerateam.offsetextractor.data.native.VerificationStatus
@@ -93,14 +94,12 @@ fun ResultsScreen(
         Spacer(Modifier.height(12.dp))
 
         if (visible.isEmpty()) {
-            Text(
-                text = if (rows.isEmpty()) {
+            EmptyResults(
+                message = if (rows.isEmpty()) {
                     "This scan produced no offsets."
                 } else {
                     "No offset matches \"$query\"."
                 },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
@@ -195,6 +194,32 @@ private fun OffsetRowItem(row: OffsetRow) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/**
+ * Illustration shown when the results list has nothing to render.
+ *
+ * A dimmed honeycomb stands in for an empty list, which reads as "there is
+ * nothing here" rather than as a rendering failure.
+ */
+@Composable
+private fun EmptyResults(message: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        HoneycombCell(
+            size = 48.dp,
+            color = MaterialTheme.colorScheme.outline,
+            fillAlpha = 0.08f,
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

@@ -39,7 +39,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
@@ -49,7 +51,9 @@ import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
+import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
+import kotlinx.coroutines.delay
 import com.chimerateam.offsetextractor.util.formatBytes
 
 /**
@@ -114,6 +118,25 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
         val message = state.exportMessage ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(message)
         viewModel.onExportMessageShown()
+    }
+
+    // A finished scan gets a short buzz so the user does not have to watch the
+    // screen. Failure gets a distinct double buzz, which is the one signal
+    // that has to be distinguishable without looking.
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(state.phase) {
+        when (state.phase) {
+            ScannerPhase.Success ->
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+
+            ScannerPhase.Error -> {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                delay(120)
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+
+            else -> Unit
+        }
     }
 
     // The exported document is built on demand and shared as a whole, so a

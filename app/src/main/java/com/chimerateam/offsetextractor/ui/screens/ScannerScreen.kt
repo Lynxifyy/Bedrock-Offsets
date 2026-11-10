@@ -1,5 +1,11 @@
 package com.chimerateam.offsetextractor.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -131,7 +137,41 @@ private fun ControlsPane(
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
 ) {
-    when (state.phase) {
+    // AnimatedContent keeps the state change visible rather than instantaneous:
+    // a fade and a small slide make it obvious which pane replaced which.
+    AnimatedContent(
+        targetState = state.phase,
+        transitionSpec = {
+            (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 12 })
+                .togetherWith(fadeOut(tween(160)))
+        },
+        label = "scanner-phase",
+    ) { phase ->
+        PhasePane(
+            phase = phase,
+            state = state,
+            onSelectApk = onSelectApk,
+            onCancelSelection = onCancelSelection,
+            onRetry = onRetry,
+            onCopyJson = onCopyJson,
+            onShareJson = onShareJson,
+            onSaveJson = onSaveJson,
+        )
+    }
+}
+
+@Composable
+private fun PhasePane(
+    phase: ScannerPhase,
+    state: ScannerUiState,
+    onSelectApk: () -> Unit,
+    onCancelSelection: () -> Unit,
+    onRetry: () -> Unit,
+    onCopyJson: () -> Unit,
+    onShareJson: () -> Unit,
+    onSaveJson: () -> Unit,
+) {
+    when (phase) {
         ScannerPhase.Extracting, ScannerPhase.Scanning -> LoadingScreen(
             message = state.progressTask,
             progress = state.progress,
