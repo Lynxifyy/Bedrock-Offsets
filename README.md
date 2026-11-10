@@ -161,6 +161,21 @@ python3 scripts/verify_release.py path/to/app.apk
 Exit codes: `0` when every check passes, `1` when one fails, `2` when the APK
 cannot be read.
 
+### `scripts/changelog.py`
+
+Builds a changelog from the commits between two revisions. Subjects are read as
+conventional commits and grouped into sections, with breaking changes pulled to
+the top; a subject that does not follow the convention lands in "Other" rather
+than being dropped. The release workflow uses it to write the notes for a tag.
+
+```bash
+python3 scripts/changelog.py --version v1.0.0 --revision v0.9.0..v1.0.0
+python3 scripts/changelog.py --version v1.0.0 --output CHANGELOG.md
+```
+
+The repository slug for commit links is read from the `origin` remote, or given
+with `--repository-slug`. Exit codes: `0` on success, `2` when git cannot answer.
+
 ### Release signing
 
 `assembleRelease` produces an unsigned APK unless signing material is supplied.
@@ -168,6 +183,23 @@ Either add a `keystore.properties` at the repository root (it is git-ignored) or
 set `SIGNING_KEYSTORE`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` and
 `SIGNING_KEY_PASSWORD`. Without them the build warns and falls back to the debug
 key so the APK is still installable.
+
+The release workflow reads the keystore from the `SIGNING_KEYSTORE_BASE64`
+secret, decodes it into the runner's temporary directory, and then runs
+`apksigner verify` to prove the result really is signed. Without that secret the
+build still publishes, with a warning in the run summary.
+
+## Releases
+
+Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml):
+it cross-compiles the engine, assembles the release APK, verifies it against the
+shipping budget, generates the notes with `scripts/changelog.py` and attaches the
+APK to a GitHub Release.
+
+```bash
+git tag -a v1.0.0 -m "Bedrock Offset Extractor v1.0.0"
+git push origin v1.0.0
+```
 
 ### Running the script tests
 
