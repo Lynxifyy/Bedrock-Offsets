@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor.data.export
 
+import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.google.gson.GsonBuilder
 
@@ -43,6 +44,7 @@ object OffsetExporter {
                 textDelta = summary.textSection?.delta,
             ),
             offsets = buildOffsets(summary),
+            verification = summary.verification,
             vtables = summary.vtables.entries.values
                 .sortedBy { it.vtableAddress }
                 .associate { vtable ->
@@ -61,6 +63,10 @@ object OffsetExporter {
                 discardedMatches = summary.discardedMatches,
                 vtables = summary.vtables.size,
                 symbols = summary.symbols.size,
+                verifiedOffsets = summary.verification.verified,
+                conflictingOffsets = summary.verification.conflicts,
+                unverifiedOffsets = summary.verification.unverified,
+                confidencePercent = summary.verification.confidencePercent,
             ),
         )
         return gson.toJson(document) + "\n"
@@ -99,6 +105,7 @@ private data class OffsetDocument(
     val generatedBy: String,
     val source: SourceInfo,
     val offsets: Map<String, String>,
+    val verification: VerificationSummary,
     val vtables: Map<String, VTableEntry>,
     val symbols: Map<String, String>,
     val stats: Stats,
@@ -125,11 +132,15 @@ private data class VTableEntry(
     val typeInfo: String,
 )
 
-/** Counts that let a reader judge how complete the scan was. */
+/** Counts that let a reader judge how complete and how trustworthy the scan was. */
 private data class Stats(
     val expectedSignatures: Int,
     val matchedSignatures: Int,
     val discardedMatches: Int,
     val vtables: Int,
     val symbols: Int,
+    val verifiedOffsets: Int,
+    val conflictingOffsets: Int,
+    val unverifiedOffsets: Int,
+    val confidencePercent: Int,
 )

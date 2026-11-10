@@ -1,6 +1,7 @@
 package com.chimerateam.offsetextractor.ui.state
 
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
+import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.VtableMap
@@ -91,4 +92,5 @@ data class ScanResultSummary(
     val vtables: VtableMap = VtableMap.EMPTY,
     val symbols: List<ExportedSymbol> = emptyList(),
     val expectedPatterns: List<String> = emptyList(),
+    val verification: VerificationSummary = VerificationSummary.NONE,
 )

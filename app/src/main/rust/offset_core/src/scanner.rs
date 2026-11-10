@@ -20,6 +20,7 @@ use crate::error::{CoreError, CoreResult};
 use crate::patterns::PatternSet;
 use crate::prologue::{PrologueKind, PrologueVerifier};
 use crate::sections::SectionMap;
+use crate::verify::VerificationStatus;
 
 /// Chunk size handed to each worker.
 ///
@@ -52,6 +53,9 @@ pub struct PatternHit {
     /// The decoded first instruction, when verified.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prologue_instruction: Option<String>,
+    /// How the hit's address agrees with the library's symbol table.
+    #[serde(default)]
+    pub verification_status: VerificationStatus,
 }
 
 /// Result of scanning one section.
@@ -71,6 +75,9 @@ pub struct ScanOutcome {
     pub discarded: usize,
     /// Whether the prologue check was applied.
     pub verified: bool,
+    /// Symbol cross-check totals, present once the check has run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<crate::verify::VerificationSummary>,
 }
 
 /// A cancellation flag shared with the workers.
@@ -234,6 +241,7 @@ pub fn scan_section_with_progress(
             address_hex: format!("0x{address:x}"),
             prologue_kind: None,
             prologue_instruction: None,
+            verification_status: VerificationStatus::Unverified,
         });
     }
 
@@ -251,6 +259,7 @@ pub fn scan_section_with_progress(
         hits,
         discarded: 0,
         verified: false,
+        verification: None,
     })
 }
 

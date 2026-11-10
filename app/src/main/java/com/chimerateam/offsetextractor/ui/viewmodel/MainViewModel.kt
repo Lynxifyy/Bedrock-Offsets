@@ -11,6 +11,7 @@ import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
+import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.DocumentWriter
@@ -475,11 +476,14 @@ class MainViewModel(
                         vtables = vtables,
                         symbols = symbols.symbols.jni,
                         expectedPatterns = patterns.map { it.name },
+                        verification = scan?.verification ?: VerificationSummary.NONE,
                     ),
                     error = null,
                     errorHint = null,
                 )
             }
+
+            reportVerification(scan?.verification)
 
             rememberScan(symbols.identity.buildId, _uiState.value.result)
         } catch (cancelled: CancellationException) {
@@ -570,6 +574,41 @@ class MainViewModel(
             emit(Logs.info(TAG_RUST, "Peak resident set ${formatBytes(peak)}"))
         }
         return outcome
+    }
+
+    /**
+     * Writes the symbol cross-check result to the live log.
+     *
+     * A conflict is logged as an error, because acting on an offset that the
+     * library's own symbol table contradicts is worse than having no offset.
+     */
+    private fun reportVerification(summary: VerificationSummary?) {
+        if (summary == null) return
+        if (!summary.symbolsAvailable) {
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Offset verification skipped: the library exports no symbols.",
+                ),
+            )
+            return
+        }
+        emit(
+            Logs.info(
+                TAG_RUST,
+                "Offset verification complete. ${summary.verified} verified, " +
+                    "${summary.conflicts} conflicts, ${summary.confidencePercent}% confidence.",
+            ),
+        )
+        if (summary.conflicts > 0) {
+            emit(
+                Logs.error(
+                    TAG_RUST,
+                    "${summary.conflicts} offset(s) disagree with the symbol table; " +
+                        "treat them as stale.",
+                ),
+            )
+        }
     }
 
     /** Formats [value] as a `0x`-prefixed hexadecimal string. */

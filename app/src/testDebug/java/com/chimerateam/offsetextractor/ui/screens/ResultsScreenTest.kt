@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor.ui.screens
 
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -7,6 +8,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
+import com.chimerateam.offsetextractor.data.native.VerificationStatus
+import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import org.junit.Rule
@@ -41,7 +44,11 @@ class ResultsScreenTest {
         occupiesFile = true,
     )
 
-    private fun hit(name: String, address: Long) = PatternHit(
+    private fun hit(
+        name: String,
+        address: Long,
+        status: VerificationStatus = VerificationStatus.Unverified,
+    ) = PatternHit(
         name = name,
         sectionOffset = address - text.address,
         fileOffset = address - text.delta,
@@ -49,6 +56,7 @@ class ResultsScreenTest {
         addressHex = "0x%x".format(address),
         prologueKind = "frame_push",
         prologueInstruction = "stp x29, x30, [sp, #-16]!",
+        verificationStatus = status,
     )
 
     private val summary = ScanResultSummary(
@@ -61,8 +69,17 @@ class ResultsScreenTest {
         textSection = text,
         buildId = "deadbeef",
         buildIdSource = "note",
-        patternHits = listOf(hit("clientInstance", 0x401000)),
-        expectedPatterns = listOf("clientInstance", "absentSignature"),
+        patternHits = listOf(
+            hit("clientInstance", 0x401000, VerificationStatus.Verified),
+            hit("driftedTarget", 0x402000, VerificationStatus.Conflict),
+        ),
+        expectedPatterns = listOf("clientInstance", "driftedTarget", "absentSignature"),
+        verification = VerificationSummary(
+            verified = 1,
+            conflicts = 1,
+            unverified = 1,
+            symbolsAvailable = true,
+        ),
     )
 
     private fun content() {
@@ -87,7 +104,7 @@ class ResultsScreenTest {
         composeTestRule.onNodeWithText("0x401000").assertExists()
         // The signature that did not match is still listed.
         composeTestRule.onNodeWithText("absentSignature").assertExists()
-        composeTestRule.onNodeWithText("2 of 2 entries").assertExists()
+        composeTestRule.onNodeWithText("3 of 3 entries").assertExists()
     }
 
     @Test
@@ -98,7 +115,7 @@ class ResultsScreenTest {
 
         composeTestRule.onNodeWithText("absentSignature").assertExists()
         composeTestRule.onNodeWithText("clientInstance").assertDoesNotExist()
-        composeTestRule.onNodeWithText("1 of 2 entries", substring = true).assertExists()
+        composeTestRule.onNodeWithText("1 of 3 entries", substring = true).assertExists()
     }
 
     @Test
@@ -109,5 +126,29 @@ class ResultsScreenTest {
         composeTestRule.onNodeWithText("Share JSON").assertExists()
         composeTestRule.onNodeWithText("Save JSON").assertExists()
         composeTestRule.onNodeWithText("Start new scan").assertExists()
+    }
+
+    @Test
+    fun aVerifiedOffsetShowsAShieldAndAConflictingOneAWarning() {
+        content()
+
+        composeTestRule
+            .onNodeWithContentDescription("Verified against the symbol table")
+            .assertExists()
+        composeTestRule
+            .onNodeWithContentDescription("Conflicts with the symbol table")
+            .assertExists()
+    }
+
+    @Test
+    fun theConfidenceScoreIsShownAndNamesTheConflicts() {
+        content()
+
+        composeTestRule
+            .onNodeWithText("Confidence: 33%", substring = true)
+            .assertExists()
+        composeTestRule
+            .onNodeWithText("conflict with the symbol table", substring = true)
+            .assertExists()
     }
 }

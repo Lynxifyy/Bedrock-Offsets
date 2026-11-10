@@ -425,8 +425,17 @@ pub fn scan_text_json_with_progress(
     // A byte signature only says "these bytes occur here"; decoding the bytes
     // at each match is what separates a function start from a coincidence.
     let verifier = PrologueVerifier::new()?;
-    let outcome =
+    let mut outcome =
         verify_prologues_with_progress(outcome, &map, library.bytes(), &verifier, &control, sink)?;
+
+    // The library's own symbol table is an independent witness: when a
+    // signature's name is also an exported symbol the two addresses can be
+    // compared, which turns a plausible offset into a checked one.
+    let symbols = crate::symbols::build_symbol_report(library.bytes())?;
+    outcome.verification = Some(crate::verify::verify_against_symbols(
+        &mut outcome,
+        &symbols.symbols,
+    ));
 
     let payload = ScanPayload {
         outcome,

@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.data.export.OffsetCategory
 import com.chimerateam.offsetextractor.data.export.OffsetRow
 import com.chimerateam.offsetextractor.data.export.OffsetRows
+import com.chimerateam.offsetextractor.data.native.VerificationStatus
+import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.MonoText
 
@@ -64,6 +68,7 @@ fun ResultsScreen(
     var query by rememberSaveable { mutableStateOf("") }
     val rows = remember(result) { OffsetRows.from(result) }
     val visible = remember(rows, query) { rows.filter { it.matches(query) } }
+    val conflicts = remember(rows) { rows.count { it.status.isConflict } }
 
     Column(modifier = modifier.fillMaxWidth()) {
         Text(text = "Offsets", style = MonoText.headline)
@@ -74,6 +79,8 @@ fun ResultsScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.height(4.dp))
+        ConfidenceBanner(verification = result.verification, conflicts = conflicts)
         Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
@@ -125,6 +132,42 @@ fun ResultsScreen(
     }
 }
 
+/**
+ * One-line summary of how well the offsets agree with the library's symbols.
+ *
+ * A library that exports no symbols has nothing to compare against, so the
+ * banner says so instead of showing a confidence of zero, which would read as
+ * "everything is wrong".
+ */
+@Composable
+private fun ConfidenceBanner(
+    verification: VerificationSummary,
+    conflicts: Int,
+) {
+    val hasConflicts = conflicts > 0
+    val text = when {
+        !verification.symbolsAvailable ->
+            "Confidence: unavailable (the library exports no symbols)"
+
+        hasConflicts ->
+            "Confidence: ${verification.confidencePercent}% · " +
+                "$conflicts offset(s) conflict with the symbol table"
+
+        else ->
+            "Confidence: ${verification.confidencePercent}% · " +
+                "${verification.verified} verified, ${verification.unverified} unverified"
+    }
+    Text(
+        text = text,
+        style = MonoText.body,
+        color = if (hasConflicts) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    )
+}
+
 @Composable
 private fun OffsetRowItem(row: OffsetRow) {
     val addressColour = if (row.missing) {
@@ -141,6 +184,9 @@ private fun OffsetRowItem(row: OffsetRow) {
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = row.addressHex, style = MonoText.body, color = addressColour)
+            if (row.status.isTrusted || row.status.isConflict) {
+                VerificationBadge(row.status)
+            }
             Text(
                 text = "  ${row.category.label} · ${row.detail}",
                 style = MaterialTheme.typography.bodySmall,
@@ -150,6 +196,34 @@ private fun OffsetRowItem(row: OffsetRow) {
             )
         }
     }
+}
+
+/**
+ * Icon marking an offset as verified against the symbol table or in conflict
+ * with it. An unverified offset gets no badge, which keeps a stripped library's
+ * list uncluttered.
+ */
+@Composable
+private fun VerificationBadge(status: VerificationStatus) {
+    val (icon, description, tint) = if (status.isTrusted) {
+        Triple(
+            Icons.Filled.VerifiedUser,
+            "Verified against the symbol table",
+            MaterialTheme.colorScheme.primary,
+        )
+    } else {
+        Triple(
+            Icons.Filled.Warning,
+            "Conflicts with the symbol table",
+            MaterialTheme.colorScheme.error,
+        )
+    }
+    Icon(
+        imageVector = icon,
+        contentDescription = description,
+        tint = tint,
+        modifier = Modifier.padding(horizontal = 6.dp),
+    )
 }
 
 /** Human-readable label of a category. */

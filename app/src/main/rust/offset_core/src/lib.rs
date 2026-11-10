@@ -17,6 +17,7 @@ pub mod rtti;
 pub mod scanner;
 pub mod sections;
 pub mod symbols;
+pub mod verify;
 pub mod zip_extract;
 
 pub use error::{CoreError, CoreResult};

@@ -4,6 +4,7 @@ import com.chimerateam.offsetextractor.data.native.ExportedSymbol
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.TypeVTable
+import com.chimerateam.offsetextractor.data.native.VerificationStatus
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import org.junit.Assert.assertEquals
@@ -49,7 +50,12 @@ class OffsetRowsTest {
         expectedPatterns = expected,
     )
 
-    private fun hit(name: String, address: Long, kind: String? = "frame_push") = PatternHit(
+    private fun hit(
+        name: String,
+        address: Long,
+        kind: String? = "frame_push",
+        status: VerificationStatus = VerificationStatus.Unverified,
+    ) = PatternHit(
         name = name,
         sectionOffset = address - text.address,
         fileOffset = address - text.delta,
@@ -57,6 +63,7 @@ class OffsetRowsTest {
         addressHex = "0x%x".format(address),
         prologueKind = kind,
         prologueInstruction = "stp x29, x30, [sp, #-16]!",
+        verificationStatus = status,
     )
 
     @Test
@@ -173,5 +180,43 @@ class OffsetRowsTest {
         )
 
         assertEquals(2, rows.filter { it.matches("") }.size)
+    }
+
+    @Test
+    fun aVerifiedHitCarriesItsStatusOntoTheRow() {
+        val rows = OffsetRows.from(
+            summary(
+                hits = listOf(hit("clientInstance", 0x401000, status = VerificationStatus.Verified)),
+                expected = listOf("clientInstance"),
+            ),
+        )
+
+        val row = rows.single { it.name == "clientInstance" }
+        assertEquals(VerificationStatus.Verified, row.status)
+        assertTrue(row.status.isTrusted)
+    }
+
+    @Test
+    fun aConflictingHitIsMarkedAsAConflict() {
+        val rows = OffsetRows.from(
+            summary(
+                hits = listOf(hit("clientInstance", 0x401000, status = VerificationStatus.Conflict)),
+                expected = listOf("clientInstance"),
+            ),
+        )
+
+        val row = rows.single { it.name == "clientInstance" }
+        assertEquals(VerificationStatus.Conflict, row.status)
+        assertTrue(row.status.isConflict)
+    }
+
+    @Test
+    fun aMissingSignatureIsNeverTrusted() {
+        val rows = OffsetRows.from(summary(expected = listOf("clientInstance")))
+
+        val row = rows.single { it.name == "clientInstance" }
+        assertTrue(row.missing)
+        assertEquals(VerificationStatus.Unverified, row.status)
+        assertFalse(row.status.isTrusted)
     }
 }

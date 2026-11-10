@@ -23,6 +23,7 @@ data class PatternSpec(
  * @property addressHex the address rendered as `0x`-prefixed hex.
  * @property prologueKind which prologue form the bytes decode to, if verified.
  * @property prologueInstruction the decoded first instruction, if verified.
+ * @property verificationStatus how the address agrees with the symbol table.
  */
 data class PatternHit(
     val name: String,
@@ -32,6 +33,8 @@ data class PatternHit(
     @SerializedName("address_hex") val addressHex: String,
     @SerializedName("prologue_kind") val prologueKind: String? = null,
     @SerializedName("prologue_instruction") val prologueInstruction: String? = null,
+    @SerializedName("verification_status") val verificationStatus: VerificationStatus =
+        VerificationStatus.Unverified,
 ) {
     /** Whether the hit decoded to a recognisable function prologue. */
     val isVerified: Boolean get() = prologueKind != null
@@ -48,6 +51,7 @@ data class PatternHit(
  * @property peakResidentBytes peak resident set after the scan, when reported.
  * @property discarded candidates the prologue check threw away.
  * @property verified whether the prologue check was applied.
+ * @property verification symbol cross-check totals, when the check has run.
  */
 data class ScanOutcome(
     val section: String,
@@ -58,6 +62,7 @@ data class ScanOutcome(
     @SerializedName("peak_resident_bytes") val peakResidentBytes: Long? = null,
     val discarded: Int = 0,
     val verified: Boolean = false,
+    val verification: VerificationSummary? = null,
 ) {
     /** Number of hits that came from [name]. */
     fun countOf(name: String): Int = hits.count { it.name == name }
@@ -73,4 +78,5 @@ internal data class ScanOutcomePayload(
     @SerializedName("peak_resident_bytes") val peakResidentBytes: Long?,
     val discarded: Int?,
     val verified: Boolean?,
+    val verification: VerificationSummary?,
 )

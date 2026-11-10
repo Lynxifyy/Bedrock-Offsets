@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor.data.export
 
+import com.chimerateam.offsetextractor.data.native.VerificationStatus
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 
 /** Grouping of a row in the results list. */
@@ -24,6 +25,7 @@ enum class OffsetCategory {
  * @property detail short supporting text, for example the prologue form.
  * @property missing whether the target was expected but not found. Missing rows
  *   are highlighted so an out-of-date signature pack is obvious.
+ * @property status how the offset agrees with the library's symbol table.
  */
 data class OffsetRow(
     val category: OffsetCategory,
@@ -31,6 +33,7 @@ data class OffsetRow(
     val addressHex: String,
     val detail: String,
     val missing: Boolean = false,
+    val status: VerificationStatus = VerificationStatus.Unverified,
 ) {
     /** Whether [query] matches this row, ignoring case. */
     fun matches(query: String): Boolean {
@@ -90,6 +93,7 @@ object OffsetRows {
                         name = name,
                         addressHex = hit.addressHex,
                         detail = hit.prologueKind ?: "not decoded",
+                        status = hit.verificationStatus,
                     ),
                 )
             }
@@ -104,6 +108,7 @@ object OffsetRows {
                         name = name,
                         addressHex = hit.addressHex,
                         detail = hit.prologueKind ?: "not decoded",
+                        status = hit.verificationStatus,
                     ),
                 )
             }

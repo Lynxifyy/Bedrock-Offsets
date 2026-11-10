@@ -28,6 +28,7 @@ import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
+import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.data.native.SymbolReport
 import com.chimerateam.offsetextractor.data.native.SymbolTable
 import com.chimerateam.offsetextractor.ui.log.LogEntry
@@ -619,6 +620,77 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aVerificationSummaryIsReportedOnTheLog() = runTest(dispatcher) {
+        val engine = FakeEngine(
+            scan = scanOutcome().copy(
+                verification = VerificationSummary(
+                    verified = 1,
+                    conflicts = 0,
+                    unverified = 0,
+                    symbolsAvailable = true,
+                ),
+            ),
+        )
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val entries = viewModel.logEntries.value
+        assertTrue(
+            "expected the verification line: ${entries.map { it.message }}",
+            entries.any { it.message.contains("Offset verification complete") },
+        )
+        assertEquals(1, viewModel.uiState.value.result?.verification?.verified)
+    }
+
+    @Test
+    fun aConflictIsLoggedAsAnError() = runTest(dispatcher) {
+        val engine = FakeEngine(
+            scan = scanOutcome().copy(
+                verification = VerificationSummary(
+                    verified = 0,
+                    conflicts = 2,
+                    unverified = 0,
+                    symbolsAvailable = true,
+                ),
+            ),
+        )
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val errors = viewModel.logEntries.value.filter { it.level == LogLevel.Error }
+        assertTrue(
+            "a conflict must be loud: ${errors.map { it.message }}",
+            errors.any { it.message.contains("disagree with the symbol table") },
+        )
+    }
+
+    @Test
+    fun aStrippedLibrarySkipsVerificationWithoutAnError() = runTest(dispatcher) {
+        val engine = FakeEngine(
+            scan = scanOutcome().copy(
+                verification = VerificationSummary(
+                    verified = 0,
+                    conflicts = 0,
+                    unverified = 3,
+                    symbolsAvailable = false,
+                ),
+            ),
+        )
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val entries = viewModel.logEntries.value
+        assertTrue(entries.any { it.message.contains("verification skipped") })
+        assertTrue(entries.none { it.level == LogLevel.Error })
+    }
+
+    @Test
     fun progressTrackerClampsOutOfRangeValues() {
         assertEquals(0, ProgressTracker.of(-5, "x").percent)
         assertEquals(100, ProgressTracker.of(250, "x").percent)
@@ -652,6 +724,24 @@ class MainViewModelTest {
 
     private fun newCache(): ScanCache = ScanCache(File(cacheDir, "scan-cache"))
 }
+
+/** The scan outcome the fake engine returns unless a test supplies its own. */
+private fun scanOutcome(): ScanOutcome = ScanOutcome(
+    section = ".text",
+    scannedBytes = TEXT.size,
+    chunks = 1,
+    workers = 1,
+    hits = listOf(
+        PatternHit(
+            name = "prologue",
+            sectionOffset = 0,
+            fileOffset = TEXT.offset,
+            address = TEXT.address,
+            addressHex = "0x400000",
+        ),
+    ),
+    peakResidentBytes = 32L * 1024 * 1024,
+)
 
 /** The `.text` section used by the fake engine. */
 private val TEXT = SectionInfo(
@@ -692,6 +782,8 @@ private class FakeEngine(
     ),
     private val failure: Throwable? = null,
     private val delayMillis: Long = 0,
+    /** Scan outcome the double returns; `null` builds the default outcome. */
+    private val scan: ScanOutcome? = null,
 ) : OffsetEngine {
 
     var calls = 0
@@ -752,7 +844,7 @@ private class FakeEngine(
             delay(delayMillis)
         }
         failure?.let { throw it }
-        return ScanOutcome(
+        return scan ?: ScanOutcome(
             section = ".text",
             scannedBytes = TEXT.size,
             chunks = 1,
