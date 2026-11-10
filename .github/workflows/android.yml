@@ -42,3 +42,22 @@ jobs:
           name: unit-test-reports
           path: app/build/reports/tests/
           if-no-files-found: ignore
+  tooling:
+    name: Python tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test the build scripts
+        run: python3 -m unittest discover -s scripts/tests -t . -v
+
+      - name: Check the signature pack is up to date
+        run: python3 scripts/generate_patterns.py patterns.txt --check

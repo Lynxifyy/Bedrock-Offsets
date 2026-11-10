@@ -1,0 +1,15 @@
+# Signature pack source for scripts/generate_patterns.py.
+#
+# One signature per line: 'name = bytes'. '??' matches any byte.
+# Regenerate with:  python3 scripts/generate_patterns.py patterns.txt
+
+adrp_add_page_off = ?? ?? ?? ?? ?? ?? ?? 91
+bti_c_landing_pad = 5F 24 03 D5
+callee_saved_save_x19_x20 = F3 53 BF A9
+callee_saved_save_x21_x22 = F5 5B BF A9
+frame_pointer_setup = FD 03 00 91
+frame_push_with_pac = FD 7B BF A9 7F 23 03 D5
+frame_push_x29_x30 = FD 7B BF A9
+pacibsp_prologue = 7F 23 03 D5 FD 7B BF A9
+stack_alloc_0x20 = FF 83 00 D1
+stp_q0_q1_frame = FD 7B 01 A9
