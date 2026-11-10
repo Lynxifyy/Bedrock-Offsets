@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
 import com.chimerateam.offsetextractor.ui.log.LogTimestamp
+import com.chimerateam.offsetextractor.ui.components.LowMemoryDialog
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
@@ -98,6 +99,16 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val saveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri: Uri? -> viewModel.onExportDestinationChosen(uri) }
+
+    if (state.lowMemory) {
+        LowMemoryDialog(
+            onDismiss = { viewModel.onLowMemoryNoticeDismissed() },
+            onClearCache = {
+                viewModel.clearCache()
+                viewModel.onLowMemoryNoticeDismissed()
+            },
+        )
+    }
 
     LaunchedEffect(state.exportMessage) {
         val message = state.exportMessage ?: return@LaunchedEffect

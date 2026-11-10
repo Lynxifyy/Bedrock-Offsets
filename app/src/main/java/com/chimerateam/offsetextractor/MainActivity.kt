@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor
 
+import android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -50,6 +51,20 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             BedrockOffsetExtractorApp(viewModel = viewModel)
+        }
+    }
+
+    /**
+     * Reports system memory pressure to the ViewModel.
+     *
+     * Android calls this before it starts killing processes. The scan itself
+     * never allocates with the file size, so the useful response is to tell the
+     * user and let them free the cache rather than to abort the scan.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            viewModel.onMemoryPressure()
         }
     }
 }

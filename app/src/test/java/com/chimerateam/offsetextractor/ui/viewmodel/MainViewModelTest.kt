@@ -691,6 +691,111 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aMissingTextSectionIsReportedNotCrashed() = runTest(dispatcher) {
+        val engine = FakeEngine(
+            failure = EngineException(EngineErrorKind.MissingSection, ".text is absent"),
+        )
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Error, viewModel.uiState.value.phase)
+        assertTrue(
+            "expected a section message",
+            viewModel.uiState.value.error?.contains("section") == true,
+        )
+    }
+
+    @Test
+    fun aStorageFullFailureExplainsItself() = runTest(dispatcher) {
+        val engine = FakeEngine(
+            failure = EngineException(EngineErrorKind.StorageFull, "no space left"),
+        )
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val hint = viewModel.uiState.value.errorHint.orEmpty()
+        assertTrue("expected a space hint, got: $hint", hint.contains("Free some space"))
+    }
+
+    @Test
+    fun aFatalErrorFromTheEngineIsCaughtRatherThanCrashing() = runTest(dispatcher) {
+        // A JNI-level failure can surface as an Error, not an Exception. The
+        // ViewModel must survive it so the app stays usable.
+        val engine = FakeEngine(failure = OutOfMemoryError("native allocation failed"))
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Error, viewModel.uiState.value.phase)
+        assertTrue(
+            "expected a memory message",
+            viewModel.uiState.value.error?.contains("memory") == true,
+        )
+    }
+
+    @Test
+    fun rapidSelectionsOnlyRunTheLastScan() = runTest(dispatcher) {
+        val engine = FakeEngine(delayMillis = 50)
+        val viewModel = newViewModel(engine = engine)
+
+        repeat(5) { viewModel.onApkSelected(uri) }
+        advanceUntilIdle()
+
+        // Each selection cancels the previous job, so the engine is entered
+        // once per selection but only the last run reaches a terminal state.
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertNotNull(viewModel.uiState.value.result)
+    }
+
+    @Test
+    fun memoryPressureRaisesANoticeAndCanBeDismissed() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+        assertTrue(!viewModel.uiState.value.lowMemory)
+
+        viewModel.onMemoryPressure()
+
+        assertTrue(viewModel.uiState.value.lowMemory)
+        assertTrue(
+            "the notice must be logged",
+            viewModel.logEntries.value.any { it.message.contains("low on memory") },
+        )
+
+        viewModel.onLowMemoryNoticeDismissed()
+        assertTrue(!viewModel.uiState.value.lowMemory)
+    }
+
+    @Test
+    fun memoryPressureIsReportedOnlyOnce() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        repeat(3) { viewModel.onMemoryPressure() }
+
+        val notices = viewModel.logEntries.value.count { it.message.contains("low on memory") }
+        assertEquals("the notice must not repeat", 1, notices)
+    }
+
+    @Test
+    fun stateSurvivesACollectorBeingReplaced() = runTest(dispatcher) {
+        // A rotation replaces the UI collector while the ViewModel lives on, so
+        // the result must be readable by the new collector without a rescan.
+        val engine = FakeEngine()
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertEquals(1, engine.scanCalls)
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertEquals(1, engine.scanCalls)
+    }
+
+    @Test
     fun progressTrackerClampsOutOfRangeValues() {
         assertEquals(0, ProgressTracker.of(-5, "x").percent)
         assertEquals(100, ProgressTracker.of(250, "x").percent)

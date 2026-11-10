@@ -23,6 +23,9 @@ import com.chimerateam.offsetextractor.data.saf.ApkMetadata
  * @property errorHint actionable follow-up shown under the error message.
  * @property exportMessage transient confirmation shown after an export, or
  *   `null` when there is nothing to announce.
+ * @property lowMemory whether the system has reported memory pressure. The UI
+ *   shows a warning and offers to free the cache; the app never guesses that
+ *   the scan itself caused it.
  */
 data class ScannerUiState(
     val phase: ScannerPhase = ScannerPhase.Idle,
@@ -34,6 +37,7 @@ data class ScannerUiState(
     val error: String? = null,
     val errorHint: String? = null,
     val exportMessage: String? = null,
+    val lowMemory: Boolean = false,
 )
 
 /** Screen-level phases of the scanner. */

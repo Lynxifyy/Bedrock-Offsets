@@ -270,6 +270,29 @@ class MainViewModel(
     }
 
     /**
+     * Records that the system reported memory pressure.
+     *
+     * The notice is advisory: the scan continues, because extraction streams
+     * from the descriptor and a scan holds only its result set. What the user
+     * can usefully do is free the cache, so the notice says that.
+     */
+    fun onMemoryPressure() {
+        if (_uiState.value.lowMemory) return
+        emit(
+            Logs.warn(
+                TAG_UI,
+                "The system is low on memory. Clearing the cache frees the most space.",
+            ),
+        )
+        _uiState.update { it.copy(lowMemory = true) }
+    }
+
+    /** Dismisses the low-memory notice. */
+    fun onLowMemoryNoticeDismissed() {
+        _uiState.update { it.copy(lowMemory = false) }
+    }
+
+    /**
      * Turns cached-result reuse on or off.
      *
      * @param force true to always rescan, ignoring a cached document.
