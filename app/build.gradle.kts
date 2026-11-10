@@ -1,3 +1,4 @@
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -13,6 +14,36 @@ val rustEngineLibrary = layout.projectDirectory
     .file("src/main/jniLibs/arm64-v8a/liboffset_core.so")
     .asFile
 val rustEnginePresent = rustEngineLibrary.exists()
+
+/**
+ * Release signing material, read from `keystore.properties` at the repository
+ * root or from the environment.
+ *
+ * The file and the variables are both optional: when neither is present the
+ * release build is signed with the debug key and a warning is printed, so
+ * `assembleRelease` still produces an installable APK on a machine that has no
+ * release key. CI supplies the real material through the environment.
+ */
+val signingProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.isFile) {
+        file.inputStream().use { load(it) }
+    }
+}
+
+fun signingValue(key: String, environment: String): String? =
+    (signingProperties.getProperty(key) ?: System.getenv(environment))?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = signingValue("storeFile", "SIGNING_KEYSTORE")
+val releaseStorePassword = signingValue("storePassword", "SIGNING_STORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "SIGNING_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "SIGNING_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it != null }
 
 android {
     namespace = "com.chimerateam.offsetextractor"
@@ -43,6 +74,21 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = file(releaseStoreFile!!)
+                    storePassword = releaseStorePassword
+                    keyAlias = releaseKeyAlias
+                    keyPassword = releaseKeyPassword
+                }
+            } else {
+                logger.lifecycle(
+                    "No release signing material found; the release APK will be " +
+                        "signed with the debug key. Set SIGNING_KEYSTORE, " +
+                        "SIGNING_STORE_PASSWORD, SIGNING_KEY_ALIAS and " +
+                        "SIGNING_KEY_PASSWORD, or add keystore.properties.",
+                )
+            }
         }
     }
 
@@ -53,6 +99,9 @@ android {
 
     buildFeatures {
         compose = true
+        // The release build has no debug-only code paths to switch on, and
+        // `BuildConfig.DEBUG` is the one flag that would tempt one in.
+        buildConfig = false
     }
 
     lint {

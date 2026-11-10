@@ -57,6 +57,29 @@ python3 scripts/generate_patterns.py patterns.txt --check  # fail if stale
 Exit codes: `0` on success, `1` for a malformed entry or a stale pack under
 `--check`, `2` for an unusable path.
 
+### `scripts/verify_release.py`
+
+Checks the built release APK against the shipping budget: the size cap, the
+packaged arm64-v8a engine, the absence of `Log.d`/`Log.v` call sites in the
+bytecode, and the absence of an `INTERNET` permission. CI runs it after
+`assembleRelease`.
+
+```bash
+python3 scripts/verify_release.py                     # newest APK under app/build
+python3 scripts/verify_release.py path/to/app.apk
+```
+
+Exit codes: `0` when every check passes, `1` when one fails, `2` when the APK
+cannot be read.
+
+### Release signing
+
+`assembleRelease` produces an unsigned APK unless signing material is supplied.
+Either add a `keystore.properties` at the repository root (it is git-ignored) or
+set `SIGNING_KEYSTORE`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` and
+`SIGNING_KEY_PASSWORD`. Without them the build warns and falls back to the debug
+key so the APK is still installable.
+
 ### Running the script tests
 
 ```bash

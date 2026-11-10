@@ -15,6 +15,11 @@ app/release/
 lint-results*.html
 lint-results*.xml
 
+# --- Release signing material; never commit a keystore or its password ---
+keystore.properties
+*.jks
+*.keystore
+
 # --- Rust ---
 target/
 **/*.rs.bk

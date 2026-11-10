@@ -38,6 +38,12 @@ jobs:
       - name: Run Android lint
         run: ./gradlew lintDebug --stacktrace --no-daemon
 
+      - name: Assemble the release APK
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Verify the release APK
+        run: python3 scripts/verify_release.py
+
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
