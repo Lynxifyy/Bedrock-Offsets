@@ -12,11 +12,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.MonoText
 import com.chimerateam.offsetextractor.util.formatBytes
+
+/** Number of signature hits rendered in the panel before it truncates. */
+private const val MAX_SHOWN_HITS = 12
 
 /**
  * Summary of a completed scan: identity of the library and where `.text` lives.
@@ -39,6 +43,27 @@ fun ResultsPanel(
         Field("SHA-256", result.sha256.take(16) + "...")
         Field("Entry point", result.entryPoint)
         Field("Sections", result.sectionCount.toString())
+
+        if (result.patternHits.isNotEmpty() || result.discardedMatches > 0) {
+            Spacer(Modifier.height(12.dp))
+            Text(text = "Verified signatures", style = MonoText.headline)
+            Spacer(Modifier.height(4.dp))
+            Field("Matches", result.patternHits.size.toString())
+            Field("Discarded", result.discardedMatches.toString())
+            result.peakResidentBytes?.let { peak ->
+                Field("Peak resident", formatBytes(peak))
+            }
+            result.patternHits.take(MAX_SHOWN_HITS).forEach { hit ->
+                Field(hit.name, hit.addressHex)
+            }
+            if (result.patternHits.size > MAX_SHOWN_HITS) {
+                Text(
+                    text = "and ${result.patternHits.size - MAX_SHOWN_HITS} more",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
 
         result.textSection?.let { text ->
             Spacer(Modifier.height(12.dp))
@@ -91,6 +116,19 @@ private fun ResultsPanelPreview() {
                 architecture = "AArch64",
                 entryPoint = "0x1a2b3c",
                 sectionCount = 33,
+                patternHits = listOf(
+                    PatternHit(
+                        name = "frame_push_x29_x30",
+                        sectionOffset = 0x120,
+                        fileOffset = 0x3120,
+                        address = 0x403120,
+                        addressHex = "0x403120",
+                        prologueKind = "frame_push",
+                        prologueInstruction = "stp x29, x30, [sp, #-16]!",
+                    ),
+                ),
+                discardedMatches = 3,
+                peakResidentBytes = 42L * 1024 * 1024,
                 textSection = SectionInfo(
                     name = ".text",
                     kind = "text",

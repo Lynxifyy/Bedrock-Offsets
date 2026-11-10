@@ -169,6 +169,43 @@ object EnginePayloads {
     }
 
     /**
+     * Parses the JSON returned by the scan entry point.
+     *
+     * @param json payload produced by the engine.
+     * @return the scan outcome, including every hit.
+     * @throws EngineException when the payload is malformed.
+     */
+    fun parseScanOutcome(json: String?): ScanOutcome {
+        val payload = decode(json, ScanOutcomePayload::class.java, "scan outcome")
+        val section = payload.section
+        val hits = payload.hits
+        if (section == null || hits == null) {
+            throw EngineException(
+                kind = EngineErrorKind.InvalidElf,
+                message = "the engine returned a scan result without a section",
+            )
+        }
+        return ScanOutcome(
+            section = section,
+            scannedBytes = payload.scannedBytes ?: 0L,
+            chunks = payload.chunks ?: 0,
+            workers = payload.workers ?: 1,
+            hits = hits,
+            peakResidentBytes = payload.peakResidentBytes,
+            discarded = payload.discarded ?: 0,
+            verified = payload.verified ?: false,
+        )
+    }
+
+    /**
+     * Serialises the patterns handed to the engine.
+     *
+     * @param specs patterns to scan for.
+     * @return a JSON array of `{"name": ..., "pattern": ...}` objects.
+     */
+    fun encodePatternSpecs(specs: List<PatternSpec>): String = gson.toJson(specs)
+
+    /**
      * Converts a failure thrown across the JNI boundary into a typed exception.
      *
      * @param failure the failure reported by the engine.

@@ -13,6 +13,10 @@ use std::path::PathBuf;
 use crate::android::{catch_panics, install};
 use crate::elf::MappedLibrary;
 use crate::error::{CoreError, CoreResult};
+use crate::memory::peak_resident_bytes;
+use crate::patterns::PatternSet;
+use crate::prologue::PrologueVerifier;
+use crate::scanner::{scan_section, verify_prologues, ScanControl, ScanOutcome};
 use crate::sections::build_section_map;
 use crate::symbols::build_symbol_report;
 use crate::zip_extract::extract_so_from_zip;
@@ -252,6 +256,121 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
             std::ptr::null_mut()
         }
     }
+}
+
+/// Scans the `.text` section of a library for the supplied patterns.
+///
+/// # Returns
+///
+/// A JSON object with the section, its size, the chunk and worker counts, the
+/// peak resident set reached, and every hit.
+///
+/// # Errors
+///
+/// Throws `EngineFailure` when the library cannot be mapped, has no usable
+/// `.text` section, a pattern is malformed, or the scan was cancelled.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_scanTextNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    path: JString,
+    sha256: JString,
+    patterns_json: JString,
+) -> jstring {
+    install();
+
+    let library_path = match read_jstring(&mut env, &path, "library path") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let library_hash = match read_jstring(&mut env, &sha256, "library hash") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let specs = match read_jstring(&mut env, &patterns_json, "patterns") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+
+    let outcome = catch_panics("scanning text", move || {
+        scan_text_json(&library_path, &library_hash, &specs)
+    });
+
+    match outcome {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(string) => string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(core_error)) => {
+            throw_core_error(&mut env, &core_error);
+            std::ptr::null_mut()
+        }
+        Err(panic_message) => {
+            throw_engine_failure(&mut env, "unknown", &panic_message);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// The payload the scan entry point serialises.
+#[derive(Debug, Serialize)]
+struct ScanPayload {
+    /// Everything the scan produced.
+    #[serde(flatten)]
+    outcome: ScanOutcome,
+    /// Peak resident set of the process after the scan, in bytes.
+    peak_resident_bytes: Option<u64>,
+}
+
+/// Maps `path`, scans `.text` for `patterns_json`, and serialises the result.
+///
+/// `patterns_json` is a JSON array of `{"name": ..., "pattern": ...}` objects.
+///
+/// # Errors
+///
+/// Propagates any mapping, section, pattern or cancellation failure.
+pub fn scan_text_json(path: &str, sha256: &str, patterns_json: &str) -> CoreResult<String> {
+    let specs = parse_pattern_specs(patterns_json)?;
+    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let map = build_section_map(library.bytes())?;
+    let set = PatternSet::new(&specs)?;
+
+    let control = ScanControl::new();
+    let outcome = scan_section(&map, library.bytes(), &set, &control)?;
+
+    // A byte signature only says "these bytes occur here"; decoding the bytes
+    // at each match is what separates a function start from a coincidence.
+    let verifier = PrologueVerifier::new()?;
+    let outcome = verify_prologues(outcome, &map, library.bytes(), &verifier, &control)?;
+
+    let payload = ScanPayload {
+        outcome,
+        peak_resident_bytes: peak_resident_bytes(),
+    };
+    Ok(serde_json::to_string(&payload).unwrap_or_default())
+}
+
+/// One entry of the pattern array handed in from Kotlin.
+#[derive(Debug, serde::Deserialize)]
+struct PatternSpec {
+    name: String,
+    pattern: String,
+}
+
+/// Parses the pattern array supplied by the caller.
+///
+/// # Errors
+///
+/// Returns [`CoreError::InvalidPattern`] when the payload is not a JSON array of
+/// named patterns.
+fn parse_pattern_specs(patterns_json: &str) -> CoreResult<Vec<(String, String)>> {
+    let specs: Vec<PatternSpec> = serde_json::from_str(patterns_json).map_err(|error| {
+        CoreError::InvalidPattern(format!("cannot parse the pattern list: {error}"))
+    })?;
+    Ok(specs
+        .into_iter()
+        .map(|spec| (spec.name, spec.pattern))
+        .collect())
 }
 
 /// Maps `path` and serialises its symbols, exposed for host tests.

@@ -98,6 +98,20 @@ object NativeLib {
         return describeSymbolsNative(path, sha256)
     }
 
+    /**
+     * Scans the executable section of the library at [path].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param patternsJson JSON array of `{"name": ..., "pattern": ...}` objects.
+     * @return a JSON object describing the scan and every hit.
+     * @throws EngineFailure when the library or a pattern is unusable.
+     */
+    fun scanText(path: String, sha256: String, patternsJson: String): String {
+        ensureLoaded()
+        return scanTextNative(path, sha256, patternsJson)
+    }
+
     private fun ensureLoaded() {
         if (!isAvailable) {
             throw EngineFailure(
@@ -114,4 +128,9 @@ object NativeLib {
     private external fun mapNativeLibraryNative(path: String, sha256: String): String
     private external fun describeSectionsNative(path: String, sha256: String): String
     private external fun describeSymbolsNative(path: String, sha256: String): String
+    private external fun scanTextNative(
+        path: String,
+        sha256: String,
+        patternsJson: String,
+    ): String
 }

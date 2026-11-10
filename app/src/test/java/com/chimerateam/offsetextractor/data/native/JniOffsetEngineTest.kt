@@ -3,6 +3,7 @@ package com.chimerateam.offsetextractor.data.native
 import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
+import com.chimerateam.offsetextractor.data.native.PatternSpec
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -182,6 +183,52 @@ class JniOffsetEngineTest {
     }
 
     @Test
+    fun scanPayloadIsParsedIntoHits() = runTest {
+        val engine = JniOffsetEngine(FakeBindings(scan = SCAN_JSON))
+
+        val outcome = engine.scanText(extracted, listOf(PatternSpec("prologue", "48 8B 05")))
+
+        assertEquals(".text", outcome.section)
+        assertEquals(0x7a0000L, outcome.scannedBytes)
+        assertEquals(19, outcome.chunks)
+        assertEquals(8, outcome.workers)
+        assertEquals(1, outcome.hits.size)
+        assertEquals(0x400000L, outcome.hits[0].address)
+        assertEquals("0x400000", outcome.hits[0].addressHex)
+        assertEquals(1, outcome.countOf("prologue"))
+        assertEquals(0, outcome.countOf("absent"))
+        assertEquals(64L * 1024 * 1024, outcome.peakResidentBytes)
+    }
+
+    @Test
+    fun scanPayloadWithoutASectionIsRejected() = runTest {
+        val engine = JniOffsetEngine(FakeBindings(scan = "{\"section\":null,\"hits\":null}"))
+
+        val error = runCatching {
+            engine.scanText(extracted, listOf(PatternSpec("x", "41")))
+        }.exceptionOrNull()
+
+        assertTrue("expected EngineException but was $error", error is EngineException)
+        assertEquals(EngineErrorKind.InvalidElf, (error as EngineException).kind)
+    }
+
+    @Test
+    fun patternsAreSerialisedForTheEngine() = runTest {
+        val bindings = FakeBindings(scan = SCAN_JSON)
+        val engine = JniOffsetEngine(bindings)
+
+        engine.scanText(
+            extracted,
+            listOf(PatternSpec("one", "48 8B ??"), PatternSpec("two", "DE AD")),
+        )
+
+        val sent = bindings.lastPatterns
+        assertTrue("missing first pattern in $sent", sent.contains("\"name\":\"one\""))
+        assertTrue("missing wildcard in $sent", sent.contains("48 8B ??"))
+        assertTrue("missing second pattern in $sent", sent.contains("\"name\":\"two\""))
+    }
+
+    @Test
     fun malformedPayloadIsRejected() = runTest {
         val engine = JniOffsetEngine(FakeBindings(extraction = "{not json"))
 
@@ -218,6 +265,9 @@ class JniOffsetEngineTest {
         private val mapping: String = "",
         private val sections: String = "",
         private val symbols: String = "",
+        private val scan: String = "",
+        var lastPatterns: String = "",
+
         private val failure: Throwable? = null,
     ) : NativeLibrary {
 
@@ -229,6 +279,12 @@ class JniOffsetEngineTest {
         override fun describeSymbols(path: String, sha256: String): String {
             failure?.let { throw it }
             return symbols
+        }
+
+        override fun scanText(path: String, sha256: String, patternsJson: String): String {
+            failure?.let { throw it }
+            lastPatterns = patternsJson
+            return scan
         }
 
         override fun extractNativeLibrary(fd: Int, destinationDir: String): String {
@@ -266,6 +322,25 @@ class JniOffsetEngineTest {
                 ],
                 "truncated": false
               }
+            }
+        """
+
+        const val SCAN_JSON = """
+            {
+              "section": ".text",
+              "scanned_bytes": 7995392,
+              "chunks": 19,
+              "workers": 8,
+              "peak_resident_bytes": 67108864,
+              "hits": [
+                {
+                  "name": "prologue",
+                  "section_offset": 0,
+                  "file_offset": 12288,
+                  "address": 4194304,
+                  "address_hex": "0x400000"
+                }
+              ]
             }
         """
 

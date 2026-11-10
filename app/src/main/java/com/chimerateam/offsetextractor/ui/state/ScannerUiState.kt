@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor.ui.state
 
+import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.saf.ApkMetadata
 
@@ -60,6 +61,9 @@ enum class ScannerPhase {
  * @property buildId build identifier of the library, used as the cache key.
  * @property buildIdSource where the identifier came from.
  * @property jniSymbolCount number of `Java_` symbols exported by the library.
+ * @property patternHits every verified signature match.
+ * @property discardedMatches candidates the prologue check threw away.
+ * @property peakResidentBytes peak resident set after the scan, when reported.
  */
 data class ScanResultSummary(
     val displayName: String,
@@ -72,4 +76,7 @@ data class ScanResultSummary(
     val buildId: String = "",
     val buildIdSource: String = "",
     val jniSymbolCount: Int = 0,
+    val patternHits: List<PatternHit> = emptyList(),
+    val discardedMatches: Int = 0,
+    val peakResidentBytes: Long? = null,
 )

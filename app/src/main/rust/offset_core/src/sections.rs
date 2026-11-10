@@ -147,9 +147,14 @@ impl SectionMap {
 
     /// Returns the raw bytes of a section, or an empty slice when it is absent.
     ///
-    /// The returned slice borrows the mapped file; nothing is copied.
+    /// The returned slice borrows the mapped file; nothing is copied. `.text` is
+    /// resolved from the dedicated field, so a map built without the full
+    /// section list still yields the executable bytes.
     pub fn bytes_of<'a>(&self, name: &str, image: &'a [u8]) -> &'a [u8] {
-        match self.find(name) {
+        let found = self
+            .find(name)
+            .or_else(|| (self.text.name == name).then_some(&self.text));
+        match found {
             Some(section) if section.occupies_file => {
                 let start = section.offset as usize;
                 let end = start.saturating_add(section.size as usize);

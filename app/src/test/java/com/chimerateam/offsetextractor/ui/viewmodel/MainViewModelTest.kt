@@ -18,6 +18,9 @@ import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.BuildIdentity
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
 import com.chimerateam.offsetextractor.data.native.SectionMap
+import com.chimerateam.offsetextractor.data.native.PatternHit
+import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.SymbolReport
 import com.chimerateam.offsetextractor.data.native.SymbolTable
 import com.chimerateam.offsetextractor.ui.log.LogEntry
@@ -105,6 +108,11 @@ class MainViewModelTest {
         assertEquals(1, engine.mapCalls)
         assertEquals(1, engine.sectionCalls)
         assertEquals(1, engine.symbolCalls)
+        assertEquals(1, engine.scanCalls)
+        assertEquals(1, state.result?.patternHits?.size)
+        assertEquals("prologue", state.result?.patternHits?.first()?.name)
+        assertEquals(0, state.result?.discardedMatches)
+        assertEquals(32L * 1024 * 1024, state.result?.peakResidentBytes)
         assertEquals("abcdef0123456789", state.result?.buildId)
         assertEquals(1, state.result?.jniSymbolCount)
     }
@@ -351,10 +359,12 @@ class MainViewModelTest {
     private fun newViewModel(
         engine: OffsetEngine = FakeEngine(),
         access: SafApkAccess = FakeSafAccess(),
+        patterns: List<PatternSpec> = listOf(PatternSpec("prologue", "FD 7B BF A9")),
     ): MainViewModel = MainViewModel(
         safAccess = access,
         engine = engine,
         cacheDir = cacheDir,
+        patterns = patterns,
         ioDispatcher = dispatcher,
     )
 }
@@ -436,6 +446,36 @@ private class FakeEngine(
 
     var symbolCalls = 0
         private set
+
+    var scanCalls = 0
+        private set
+
+    override suspend fun scanText(
+        library: ExtractedNativeLibrary,
+        patterns: List<PatternSpec>,
+    ): ScanOutcome {
+        scanCalls++
+        if (delayMillis > 0) {
+            delay(delayMillis)
+        }
+        failure?.let { throw it }
+        return ScanOutcome(
+            section = ".text",
+            scannedBytes = TEXT.size,
+            chunks = 1,
+            workers = 1,
+            hits = listOf(
+                PatternHit(
+                    name = patterns.firstOrNull()?.name ?: "unknown",
+                    sectionOffset = 0,
+                    fileOffset = TEXT.offset,
+                    address = TEXT.address,
+                    addressHex = "0x400000",
+                ),
+            ),
+            peakResidentBytes = 32L * 1024 * 1024,
+        )
+    }
 
     override suspend fun describeSymbols(library: ExtractedNativeLibrary): SymbolReport {
         symbolCalls++

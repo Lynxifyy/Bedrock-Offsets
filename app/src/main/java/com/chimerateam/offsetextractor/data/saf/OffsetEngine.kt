@@ -2,6 +2,8 @@ package com.chimerateam.offsetextractor.data.saf
 
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.data.native.SectionMap
+import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.SymbolReport
 import java.io.File
 
@@ -58,6 +60,19 @@ interface OffsetEngine {
      * @throws EngineException when the library cannot be parsed.
      */
     suspend fun describeSymbols(library: ExtractedNativeLibrary): SymbolReport
+
+    /**
+     * Scans the executable section for every supplied signature.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @param patterns signatures to look for.
+     * @return every verified hit, with its file offset and virtual address.
+     * @throws EngineException when the library or a pattern is unusable.
+     */
+    suspend fun scanText(
+        library: ExtractedNativeLibrary,
+        patterns: List<PatternSpec>,
+    ): ScanOutcome
 }
 
 /**

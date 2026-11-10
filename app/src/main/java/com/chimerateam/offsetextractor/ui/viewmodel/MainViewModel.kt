@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.data.saf.ApkSource
+import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.ui.error.ErrorMapper
@@ -12,6 +14,7 @@ import com.chimerateam.offsetextractor.ui.log.Logs
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.state.ScannerUiState
+import com.chimerateam.offsetextractor.util.formatBytes
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -47,6 +50,7 @@ private const val TAG_SAF = "SAF"
  * @param safAccess storage-access implementation used to open APKs.
  * @param engine extraction engine, JNI-backed in production.
  * @param cacheDir directory that receives extracted native libraries.
+ * @param patterns signatures the scanner looks for; empty skips the scan.
  * @param ioDispatcher dispatcher for all blocking file work; overridden in
  *   tests so virtual time can drive the coroutines.
  */
@@ -54,6 +58,7 @@ class MainViewModel(
     private val safAccess: SafApkAccess,
     private val engine: OffsetEngine,
     private val cacheDir: File,
+    private val patterns: List<PatternSpec> = emptyList(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
@@ -247,6 +252,8 @@ class MainViewModel(
                 ),
             )
 
+            val scan = scanForOffsets(extracted)
+
             _uiState.update {
                 it.copy(
                     phase = ScannerPhase.Success,
@@ -263,6 +270,9 @@ class MainViewModel(
                         buildId = symbols.identity.buildId,
                         buildIdSource = symbols.identity.source,
                         jniSymbolCount = symbols.symbols.jni.size,
+                        patternHits = scan?.hits.orEmpty(),
+                        discardedMatches = scan?.discarded ?: 0,
+                        peakResidentBytes = scan?.peakResidentBytes,
                     ),
                     error = null,
                     errorHint = null,
@@ -274,6 +284,41 @@ class MainViewModel(
             val mapped = ErrorMapper.fromThrowable(throwable, source.metadata.displayName)
             fail(mapped.message, mapped.hint, tag = TAG_RUST)
         }
+    }
+
+    /**
+     * Scans the extracted library for every configured signature.
+     *
+     * @param extracted the library to scan.
+     * @return the scan outcome, or `null` when no patterns are configured.
+     */
+    private suspend fun scanForOffsets(
+        extracted: com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary,
+    ): ScanOutcome? {
+        if (patterns.isEmpty()) {
+            emit(Logs.warn(TAG_RUST, "No signatures configured; skipping the scan."))
+            return null
+        }
+
+        _uiState.update { it.copy(progressTask = "Scanning executable section") }
+        val outcome = engine.scanText(extracted, patterns)
+        emit(
+            Logs.info(
+                TAG_RUST,
+                "Parallel scan complete. Found ${outcome.hits.size} pattern matches.",
+            ),
+        )
+        emit(
+            Logs.info(
+                TAG_RUST,
+                "Verified ${outcome.hits.size} valid function prologues " +
+                    "(${outcome.discarded} discarded).",
+            ),
+        )
+        outcome.peakResidentBytes?.let { peak ->
+            emit(Logs.info(TAG_RUST, "Peak resident set ${formatBytes(peak)}"))
+        }
+        return outcome
     }
 
     /** Formats [value] as a `0x`-prefixed hexadecimal string. */
@@ -311,6 +356,7 @@ class MainViewModel(
      * @param safAccess storage-access implementation.
      * @param engine extraction engine.
      * @param cacheDir directory that receives extracted native libraries.
+ * @param patterns signatures the scanner looks for; empty skips the scan.
      */
     companion object {
         private const val LOG_BUFFER = 64
@@ -321,12 +367,14 @@ class MainViewModel(
          * @param safAccess storage-access implementation used to open APKs.
          * @param engine extraction engine, JNI-backed in production.
          * @param cacheDir directory that receives extracted native libraries.
+ * @param patterns signatures the scanner looks for; empty skips the scan.
          * @return a ready-to-use ViewModel.
          */
         fun create(
             safAccess: SafApkAccess,
             engine: OffsetEngine,
             cacheDir: File,
-        ): MainViewModel = MainViewModel(safAccess, engine, cacheDir)
+            patterns: List<PatternSpec> = emptyList(),
+        ): MainViewModel = MainViewModel(safAccess, engine, cacheDir, patterns)
     }
 }

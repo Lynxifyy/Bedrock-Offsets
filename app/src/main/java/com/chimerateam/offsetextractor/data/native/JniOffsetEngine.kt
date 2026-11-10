@@ -79,6 +79,28 @@ class JniOffsetEngine(
         return EnginePayloads.parseSymbolReport(json)
     }
 
+    /**
+     * Scans the executable section for every supplied signature.
+     *
+     * @param library the previously extracted library.
+     * @param patterns signatures to look for.
+     * @return every verified hit, with its file offset and virtual address.
+     * @throws EngineException when the library or a pattern is unusable.
+     */
+    override suspend fun scanText(
+        library: ExtractedNativeLibrary,
+        patterns: List<PatternSpec>,
+    ): ScanOutcome {
+        val json = call("scanning the executable section") {
+            nativeLibrary.scanText(
+                library.path,
+                library.sha256,
+                EnginePayloads.encodePatternSpecs(patterns),
+            )
+        }
+        return EnginePayloads.parseScanOutcome(json)
+    }
+
     private inline fun call(what: String, block: () -> String): String =
         try {
             block()
@@ -136,6 +158,16 @@ interface NativeLibrary {
      * @return a JSON payload with `identity` and `symbols`.
      */
     fun describeSymbols(path: String, sha256: String): String
+
+    /**
+     * Scans the executable section of the library at [path].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param patternsJson JSON array of `{"name": ..., "pattern": ...}` objects.
+     * @return a JSON payload describing the scan and every hit.
+     */
+    fun scanText(path: String, sha256: String, patternsJson: String): String
 }
 
 /** Production bindings, backed by [NativeLib]. */
@@ -152,4 +184,7 @@ object JniNativeLibrary : NativeLibrary {
 
     override fun describeSymbols(path: String, sha256: String): String =
         NativeLib.describeSymbols(path, sha256)
+
+    override fun scanText(path: String, sha256: String, patternsJson: String): String =
+        NativeLib.scanText(path, sha256, patternsJson)
 }
