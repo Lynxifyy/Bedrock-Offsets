@@ -21,7 +21,6 @@ pub fn install() {
 #[cfg(target_os = "android")]
 fn install_logger() {
     use android_logger::Config;
-    use log::LevelFilter;
 
     // A release build keeps logcat at warnings and above. The engine logs
     // section boundaries and library sizes at info level, and those are the

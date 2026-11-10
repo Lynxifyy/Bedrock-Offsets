@@ -12,6 +12,17 @@ ever executing it.
 
 The app has no `INTERNET` permission. Nothing you scan leaves the device.
 
+## Download
+
+The latest release APK is on the
+[releases page](https://github.com/Lynxifyy/Bedrock-Offsets/releases/latest):
+`bedrock-offset-extractor-v1.0.0.apk`, signed and built for `arm64-v8a`.
+
+Install it on the device with `adb install`, or open the file on the device and
+allow installation from that source. The APK is signed with the debug key until
+the repository has release-signing secrets, so an Android build that blocks
+debug-signed packages will refuse it; see [Releasing](#releases).
+
 ## How it works
 
 ```
@@ -145,6 +156,19 @@ python3 scripts/generate_patterns.py patterns.txt --check  # fail if stale
 
 Exit codes: `0` on success, `1` for a malformed entry or a stale pack under
 `--check`, `2` for an unusable path.
+
+### `scripts/verify_version.py`
+
+Checks that a release tag and the `versionName` in `app/build.gradle.kts` say
+the same thing. A tag and the version inside the APK are two statements about
+one release, and nothing else notices when they drift.
+
+```bash
+python3 scripts/verify_version.py --tag v1.0.0
+```
+
+Exit codes: `0` when they agree, `1` when they disagree or the version cannot be
+read, `2` for a bad argument. The release workflow runs it before assembling.
 
 ### `scripts/verify_release.py`
 
