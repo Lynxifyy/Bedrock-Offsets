@@ -82,6 +82,10 @@ android {
                     keyPassword = releaseKeyPassword
                 }
             } else {
+                // Without the real material the debug key is used, so the APK
+                // is still installable for local testing. CI supplies the real
+                // keystore and fails the release when the result is unsigned.
+                signingConfig = signingConfigs.getByName("debug")
                 logger.lifecycle(
                     "No release signing material found; the release APK will be " +
                         "signed with the debug key. Set SIGNING_KEYSTORE, " +
