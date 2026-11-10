@@ -1,7 +1,6 @@
 package com.chimerateam.offsetextractor.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,10 +36,7 @@ private const val MAX_SHOWN_VTABLES = 8
  * @param modifier layout modifier for the panel.
  */
 @Composable
-fun ResultsPanel(
-    result: ScanResultSummary,
-    modifier: Modifier = Modifier,
-) {
+fun ResultsPanel(result: ScanResultSummary, modifier: Modifier = Modifier) {
     SectionPanel(title = "Result", modifier = modifier) {
         Field("APK", result.displayName)
         Field("Architecture", result.architecture)
@@ -65,7 +61,7 @@ fun ResultsPanel(
                 Text(
                     text = "and ${result.patternHits.size - MAX_SHOWN_HITS} more",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -83,7 +79,7 @@ fun ResultsPanel(
                 Text(
                     text = "and ${result.vtables.size - MAX_SHOWN_VTABLES} more",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -102,7 +98,7 @@ fun ResultsPanel(
                 text = "A file offset becomes a virtual address by adding the " +
                     "load delta for its section.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -113,12 +109,12 @@ fun ResultsPanel(
 private fun Field(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(text = value, style = MonoText.body)
     }
@@ -147,8 +143,8 @@ private fun ResultsPanelPreview() {
                         address = 0x403120,
                         addressHex = "0x403120",
                         prologueKind = "frame_push",
-                        prologueInstruction = "stp x29, x30, [sp, #-16]!",
-                    ),
+                        prologueInstruction = "stp x29, x30, [sp, #-16]!"
+                    )
                 ),
                 discardedMatches = 3,
                 peakResidentBytes = 42L * 1024 * 1024,
@@ -163,9 +159,9 @@ private fun ResultsPanelPreview() {
                             vtableAddress = 0x403000,
                             vtableHex = "0x403000",
                             vtableOffset = 0x3000,
-                            typeInfoAddress = 0x403080,
-                        ),
-                    ),
+                            typeInfoAddress = 0x403080
+                        )
+                    )
                 ),
                 textSection = SectionInfo(
                     name = ".text",
@@ -178,10 +174,10 @@ private fun ResultsPanelPreview() {
                     allocated = true,
                     executable = true,
                     writable = false,
-                    occupiesFile = true,
-                ),
+                    occupiesFile = true
+                )
             ),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }

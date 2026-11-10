@@ -1,7 +1,7 @@
 package com.chimerateam.offsetextractor.ui.screens
 
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
@@ -41,13 +41,13 @@ class ResultsScreenTest {
         allocated = true,
         executable = true,
         writable = false,
-        occupiesFile = true,
+        occupiesFile = true
     )
 
     private fun hit(
         name: String,
         address: Long,
-        status: VerificationStatus = VerificationStatus.Unverified,
+        status: VerificationStatus = VerificationStatus.Unverified
     ) = PatternHit(
         name = name,
         sectionOffset = address - text.address,
@@ -56,7 +56,7 @@ class ResultsScreenTest {
         addressHex = "0x%x".format(address),
         prologueKind = "frame_push",
         prologueInstruction = "stp x29, x30, [sp, #-16]!",
-        verificationStatus = status,
+        verificationStatus = status
     )
 
     private val summary = ScanResultSummary(
@@ -71,15 +71,15 @@ class ResultsScreenTest {
         buildIdSource = "note",
         patternHits = listOf(
             hit("clientInstance", 0x401000, VerificationStatus.Verified),
-            hit("driftedTarget", 0x402000, VerificationStatus.Conflict),
+            hit("driftedTarget", 0x402000, VerificationStatus.Conflict)
         ),
         expectedPatterns = listOf("clientInstance", "driftedTarget", "absentSignature"),
         verification = VerificationSummary(
             verified = 1,
             conflicts = 1,
             unverified = 1,
-            symbolsAvailable = true,
-        ),
+            symbolsAvailable = true
+        )
     )
 
     private fun content() {
@@ -90,7 +90,7 @@ class ResultsScreenTest {
                     onCopyJson = {},
                     onShareJson = {},
                     onSaveJson = {},
-                    onStartNewScan = {},
+                    onStartNewScan = {}
                 )
             }
         }

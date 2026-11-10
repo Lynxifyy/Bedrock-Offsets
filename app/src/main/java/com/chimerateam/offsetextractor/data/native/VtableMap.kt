@@ -19,7 +19,7 @@ data class TypeVTable(
     @SerializedName("vtable_address") val vtableAddress: Long,
     @SerializedName("vtable_hex") val vtableHex: String,
     @SerializedName("vtable_offset") val vtableOffset: Long,
-    @SerializedName("type_info_address") val typeInfoAddress: Long,
+    @SerializedName("type_info_address") val typeInfoAddress: Long
 )
 
 /**
@@ -34,7 +34,7 @@ data class VtableMap(
     val source: String,
     @SerializedName("type_info_candidates") val typeInfoCandidates: Int,
     @SerializedName("relocations_examined") val relocationsExamined: Int,
-    val entries: Map<String, TypeVTable>,
+    val entries: Map<String, TypeVTable>
 ) {
     /** Number of resolved vtables. */
     val size: Int get() = entries.size
@@ -57,7 +57,7 @@ data class VtableMap(
             source = SOURCE_DIRECT_SCAN,
             typeInfoCandidates = 0,
             relocationsExamined = 0,
-            entries = emptyMap(),
+            entries = emptyMap()
         )
     }
 }
@@ -67,5 +67,5 @@ internal data class VtableMapPayload(
     val source: String?,
     @SerializedName("type_info_candidates") val typeInfoCandidates: Int?,
     @SerializedName("relocations_examined") val relocationsExamined: Int?,
-    val entries: Map<String, TypeVTable>?,
+    val entries: Map<String, TypeVTable>?
 )

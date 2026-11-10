@@ -4,33 +4,33 @@ import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
-import com.chimerateam.offsetextractor.data.saf.ApkMetadata
-import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
-import com.chimerateam.offsetextractor.data.saf.ApkSource
-import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
-import com.chimerateam.offsetextractor.data.saf.EngineException
-import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
-import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
-import com.chimerateam.offsetextractor.data.saf.DocumentWriter
-import com.chimerateam.offsetextractor.data.saf.SafApkAccess
-import com.chimerateam.offsetextractor.data.saf.WriteResult
-import com.chimerateam.offsetextractor.data.saf.SafFailure
-import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
-import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.BuildIdentity
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
-import com.chimerateam.offsetextractor.data.native.SectionMap
-import com.chimerateam.offsetextractor.data.native.TypeVTable
-import com.chimerateam.offsetextractor.data.native.VtableMap
+import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
-import com.chimerateam.offsetextractor.data.native.VerificationSummary
+import com.chimerateam.offsetextractor.data.native.SectionInfo
+import com.chimerateam.offsetextractor.data.native.SectionMap
 import com.chimerateam.offsetextractor.data.native.SymbolReport
 import com.chimerateam.offsetextractor.data.native.SymbolTable
+import com.chimerateam.offsetextractor.data.native.TypeVTable
+import com.chimerateam.offsetextractor.data.native.VerificationSummary
+import com.chimerateam.offsetextractor.data.native.VtableMap
+import com.chimerateam.offsetextractor.data.saf.ApkMetadata
+import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
+import com.chimerateam.offsetextractor.data.saf.ApkSource
+import com.chimerateam.offsetextractor.data.saf.DocumentWriter
+import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
+import com.chimerateam.offsetextractor.data.saf.EngineException
+import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
+import com.chimerateam.offsetextractor.data.saf.OffsetEngine
+import com.chimerateam.offsetextractor.data.saf.SafApkAccess
+import com.chimerateam.offsetextractor.data.saf.SafFailure
+import com.chimerateam.offsetextractor.data.saf.WriteResult
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogLevel
 import com.chimerateam.offsetextractor.ui.state.ProgressTracker
@@ -91,8 +91,8 @@ class MainViewModelTest {
             result = ExtractedNativeLibrary(
                 path = "/cache/libminecraftpe.so",
                 sha256 = "abc123",
-                sizeBytes = 4096,
-            ),
+                sizeBytes = 4096
+            )
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -126,7 +126,7 @@ class MainViewModelTest {
         assertEquals("ClientInstance", state.result?.vtables?.entries?.keys?.first())
         assertEquals(
             "0x403000",
-            state.result?.vtables?.entries?.get("ClientInstance")?.vtableHex,
+            state.result?.vtables?.entries?.get("ClientInstance")?.vtableHex
         )
         assertEquals("abcdef0123456789", state.result?.buildId)
         assertEquals(1, state.result?.jniSymbolCount)
@@ -146,7 +146,7 @@ class MainViewModelTest {
             42 to "Matching signatures",
             49 to "Matching signatures",
             55 to "Verifying prologues",
-            100 to "Scan complete",
+            100 to "Scan complete"
         )
         val viewModel = newViewModel(engine = engine)
         val logs = mutableListOf<LogEntry>()
@@ -161,9 +161,22 @@ class MainViewModelTest {
         assertEquals(100, state.progress)
         assertEquals(10, engine.progressReports.size)
         val messages = logs.map { it.message }
-        assertTrue("Matching signatures not logged: $messages", messages.any { it.contains("Matching signatures") })
-        assertTrue("Verifying prologues not logged: $messages", messages.any { it.contains("Verifying prologues") })
-        assertTrue("Scan complete not logged: $messages", messages.any { it.contains("Scan complete") })
+        assertTrue(
+            "Matching signatures not logged: $messages",
+            messages.any {
+                it.contains("Matching signatures")
+            }
+        )
+        assertTrue(
+            "Verifying prologues not logged: $messages",
+            messages.any {
+                it.contains("Verifying prologues")
+            }
+        )
+        assertTrue(
+            "Scan complete not logged: $messages",
+            messages.any { it.contains("Scan complete") }
+        )
         // Each step is logged once, not once per percent point.
         assertEquals(1, messages.count { it.contains("Matching signatures") })
     }
@@ -171,7 +184,7 @@ class MainViewModelTest {
     @Test
     fun missingSoFileProducesActionableError() = runTest(dispatcher) {
         val engine = FakeEngine(
-            failure = EngineException(EngineErrorKind.MissingSoFile, "missing"),
+            failure = EngineException(EngineErrorKind.MissingSoFile, "missing")
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -187,7 +200,7 @@ class MainViewModelTest {
     @Test
     fun unreadableArchiveIsReportedNotCrashed() = runTest(dispatcher) {
         val engine = FakeEngine(
-            failure = EngineException(EngineErrorKind.InvalidApk, "bad zip"),
+            failure = EngineException(EngineErrorKind.InvalidApk, "bad zip")
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -203,7 +216,7 @@ class MainViewModelTest {
     fun safFailureIsSurfacedWithoutStartingTheEngine() = runTest(dispatcher) {
         val engine = FakeEngine()
         val access = FakeSafAccess(
-            openResult = ApkOpenResult.Failure(SafFailure.SecurityDenied, "denied"),
+            openResult = ApkOpenResult.Failure(SafFailure.SecurityDenied, "denied")
         )
         val viewModel = newViewModel(engine = engine, access = access)
 
@@ -219,7 +232,7 @@ class MainViewModelTest {
     @Test
     fun unsupportedArchitectureSurfacesAsAnError() = runTest(dispatcher) {
         val engine = FakeEngine(
-            failure = EngineException(EngineErrorKind.UnsupportedArchitecture, "32-bit"),
+            failure = EngineException(EngineErrorKind.UnsupportedArchitecture, "32-bit")
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -245,7 +258,7 @@ class MainViewModelTest {
 
         assertTrue(
             "expected the zero-copy mapping line",
-            collected.any { it.message.contains("zero-copy") },
+            collected.any { it.message.contains("zero-copy") }
         )
     }
 
@@ -312,7 +325,7 @@ class MainViewModelTest {
     @Test
     fun retryReturnsToIdleAndClearsTheError() = runTest(dispatcher) {
         val engine = FakeEngine(
-            failure = EngineException(EngineErrorKind.InvalidApk, "bad"),
+            failure = EngineException(EngineErrorKind.InvalidApk, "bad")
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -332,7 +345,7 @@ class MainViewModelTest {
     @Test
     fun logsCarryTagsAndTheHashLineIsEmitted() = runTest(dispatcher) {
         val engine = FakeEngine(
-            result = ExtractedNativeLibrary("/cache/libminecraftpe.so", "deadbeef", 2048),
+            result = ExtractedNativeLibrary("/cache/libminecraftpe.so", "deadbeef", 2048)
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -345,22 +358,22 @@ class MainViewModelTest {
 
         assertTrue(
             "expected a SAF descriptor line",
-            collected.any { it.tag == "SAF" && it.message.contains("File Descriptor") },
+            collected.any { it.tag == "SAF" && it.message.contains("File Descriptor") }
         )
         assertTrue(
             "expected the hash line",
-            collected.any { it.tag == "RUST" && it.message.contains("Hash: deadbeef") },
+            collected.any { it.tag == "RUST" && it.message.contains("Hash: deadbeef") }
         )
         assertTrue(
             "expected no error lines",
-            collected.none { it.level == LogLevel.Error },
+            collected.none { it.level == LogLevel.Error }
         )
     }
 
     @Test
     fun selectingAgainClearsTheStaleResultBeforeExtracting() = runTest(dispatcher) {
         val engine = FakeEngine(
-            result = ExtractedNativeLibrary("/cache/libminecraftpe.so", "hash", 128),
+            result = ExtractedNativeLibrary("/cache/libminecraftpe.so", "hash", 128)
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -502,7 +515,11 @@ class MainViewModelTest {
 
         assertEquals(ScannerPhase.Success, second.uiState.value.phase)
         assertEquals("a cache hit must skip the scan", 0, engine.scanCalls)
-        assertEquals("the cached result must be reused", 1, second.uiState.value.result?.patternHits?.size)
+        assertEquals(
+            "the cached result must be reused",
+            1,
+            second.uiState.value.result?.patternHits?.size
+        )
     }
 
     @Test
@@ -546,7 +563,7 @@ class MainViewModelTest {
 
         assertTrue(
             "the cache size must reflect the stored document",
-            viewModel.cacheSizeBytes.value > 0,
+            viewModel.cacheSizeBytes.value > 0
         )
     }
 
@@ -615,7 +632,7 @@ class MainViewModelTest {
         assertTrue("expected a RUST line", entries.any { it.tag == "RUST" })
         assertTrue(
             "expected the timestamps to advance",
-            entries.map { it.timestampMillis }.distinct().isNotEmpty(),
+            entries.map { it.timestampMillis }.distinct().isNotEmpty()
         )
     }
 
@@ -627,9 +644,9 @@ class MainViewModelTest {
                     verified = 1,
                     conflicts = 0,
                     unverified = 0,
-                    symbolsAvailable = true,
-                ),
-            ),
+                    symbolsAvailable = true
+                )
+            )
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -639,7 +656,7 @@ class MainViewModelTest {
         val entries = viewModel.logEntries.value
         assertTrue(
             "expected the verification line: ${entries.map { it.message }}",
-            entries.any { it.message.contains("Offset verification complete") },
+            entries.any { it.message.contains("Offset verification complete") }
         )
         assertEquals(1, viewModel.uiState.value.result?.verification?.verified)
     }
@@ -652,9 +669,9 @@ class MainViewModelTest {
                     verified = 0,
                     conflicts = 2,
                     unverified = 0,
-                    symbolsAvailable = true,
-                ),
-            ),
+                    symbolsAvailable = true
+                )
+            )
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -664,7 +681,7 @@ class MainViewModelTest {
         val errors = viewModel.logEntries.value.filter { it.level == LogLevel.Error }
         assertTrue(
             "a conflict must be loud: ${errors.map { it.message }}",
-            errors.any { it.message.contains("disagree with the symbol table") },
+            errors.any { it.message.contains("disagree with the symbol table") }
         )
     }
 
@@ -676,9 +693,9 @@ class MainViewModelTest {
                     verified = 0,
                     conflicts = 0,
                     unverified = 3,
-                    symbolsAvailable = false,
-                ),
-            ),
+                    symbolsAvailable = false
+                )
+            )
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -693,7 +710,7 @@ class MainViewModelTest {
     @Test
     fun aMissingTextSectionIsReportedNotCrashed() = runTest(dispatcher) {
         val engine = FakeEngine(
-            failure = EngineException(EngineErrorKind.MissingSection, ".text is absent"),
+            failure = EngineException(EngineErrorKind.MissingSection, ".text is absent")
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -703,14 +720,14 @@ class MainViewModelTest {
         assertEquals(ScannerPhase.Error, viewModel.uiState.value.phase)
         assertTrue(
             "expected a section message",
-            viewModel.uiState.value.error?.contains("section") == true,
+            viewModel.uiState.value.error?.contains("section") == true
         )
     }
 
     @Test
     fun aStorageFullFailureExplainsItself() = runTest(dispatcher) {
         val engine = FakeEngine(
-            failure = EngineException(EngineErrorKind.StorageFull, "no space left"),
+            failure = EngineException(EngineErrorKind.StorageFull, "no space left")
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -734,7 +751,7 @@ class MainViewModelTest {
         assertEquals(ScannerPhase.Error, viewModel.uiState.value.phase)
         assertTrue(
             "expected a memory message",
-            viewModel.uiState.value.error?.contains("memory") == true,
+            viewModel.uiState.value.error?.contains("memory") == true
         )
     }
 
@@ -762,7 +779,7 @@ class MainViewModelTest {
         assertTrue(viewModel.uiState.value.lowMemory)
         assertTrue(
             "the notice must be logged",
-            viewModel.logEntries.value.any { it.message.contains("low on memory") },
+            viewModel.logEntries.value.any { it.message.contains("low on memory") }
         )
 
         viewModel.onLowMemoryNoticeDismissed()
@@ -798,7 +815,7 @@ class MainViewModelTest {
     @Test
     fun aBatchScansEveryApkAndSummarisesTheRun() = runTest(dispatcher) {
         val access = FakeSafAccess(
-            failFor = setOf("content://test.provider/second.apk"),
+            failFor = setOf("content://test.provider/second.apk")
         )
         val viewModel = newViewModel(access = access)
 
@@ -806,8 +823,8 @@ class MainViewModelTest {
             listOf(
                 Uri.parse("content://test.provider/first.apk"),
                 Uri.parse("content://test.provider/second.apk"),
-                Uri.parse("content://test.provider/third.apk"),
-            ),
+                Uri.parse("content://test.provider/third.apk")
+            )
         )
         advanceUntilIdle()
 
@@ -827,8 +844,8 @@ class MainViewModelTest {
         viewModel.onApksSelected(
             listOf(
                 Uri.parse("content://test.provider/first.apk"),
-                Uri.parse("content://test.provider/second.apk"),
-            ),
+                Uri.parse("content://test.provider/second.apk")
+            )
         )
         advanceUntilIdle()
 
@@ -838,22 +855,22 @@ class MainViewModelTest {
     @Test
     fun aBatchReportsOneFailureWithoutSinkingTheRun() = runTest(dispatcher) {
         val access = FakeSafAccess(
-            failFor = setOf("content://test.provider/broken.apk"),
+            failFor = setOf("content://test.provider/broken.apk")
         )
         val viewModel = newViewModel(access = access)
 
         viewModel.onApksSelected(
             listOf(
                 Uri.parse("content://test.provider/broken.apk"),
-                Uri.parse("content://test.provider/good.apk"),
-            ),
+                Uri.parse("content://test.provider/good.apk")
+            )
         )
         advanceUntilIdle()
 
         assertEquals(1, viewModel.uiState.value.batchSummary?.succeeded)
         assertTrue(
             "the run must be logged",
-            viewModel.logEntries.value.any { it.message.contains("Processed 2 APKs") },
+            viewModel.logEntries.value.any { it.message.contains("Processed 2 APKs") }
         )
     }
 
@@ -888,8 +905,8 @@ class MainViewModelTest {
         busy.onApksSelected(
             listOf(
                 Uri.parse("content://test.provider/first.apk"),
-                Uri.parse("content://test.provider/second.apk"),
-            ),
+                Uri.parse("content://test.provider/second.apk")
+            )
         )
         runCurrent()
 
@@ -901,7 +918,7 @@ class MainViewModelTest {
         assertNull(busy.uiState.value.batch)
         assertTrue(
             "the cancellation must be logged",
-            busy.logEntries.value.any { it.message.contains("Batch cancelled") },
+            busy.logEntries.value.any { it.message.contains("Batch cancelled") }
         )
         // A ViewModel with nothing running reports no batch to cancel.
         viewModel.cancelBatch()
@@ -915,8 +932,8 @@ class MainViewModelTest {
         viewModel.onApksSelected(
             listOf(
                 Uri.parse("content://test.provider/first.apk"),
-                Uri.parse("content://test.provider/second.apk"),
-            ),
+                Uri.parse("content://test.provider/second.apk")
+            )
         )
         advanceUntilIdle()
         assertNotNull(viewModel.uiState.value.batchSummary)
@@ -935,7 +952,7 @@ class MainViewModelTest {
     private fun startCollector(
         scope: CoroutineScope,
         viewModel: MainViewModel,
-        into: MutableList<LogEntry>,
+        into: MutableList<LogEntry>
     ): Job = scope.launch {
         viewModel.logs.collect { into.add(it) }
     }
@@ -946,7 +963,7 @@ class MainViewModelTest {
         patterns: List<PatternSpec> = listOf(PatternSpec("prologue", "FD 7B BF A9")),
         writer: DocumentWriter = DocumentWriter { _, _ -> WriteResult.Success },
         cache: ScanCache? = null,
-        preferences: ScanPreferences? = null,
+        preferences: ScanPreferences? = null
     ): MainViewModel = MainViewModel(
         safAccess = access,
         engine = engine,
@@ -955,7 +972,7 @@ class MainViewModelTest {
         writer = writer,
         cache = cache,
         preferences = preferences,
-        ioDispatcher = dispatcher,
+        ioDispatcher = dispatcher
     )
 
     private fun newCache(): ScanCache = ScanCache(File(cacheDir, "scan-cache"))
@@ -973,10 +990,10 @@ private fun scanOutcome(): ScanOutcome = ScanOutcome(
             sectionOffset = 0,
             fileOffset = TEXT.offset,
             address = TEXT.address,
-            addressHex = "0x400000",
-        ),
+            addressHex = "0x400000"
+        )
     ),
-    peakResidentBytes = 32L * 1024 * 1024,
+    peakResidentBytes = 32L * 1024 * 1024
 )
 
 /** The `.text` section used by the fake engine. */
@@ -991,7 +1008,7 @@ private val TEXT = SectionInfo(
     allocated = true,
     executable = true,
     writable = false,
-    occupiesFile = true,
+    occupiesFile = true
 )
 
 /** The `.rodata` section used by the fake engine. */
@@ -1006,7 +1023,7 @@ private val RODATA = SectionInfo(
     allocated = true,
     executable = false,
     writable = false,
-    occupiesFile = true,
+    occupiesFile = true
 )
 
 /** Deterministic engine double with virtual-time delay and call counting. */
@@ -1014,12 +1031,12 @@ private class FakeEngine(
     private val result: ExtractedNativeLibrary = ExtractedNativeLibrary(
         path = "/cache/libminecraftpe.so",
         sha256 = "test",
-        sizeBytes = 1,
+        sizeBytes = 1
     ),
     private val failure: Throwable? = null,
     private val delayMillis: Long = 0,
     /** Scan outcome the double returns; `null` builds the default outcome. */
-    private val scan: ScanOutcome? = null,
+    private val scan: ScanOutcome? = null
 ) : OffsetEngine {
 
     var calls = 0
@@ -1028,10 +1045,7 @@ private class FakeEngine(
     var mapCalls = 0
         private set
 
-    override suspend fun extractNativeLibrary(
-        rawFd: Int,
-        destDir: File,
-    ): ExtractedNativeLibrary {
+    override suspend fun extractNativeLibrary(rawFd: Int, destDir: File): ExtractedNativeLibrary {
         calls++
         if (delayMillis > 0) {
             delay(delayMillis)
@@ -1052,7 +1066,7 @@ private class FakeEngine(
         return SectionMap(
             imageBase = TEXT.address,
             text = TEXT,
-            sections = listOf(TEXT, RODATA),
+            sections = listOf(TEXT, RODATA)
         )
     }
 
@@ -1063,7 +1077,8 @@ private class FakeEngine(
         private set
 
     /** Progress reports the double replays to the ViewModel. */
-    var progressReports: List<Pair<Int, String>> = listOf(0 to "Matching", 55 to "Verifying", 100 to "Done")
+    var progressReports: List<Pair<Int, String>> =
+        listOf(0 to "Matching", 55 to "Verifying", 100 to "Done")
 
     var lastProgress: ProgressCallback? = null
         private set
@@ -1071,7 +1086,7 @@ private class FakeEngine(
     override suspend fun scanText(
         library: ExtractedNativeLibrary,
         patterns: List<PatternSpec>,
-        progress: ProgressCallback?,
+        progress: ProgressCallback?
     ): ScanOutcome {
         scanCalls++
         lastProgress = progress
@@ -1091,10 +1106,10 @@ private class FakeEngine(
                     sectionOffset = 0,
                     fileOffset = TEXT.offset,
                     address = TEXT.address,
-                    addressHex = "0x400000",
-                ),
+                    addressHex = "0x400000"
+                )
             ),
-            peakResidentBytes = 32L * 1024 * 1024,
+            peakResidentBytes = 32L * 1024 * 1024
         )
     }
 
@@ -1113,9 +1128,9 @@ private class FakeEngine(
                 vtableAddress = 0x403000,
                 vtableHex = "0x403000",
                 vtableOffset = 0x3000,
-                typeInfoAddress = 0x403080,
-            ),
-        ),
+                typeInfoAddress = 0x403080
+            )
+        )
     )
 
     override suspend fun resolveVtables(library: ExtractedNativeLibrary): VtableMap {
@@ -1137,7 +1152,7 @@ private class FakeEngine(
             identity = BuildIdentity(
                 buildId = "abcdef0123456789",
                 source = "note",
-                textSize = 0,
+                textSize = 0
             ),
             symbols = SymbolTable(
                 total = 42,
@@ -1148,11 +1163,11 @@ private class FakeEngine(
                         address = 0x410000,
                         addressHex = "0x410000",
                         size = 32,
-                        binding = 1,
-                    ),
+                        binding = 1
+                    )
                 ),
-                truncated = false,
-            ),
+                truncated = false
+            )
         )
     }
 
@@ -1173,7 +1188,7 @@ private class FakeEngine(
             entryPoint = "0x4000",
             sectionCount = 33,
             programHeaderCount = 9,
-            soname = "libminecraftpe.so",
+            soname = "libminecraftpe.so"
         )
     }
 }
@@ -1184,10 +1199,10 @@ private class FakeSafAccess(
     private val metadata: ApkMetadata = ApkMetadata(
         uri = Uri.parse("content://test.provider/minecraft.apk"),
         displayName = "minecraft.apk",
-        sizeBytes = 1_024,
+        sizeBytes = 1_024
     ),
     /** URIs that must fail to open, so a batch can contain a bad APK. */
-    private val failFor: Set<String> = emptySet(),
+    private val failFor: Set<String> = emptySet()
 ) : SafApkAccess {
 
     var lastHandle: FakeHandle? = null

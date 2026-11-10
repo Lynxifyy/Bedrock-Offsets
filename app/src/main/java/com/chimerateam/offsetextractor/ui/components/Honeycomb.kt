@@ -35,7 +35,7 @@ fun HoneycombCell(
     color: Color,
     strokeWidth: Dp = 3.dp,
     fillAlpha: Float = 0f,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
     Canvas(modifier = modifier.size(size)) {
         val radius = this.size.minDimension / 2f
@@ -58,28 +58,25 @@ fun HoneycombCell(
  * @param cellSize diameter of each drawn cell.
  */
 @Composable
-fun HoneycombSpinner(
-    modifier: Modifier = Modifier,
-    cellSize: Dp = 120.dp,
-) {
+fun HoneycombSpinner(modifier: Modifier = Modifier, cellSize: Dp = 120.dp) {
     val transition = rememberInfiniteTransition(label = "honeycomb")
     val pulse by transition.animateFloat(
         initialValue = 0.25f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
+            repeatMode = RepeatMode.Reverse
         ),
-        label = "pulse",
+        label = "pulse"
     )
     val rotation by transition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 6000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
+            repeatMode = RepeatMode.Restart
         ),
-        label = "rotation",
+        label = "rotation"
     )
 
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -92,19 +89,19 @@ fun HoneycombSpinner(
                 val distance = radius * 1.15f
                 val offset = Offset(
                     x = center.x + (distance * kotlin.math.cos(angle)).toFloat(),
-                    y = center.y + (distance * kotlin.math.sin(angle)).toFloat(),
+                    y = center.y + (distance * kotlin.math.sin(angle)).toFloat()
                 )
                 val alpha = 0.15f + (pulse * (0.25f + (index % 3) * 0.25f))
                 drawPath(
                     path = hexagonPath(offset, radius * 0.55f),
                     color = Color(0xFFFFB300).copy(alpha = alpha.coerceIn(0f, 1f)),
-                    style = Stroke(width = 3f),
+                    style = Stroke(width = 3f)
                 )
             }
             drawPath(
                 path = hexagonPath(center, radius),
                 color = Color(0xFFFFB300).copy(alpha = pulse.coerceIn(0f, 1f)),
-                style = Stroke(width = 5f),
+                style = Stroke(width = 5f)
             )
         }
     }

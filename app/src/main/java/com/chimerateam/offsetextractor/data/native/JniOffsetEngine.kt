@@ -15,7 +15,7 @@ import java.io.File
  * @param nativeLibrary the loaded native bindings; injectable for tests.
  */
 class JniOffsetEngine(
-    private val nativeLibrary: NativeLibrary = JniNativeLibrary,
+    private val nativeLibrary: NativeLibrary = JniNativeLibrary
 ) : OffsetEngine {
 
     /**
@@ -27,10 +27,7 @@ class JniOffsetEngine(
      * @throws EngineException when the archive is unreadable or the entry is
      *   absent.
      */
-    override suspend fun extractNativeLibrary(
-        rawFd: Int,
-        destDir: File,
-    ): ExtractedNativeLibrary {
+    override suspend fun extractNativeLibrary(rawFd: Int, destDir: File): ExtractedNativeLibrary {
         val json = call("extracting the native library") {
             nativeLibrary.extractNativeLibrary(rawFd, destDir.absolutePath)
         }
@@ -90,14 +87,14 @@ class JniOffsetEngine(
     override suspend fun scanText(
         library: ExtractedNativeLibrary,
         patterns: List<PatternSpec>,
-        progress: ProgressCallback?,
+        progress: ProgressCallback?
     ): ScanOutcome {
         val json = call("scanning the executable section") {
             nativeLibrary.scanText(
                 library.path,
                 library.sha256,
                 EnginePayloads.encodePatternSpecs(patterns),
-                progress,
+                progress
             )
         }
         return EnginePayloads.parseScanOutcome(json)
@@ -117,18 +114,17 @@ class JniOffsetEngine(
         return EnginePayloads.parseVtableMap(json)
     }
 
-    private inline fun call(what: String, block: () -> String): String =
-        try {
-            block()
-        } catch (failure: EngineFailure) {
-            throw EnginePayloads.toEngineException(failure)
-        } catch (unsatisfied: UnsatisfiedLinkError) {
-            throw EngineException(
-                kind = EngineErrorKind.InvalidDescriptor,
-                message = "the native engine is unavailable: ${unsatisfied.message ?: "link error"}",
-                cause = unsatisfied,
-            )
-        }
+    private inline fun call(what: String, block: () -> String): String = try {
+        block()
+    } catch (failure: EngineFailure) {
+        throw EnginePayloads.toEngineException(failure)
+    } catch (unsatisfied: UnsatisfiedLinkError) {
+        throw EngineException(
+            kind = EngineErrorKind.InvalidDescriptor,
+            message = "the native engine is unavailable: ${unsatisfied.message ?: "link error"}",
+            cause = unsatisfied
+        )
+    }
 }
 
 /**
@@ -187,7 +183,7 @@ interface NativeLibrary {
         path: String,
         sha256: String,
         patternsJson: String,
-        callback: ProgressCallback? = null,
+        callback: ProgressCallback? = null
     ): String
 
     /**
@@ -220,7 +216,7 @@ object JniNativeLibrary : NativeLibrary {
         path: String,
         sha256: String,
         patternsJson: String,
-        callback: ProgressCallback?,
+        callback: ProgressCallback?
     ): String = NativeLib.scanText(path, sha256, patternsJson, callback)
 
     override fun resolveVtables(path: String, sha256: String): String =

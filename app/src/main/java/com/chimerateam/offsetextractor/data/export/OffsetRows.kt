@@ -12,7 +12,7 @@ enum class OffsetCategory {
     Pattern,
 
     /** An exported dynamic symbol. */
-    Symbol,
+    Symbol
 }
 
 /**
@@ -33,7 +33,7 @@ data class OffsetRow(
     val addressHex: String,
     val detail: String,
     val missing: Boolean = false,
-    val status: VerificationStatus = VerificationStatus.Unverified,
+    val status: VerificationStatus = VerificationStatus.Unverified
 ) {
     /** Whether [query] matches this row, ignoring case. */
     fun matches(query: String): Boolean {
@@ -68,8 +68,8 @@ object OffsetRows {
                     category = OffsetCategory.VTable,
                     name = vtable.name,
                     addressHex = vtable.vtableHex,
-                    detail = "type_info ${hex(vtable.typeInfoAddress)}",
-                ),
+                    detail = "type_info ${hex(vtable.typeInfoAddress)}"
+                )
             )
         }
 
@@ -83,8 +83,8 @@ object OffsetRows {
                         name = name,
                         addressHex = MISSING_ADDRESS,
                         detail = "no match in this build",
-                        missing = true,
-                    ),
+                        missing = true
+                    )
                 )
             } else {
                 add(
@@ -93,8 +93,8 @@ object OffsetRows {
                         name = name,
                         addressHex = hit.addressHex,
                         detail = hit.prologueKind ?: "not decoded",
-                        status = hit.verificationStatus,
-                    ),
+                        status = hit.verificationStatus
+                    )
                 )
             }
         }
@@ -108,8 +108,8 @@ object OffsetRows {
                         name = name,
                         addressHex = hit.addressHex,
                         detail = hit.prologueKind ?: "not decoded",
-                        status = hit.verificationStatus,
-                    ),
+                        status = hit.verificationStatus
+                    )
                 )
             }
         }
@@ -120,8 +120,8 @@ object OffsetRows {
                     category = OffsetCategory.Symbol,
                     name = symbol.name,
                     addressHex = symbol.addressHex,
-                    detail = "${symbol.size} bytes",
-                ),
+                    detail = "${symbol.size} bytes"
+                )
             )
         }
     }

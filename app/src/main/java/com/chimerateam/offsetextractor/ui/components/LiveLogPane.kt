@@ -61,7 +61,7 @@ fun LiveLogPane(
     entries: List<LogEntry>,
     onCopyLog: () -> Unit,
     onClearLog: () -> Unit,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
 
@@ -85,32 +85,32 @@ fun LiveLogPane(
             .fillMaxSize()
             .background(
                 color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(PanelCorner),
+                shape = RoundedCornerShape(PanelCorner)
             )
-            .padding(12.dp),
+            .padding(12.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "Live log",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f)
             )
             IconButton(onClick = onCopyLog) {
                 Icon(
                     imageVector = Icons.Filled.ContentCopy,
                     contentDescription = "Copy log",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             IconButton(onClick = onClearLog) {
                 Icon(
                     imageVector = Icons.Filled.DeleteSweep,
                     contentDescription = "Clear log",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -121,14 +121,17 @@ fun LiveLogPane(
                 Text(
                     text = "Live log will appear here.",
                     style = MonoText.body,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
                 LazyColumn(
                     state = listState,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    items(entries, key = { it.timestampMillis.toString() + it.message.hashCode() }) { entry ->
+                    items(
+                        entries,
+                        key = { it.timestampMillis.toString() + it.message.hashCode() }
+                    ) { entry ->
                         LogLine(entry)
                     }
                 }
@@ -160,7 +163,7 @@ private fun LogLine(entry: LogEntry) {
         text = line,
         style = MonoText.body,
         maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
+        overflow = TextOverflow.Ellipsis
     )
 }
 
@@ -172,11 +175,11 @@ private fun LiveLogPanePreview() {
             entries = listOf(
                 Logs.info("SAF", "Opened APK File Descriptor successfully.", 0),
                 Logs.info("RUST", "Mapped 800MB .so file with zero-copy. Arch: AArch64.", 1),
-                Logs.error("UI", "Export failed: storage is full.", 2),
+                Logs.error("UI", "Export failed: storage is full.", 2)
             ),
             onCopyLog = {},
             onClearLog = {},
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }

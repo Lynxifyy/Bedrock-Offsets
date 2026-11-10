@@ -104,7 +104,9 @@ class ScanCache(private val root: File) {
     }
 
     private fun listFiles(directory: File): List<File> =
-        runCatching { directory.listFiles()?.filter { it.isFile }.orEmpty() }.getOrDefault(emptyList())
+        runCatching { directory.listFiles()?.filter { it.isFile }.orEmpty() }.getOrDefault(
+            emptyList()
+        )
 
     private fun clearDirectory(directory: File): Boolean = runCatching {
         directory.listFiles()?.forEach { entry ->

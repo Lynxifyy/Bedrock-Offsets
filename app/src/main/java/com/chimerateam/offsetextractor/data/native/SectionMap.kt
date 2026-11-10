@@ -28,11 +28,10 @@ data class SectionInfo(
     val allocated: Boolean,
     val executable: Boolean,
     val writable: Boolean,
-    @SerializedName("occupies_file") val occupiesFile: Boolean,
+    @SerializedName("occupies_file") val occupiesFile: Boolean
 ) {
     /** Converts a file offset inside this section to a virtual address. */
-    fun addressOf(fileOffset: Long): Long? =
-        if (address == 0L) null else fileOffset + delta
+    fun addressOf(fileOffset: Long): Long? = if (address == 0L) null else fileOffset + delta
 
     /** Converts a virtual address back to a file offset. */
     fun offsetOf(address: Long): Long? =
@@ -56,7 +55,7 @@ data class SectionInfo(
 data class SectionMap(
     @SerializedName("image_base") val imageBase: Long,
     val text: SectionInfo,
-    val sections: List<SectionInfo>,
+    val sections: List<SectionInfo>
 ) {
     /** Returns the first section with [name], or `null` when it is absent. */
     fun find(name: String): SectionInfo? = sections.firstOrNull { it.name == name }
@@ -66,5 +65,5 @@ data class SectionMap(
 internal data class SectionMapPayload(
     @SerializedName("image_base") val imageBase: Long?,
     val text: SectionInfo?,
-    val sections: List<SectionInfo>?,
+    val sections: List<SectionInfo>?
 )

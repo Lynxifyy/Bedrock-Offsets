@@ -13,7 +13,7 @@ import com.google.gson.annotations.SerializedName
 data class BuildIdentity(
     @SerializedName("build_id") val buildId: String,
     val source: String,
-    @SerializedName("text_size") val textSize: Long,
+    @SerializedName("text_size") val textSize: Long
 ) {
     /** Whether the identifier was derived from a `.text` hash. */
     val isDerived: Boolean get() = source == "text_hash"
@@ -33,7 +33,7 @@ data class ExportedSymbol(
     val address: Long,
     @SerializedName("address_hex") val addressHex: String,
     val size: Long,
-    val binding: Int,
+    val binding: Int
 )
 
 /**
@@ -48,7 +48,7 @@ data class SymbolTable(
     val total: Int,
     val defined: Int,
     val jni: List<ExportedSymbol>,
-    val truncated: Boolean,
+    val truncated: Boolean
 )
 
 /**
@@ -59,7 +59,7 @@ data class SymbolTable(
  */
 data class SymbolReport(
     val identity: BuildIdentity,
-    val symbols: SymbolTable,
+    val symbols: SymbolTable
 ) {
     /** Returns the symbol named [name], or `null` when it is not exported. */
     fun symbol(name: String): ExportedSymbol? = symbols.jni.firstOrNull { it.name == name }
@@ -68,5 +68,5 @@ data class SymbolReport(
 /** JSON payload wrapper matching the engine's `SymbolReport` serialisation. */
 internal data class SymbolReportPayload(
     val identity: BuildIdentity?,
-    val symbols: SymbolTable?,
+    val symbols: SymbolTable?
 )

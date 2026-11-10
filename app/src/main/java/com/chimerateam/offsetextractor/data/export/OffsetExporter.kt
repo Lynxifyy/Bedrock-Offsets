@@ -41,7 +41,7 @@ object OffsetExporter {
                 entryPoint = summary.entryPoint,
                 textAddress = summary.textSection?.address,
                 textSize = summary.textSection?.size,
-                textDelta = summary.textSection?.delta,
+                textDelta = summary.textSection?.delta
             ),
             offsets = buildOffsets(summary),
             verification = summary.verification,
@@ -51,7 +51,7 @@ object OffsetExporter {
                     vtable.name to VTableEntry(
                         address = vtable.vtableHex,
                         offset = OffsetRows.hex(vtable.vtableOffset),
-                        typeInfo = OffsetRows.hex(vtable.typeInfoAddress),
+                        typeInfo = OffsetRows.hex(vtable.typeInfoAddress)
                     )
                 },
             symbols = summary.symbols
@@ -66,8 +66,8 @@ object OffsetExporter {
                 verifiedOffsets = summary.verification.verified,
                 conflictingOffsets = summary.verification.conflicts,
                 unverifiedOffsets = summary.verification.unverified,
-                confidencePercent = summary.verification.confidencePercent,
-            ),
+                confidencePercent = summary.verification.confidencePercent
+            )
         )
         return gson.toJson(document) + "\n"
     }
@@ -108,7 +108,7 @@ private data class OffsetDocument(
     val verification: VerificationSummary,
     val vtables: Map<String, VTableEntry>,
     val symbols: Map<String, String>,
-    val stats: Stats,
+    val stats: Stats
 )
 
 /** Identity of the library the offsets were read from. */
@@ -122,14 +122,14 @@ private data class SourceInfo(
     val entryPoint: String,
     val textAddress: Long?,
     val textSize: Long?,
-    val textDelta: Long?,
+    val textDelta: Long?
 )
 
 /** One resolved vtable, in both absolute and rebase-stable form. */
 private data class VTableEntry(
     val address: String,
     val offset: String,
-    val typeInfo: String,
+    val typeInfo: String
 )
 
 /** Counts that let a reader judge how complete and how trustworthy the scan was. */
@@ -142,5 +142,5 @@ private data class Stats(
     val verifiedOffsets: Int,
     val conflictingOffsets: Int,
     val unverifiedOffsets: Int,
-    val confidencePercent: Int,
+    val confidencePercent: Int
 )

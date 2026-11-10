@@ -43,14 +43,14 @@ fun SettingsScreen(
     forceRescan: Boolean,
     onForceRescanChange: (Boolean) -> Unit,
     onClearCache: () -> Unit,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         SectionPanel(title = "Appearance") {
             SettingToggleRow(
@@ -59,7 +59,7 @@ fun SettingsScreen(
                 checked = themeMode == ThemeMode.Dark || themeMode == ThemeMode.Amoled,
                 onCheckedChange = { dark ->
                     onThemeModeChange(if (dark) ThemeMode.Dark else ThemeMode.Light)
-                },
+                }
             )
             SettingToggleRow(
                 title = "AMOLED black",
@@ -67,7 +67,7 @@ fun SettingsScreen(
                 checked = themeMode == ThemeMode.Amoled,
                 onCheckedChange = { amoled ->
                     onThemeModeChange(if (amoled) ThemeMode.Amoled else ThemeMode.Dark)
-                },
+                }
             )
             SettingToggleRow(
                 title = "Follow system",
@@ -75,7 +75,7 @@ fun SettingsScreen(
                 checked = themeMode == ThemeMode.System,
                 onCheckedChange = { follow ->
                     if (follow) onThemeModeChange(ThemeMode.System)
-                },
+                }
             )
         }
 
@@ -84,18 +84,18 @@ fun SettingsScreen(
                 title = "Force rescan",
                 subtitle = "Ignore a cached result and scan every time",
                 checked = forceRescan,
-                onCheckedChange = onForceRescanChange,
+                onCheckedChange = onForceRescanChange
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 text = "Cache size: $cacheSizeLabel",
                 style = MonoText.body,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = onClearCache,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Clear cache")
             }
@@ -108,20 +108,20 @@ private fun SettingToggleRow(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, style = MaterialTheme.typography.bodyLarge)
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
@@ -138,7 +138,7 @@ private fun SettingsScreenPreview() {
             cacheSizeLabel = "0 B",
             forceRescan = false,
             onForceRescanChange = {},
-            onClearCache = {},
+            onClearCache = {}
         )
     }
 }

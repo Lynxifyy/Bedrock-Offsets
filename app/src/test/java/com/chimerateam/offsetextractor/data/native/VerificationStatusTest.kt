@@ -17,7 +17,7 @@ class VerificationStatusTest {
             verified = 3,
             conflicts = 1,
             unverified = 2,
-            symbolsAvailable = true,
+            symbolsAvailable = true
         )
 
         val json = gson.toJson(summary)
@@ -28,9 +28,18 @@ class VerificationStatusTest {
 
     @Test
     fun aStatusRoundTripsThroughJson() {
-        assertEquals(VerificationStatus.Verified, gson.fromJson("\"verified\"", VerificationStatus::class.java))
-        assertEquals(VerificationStatus.Conflict, gson.fromJson("\"conflict\"", VerificationStatus::class.java))
-        assertEquals(VerificationStatus.Unverified, gson.fromJson("\"unverified\"", VerificationStatus::class.java))
+        assertEquals(
+            VerificationStatus.Verified,
+            gson.fromJson("\"verified\"", VerificationStatus::class.java)
+        )
+        assertEquals(
+            VerificationStatus.Conflict,
+            gson.fromJson("\"conflict\"", VerificationStatus::class.java)
+        )
+        assertEquals(
+            VerificationStatus.Unverified,
+            gson.fromJson("\"unverified\"", VerificationStatus::class.java)
+        )
     }
 
     @Test

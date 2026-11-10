@@ -10,7 +10,7 @@ import com.google.gson.annotations.SerializedName
  */
 data class PatternSpec(
     val name: String,
-    val pattern: String,
+    val pattern: String
 )
 
 /**
@@ -34,7 +34,7 @@ data class PatternHit(
     @SerializedName("prologue_kind") val prologueKind: String? = null,
     @SerializedName("prologue_instruction") val prologueInstruction: String? = null,
     @SerializedName("verification_status") val verificationStatus: VerificationStatus =
-        VerificationStatus.Unverified,
+        VerificationStatus.Unverified
 ) {
     /** Whether the hit decoded to a recognisable function prologue. */
     val isVerified: Boolean get() = prologueKind != null
@@ -62,7 +62,7 @@ data class ScanOutcome(
     @SerializedName("peak_resident_bytes") val peakResidentBytes: Long? = null,
     val discarded: Int = 0,
     val verified: Boolean = false,
-    val verification: VerificationSummary? = null,
+    val verification: VerificationSummary? = null
 ) {
     /** Number of hits that came from [name]. */
     fun countOf(name: String): Int = hits.count { it.name == name }
@@ -78,5 +78,5 @@ internal data class ScanOutcomePayload(
     @SerializedName("peak_resident_bytes") val peakResidentBytes: Long?,
     val discarded: Int?,
     val verified: Boolean?,
-    val verification: VerificationSummary?,
+    val verification: VerificationSummary?
 )

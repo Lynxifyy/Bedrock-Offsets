@@ -36,7 +36,7 @@ class ResultsPanelTest {
         allocated = true,
         executable = true,
         writable = false,
-        occupiesFile = true,
+        occupiesFile = true
     )
 
     private val summary = ScanResultSummary(
@@ -46,7 +46,7 @@ class ResultsPanelTest {
         architecture = "AArch64",
         entryPoint = "0x4000",
         sectionCount = 33,
-        textSection = text,
+        textSection = text
     )
 
     @Test

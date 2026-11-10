@@ -32,7 +32,7 @@ data class ExtendedColors(
     val logError: Color,
     val logCache: Color,
     val logSaf: Color,
-    val honeyGlow: Color,
+    val honeyGlow: Color
 )
 
 private val LocalExtendedColors = staticCompositionLocalOf {
@@ -43,7 +43,7 @@ private val LocalExtendedColors = staticCompositionLocalOf {
         logError = LogErrorRed,
         logCache = LogCacheTeal,
         logSaf = LogSafGreen,
-        honeyGlow = Honey300,
+        honeyGlow = Honey300
     )
 }
 
@@ -70,7 +70,7 @@ private val LightColors = lightColorScheme(
     surfaceVariant = Caramel50,
     onSurfaceVariant = Caramel800,
     outline = Caramel600,
-    error = Color(0xFFBA1A1A),
+    error = Color(0xFFBA1A1A)
 )
 
 private val DarkColors = darkColorScheme(
@@ -90,13 +90,13 @@ private val DarkColors = darkColorScheme(
     surfaceVariant = Neutral800,
     onSurfaceVariant = Honey100,
     outline = Caramel400,
-    error = LogErrorRed,
+    error = LogErrorRed
 )
 
 private val AmoledColors = DarkColors.copy(
     background = AmoledBlack,
     surface = AmoledBlack,
-    surfaceVariant = Neutral900,
+    surfaceVariant = Neutral900
 )
 
 /** Corner radius shared by cards and panels. */
@@ -113,7 +113,7 @@ val PanelGap: Dp = 12.dp
 @Composable
 fun BedrockOffsetExtractorTheme(
     themeMode: ThemeMode = ThemeMode.System,
-    content: @Composable () -> Unit,
+    content: @Composable () -> Unit
 ) {
     val dark = when (themeMode) {
         ThemeMode.System -> isSystemInDarkTheme()
@@ -135,14 +135,14 @@ fun BedrockOffsetExtractorTheme(
         logError = LogErrorRed,
         logCache = LogCacheTeal,
         logSaf = LogSafGreen,
-        honeyGlow = if (dark) Honey300 else Caramel600,
+        honeyGlow = if (dark) Honey300 else Caramel600
     )
 
     CompositionLocalProvider(LocalExtendedColors provides extended) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = AppTypography,
-            content = content,
+            content = content
         )
     }
 }

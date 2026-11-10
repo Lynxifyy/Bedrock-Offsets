@@ -26,10 +26,7 @@ import com.chimerateam.offsetextractor.ui.theme.MonoText
  * @param onCancel aborts the remaining APKs.
  */
 @Composable
-fun BatchProgressDialog(
-    progress: BatchProgress,
-    onCancel: () -> Unit,
-) {
+fun BatchProgressDialog(progress: BatchProgress, onCancel: () -> Unit) {
     AlertDialog(
         onDismissRequest = { /* The run owns its own dismissal via cancel. */ },
         title = { Text("Scanning a batch") },
@@ -41,7 +38,7 @@ fun BatchProgressDialog(
                     Text(
                         text = name,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Spacer(Modifier.height(12.dp))
@@ -53,13 +50,13 @@ fun BatchProgressDialog(
                             progress.completed.toFloat() / progress.total
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "${progress.succeeded} succeeded · ${progress.failed} failed",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
@@ -67,7 +64,7 @@ fun BatchProgressDialog(
             TextButton(onClick = onCancel) {
                 Text("Cancel batch")
             }
-        },
+        }
     )
 }
 
@@ -78,10 +75,7 @@ fun BatchProgressDialog(
  * @param onDismiss dismisses the dialog.
  */
 @Composable
-fun BatchSummaryDialog(
-    summary: BatchSummary,
-    onDismiss: () -> Unit,
-) {
+fun BatchSummaryDialog(summary: BatchSummary, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Batch complete") },
@@ -90,6 +84,6 @@ fun BatchSummaryDialog(
             TextButton(onClick = onDismiss) {
                 Text("Done")
             }
-        },
+        }
     )
 }

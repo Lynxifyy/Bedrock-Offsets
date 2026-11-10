@@ -27,36 +27,32 @@ import com.chimerateam.offsetextractor.ui.theme.MonoText
  * @param modifier layout modifier for the column.
  */
 @Composable
-fun LoadingScreen(
-    message: String,
-    progress: Int,
-    modifier: Modifier = Modifier,
-) {
+fun LoadingScreen(message: String, progress: Int, modifier: Modifier = Modifier) {
     val clamped = progress.coerceIn(0, 100)
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Center
     ) {
         HoneycombSpinner(cellSize = 72.dp)
         Spacer(Modifier.height(24.dp))
         Text(
             text = message,
             style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center,
+            textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(16.dp))
         LinearProgressIndicator(
             progress = { clamped / 100f },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(8.dp))
         Text(
             text = "$clamped%",
             style = MonoText.label,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

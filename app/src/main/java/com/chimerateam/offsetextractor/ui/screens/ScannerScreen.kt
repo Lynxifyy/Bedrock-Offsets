@@ -27,9 +27,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.ui.components.LiveLogPane
-import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.components.ResultsPanel
 import com.chimerateam.offsetextractor.ui.components.SelectedApkCard
+import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.state.ScannerUiState
 import com.chimerateam.offsetextractor.ui.theme.PanelGap
@@ -66,7 +66,7 @@ fun ScannerScreen(
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val availableWidth = maxWidth
@@ -81,7 +81,7 @@ fun ScannerScreen(
                 onRetry = onRetry,
                 onCopyJson = onCopyJson,
                 onShareJson = onShareJson,
-                onSaveJson = onSaveJson,
+                onSaveJson = onSaveJson
             )
         }
 
@@ -90,13 +90,13 @@ fun ScannerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(PanelGap),
-                horizontalArrangement = Arrangement.spacedBy(PanelGap),
+                horizontalArrangement = Arrangement.spacedBy(PanelGap)
             ) {
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .verticalScroll(rememberScrollState()),
+                        .verticalScroll(rememberScrollState())
                 ) {
                     controls()
                 }
@@ -106,7 +106,7 @@ fun ScannerScreen(
                     onClearLog = onClearLog,
                     modifier = Modifier
                         .width(availableWidth * 0.42f)
-                        .fillMaxHeight(),
+                        .fillMaxHeight()
                 )
             }
         } else {
@@ -114,7 +114,7 @@ fun ScannerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(PanelGap),
-                verticalArrangement = Arrangement.spacedBy(PanelGap),
+                verticalArrangement = Arrangement.spacedBy(PanelGap)
             ) {
                 controls()
                 LiveLogPane(
@@ -123,7 +123,7 @@ fun ScannerScreen(
                     onClearLog = onClearLog,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
+                        .weight(1f)
                 )
             }
         }
@@ -139,7 +139,7 @@ private fun ControlsPane(
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
-    onSaveJson: () -> Unit,
+    onSaveJson: () -> Unit
 ) {
     // AnimatedContent keeps the state change visible rather than instantaneous:
     // a fade and a small slide make it obvious which pane replaced which.
@@ -149,7 +149,7 @@ private fun ControlsPane(
             (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 12 })
                 .togetherWith(fadeOut(tween(160)))
         },
-        label = "scanner-phase",
+        label = "scanner-phase"
     ) { phase ->
         PhasePane(
             phase = phase,
@@ -160,7 +160,7 @@ private fun ControlsPane(
             onRetry = onRetry,
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
-            onSaveJson = onSaveJson,
+            onSaveJson = onSaveJson
         )
     }
 }
@@ -175,12 +175,12 @@ private fun PhasePane(
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
-    onSaveJson: () -> Unit,
+    onSaveJson: () -> Unit
 ) {
     when (phase) {
         ScannerPhase.Extracting, ScannerPhase.Scanning -> LoadingScreen(
             message = state.progressTask,
-            progress = state.progress,
+            progress = state.progress
         )
 
         ScannerPhase.Success -> SuccessPane(
@@ -188,14 +188,14 @@ private fun PhasePane(
             onStartNewScan = onCancelSelection,
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
-            onSaveJson = onSaveJson,
+            onSaveJson = onSaveJson
         )
 
         ScannerPhase.Error -> ErrorPane(
             message = state.error ?: "The scan failed.",
             hint = state.errorHint,
             onRetry = onRetry,
-            onSelectApk = onSelectApk,
+            onSelectApk = onSelectApk
         )
 
         ScannerPhase.Idle -> if (state.selectedApk != null) {
@@ -203,7 +203,7 @@ private fun PhasePane(
                 metadata = state.selectedApk,
                 usedCacheCopy = state.usedCacheCopy,
                 onCancel = onCancelSelection,
-                onSelectApk = onSelectApk,
+                onSelectApk = onSelectApk
             )
         } else {
             IdleScreen(onSelectApk = onSelectApk, onSelectApks = onSelectApks)
@@ -217,7 +217,7 @@ private fun SuccessPane(
     onStartNewScan: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
-    onSaveJson: () -> Unit,
+    onSaveJson: () -> Unit
 ) {
     val result = state.result ?: return
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -228,7 +228,7 @@ private fun SuccessPane(
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
             onSaveJson = onSaveJson,
-            onStartNewScan = onStartNewScan,
+            onStartNewScan = onStartNewScan
         )
     }
 }
@@ -238,20 +238,20 @@ private fun ErrorPane(
     message: String,
     hint: String?,
     onRetry: () -> Unit,
-    onSelectApk: () -> Unit,
+    onSelectApk: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = message,
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.error,
+            color = MaterialTheme.colorScheme.error
         )
         if (hint != null) {
             Spacer(Modifier.height(8.dp))
             Text(
                 text = hint,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Spacer(Modifier.height(16.dp))

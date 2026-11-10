@@ -13,7 +13,7 @@ enum class LogLevel {
     Warning,
 
     /** An operation failed. */
-    Error,
+    Error
 }
 
 /**
@@ -28,7 +28,7 @@ data class LogEntry(
     val timestampMillis: Long,
     val level: LogLevel,
     val tag: String,
-    val message: String,
+    val message: String
 ) {
     /** Formats the entry the way it appears in the log pane. */
     fun render(): String = "[$tag] $message"

@@ -14,7 +14,7 @@ import com.chimerateam.offsetextractor.R
 val JetBrainsMono = FontFamily(
     Font(R.font.jetbrains_mono_regular, FontWeight.Normal),
     Font(R.font.jetbrains_mono_medium, FontWeight.Medium),
-    Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
+    Font(R.font.jetbrains_mono_bold, FontWeight.Bold)
 )
 
 /** Default Material 3 typography for prose and labels. */
@@ -26,18 +26,18 @@ object MonoText {
         fontFamily = JetBrainsMono,
         fontWeight = FontWeight.Normal,
         fontSize = 13.sp,
-        lineHeight = 18.sp,
+        lineHeight = 18.sp
     )
     val label: TextStyle = TextStyle(
         fontFamily = JetBrainsMono,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
-        lineHeight = 16.sp,
+        lineHeight = 16.sp
     )
     val headline: TextStyle = TextStyle(
         fontFamily = JetBrainsMono,
         fontWeight = FontWeight.Bold,
         fontSize = 18.sp,
-        lineHeight = 24.sp,
+        lineHeight = 24.sp
     )
 }

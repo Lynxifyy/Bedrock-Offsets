@@ -37,9 +37,9 @@ class BatchDialogsTest {
                         completed = 1,
                         succeeded = 1,
                         failed = 0,
-                        currentName = "minecraft-1.21.50.apk",
+                        currentName = "minecraft-1.21.50.apk"
                     ),
-                    onCancel = {},
+                    onCancel = {}
                 )
             }
         }
@@ -56,7 +56,7 @@ class BatchDialogsTest {
             BedrockOffsetExtractorTheme {
                 BatchProgressDialog(
                     progress = BatchProgress(total = 2),
-                    onCancel = { cancelled++ },
+                    onCancel = { cancelled++ }
                 )
             }
         }
@@ -73,7 +73,7 @@ class BatchDialogsTest {
             BedrockOffsetExtractorTheme {
                 BatchSummaryDialog(
                     summary = BatchSummary(total = 3, succeeded = 2, failed = 1),
-                    onDismiss = { dismissed++ },
+                    onDismiss = { dismissed++ }
                 )
             }
         }

@@ -13,6 +13,7 @@ use zip::ZipArchive;
 
 use crate::error::{CoreError, CoreResult};
 use crate::fd::duplicate_fd;
+use crate::symbols::to_hex;
 
 /// Size of the streaming buffer. The engine never allocates more than this
 /// while extracting, regardless of the archive or entry size.
@@ -112,17 +113,6 @@ fn stream_entry_to_file<R: Read>(entry: &mut R, destination: &Path) -> CoreResul
 
     let digest = hasher.finalize();
     Ok((to_hex(&digest), written))
-}
-
-/// Renders bytes as lower-case hexadecimal.
-fn to_hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(DIGITS[(byte >> 4) as usize] as char);
-        out.push(DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
 
 /// Returns a stable cache file name for a given entry, used by callers that

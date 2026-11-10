@@ -1,7 +1,6 @@
 package com.chimerateam.offsetextractor.data.saf
 
 import android.os.ParcelFileDescriptor
-import java.io.Closeable
 import java.io.File
 
 /**
@@ -22,7 +21,7 @@ class ApkHandle internal constructor(
     override val usedCacheCopy: Boolean,
     override val lengthBytes: Long,
     private val descriptor: ParcelFileDescriptor,
-    private val cacheFile: File?,
+    private val cacheFile: File?
 ) : ApkSource {
 
     private var closed = false

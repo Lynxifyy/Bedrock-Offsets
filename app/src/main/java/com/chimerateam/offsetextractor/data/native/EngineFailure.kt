@@ -13,7 +13,7 @@ package com.chimerateam.offsetextractor.data.native
  */
 class EngineFailure(
     val kind: String,
-    val detail: String,
+    val detail: String
 ) : RuntimeException("$kind: $detail") {
 
     /** Splits the raw message back into its kind and detail parts. */
@@ -32,7 +32,7 @@ class EngineFailure(
             } else {
                 EngineFailure(
                     kind = text.substring(0, separator).trim(),
-                    detail = text.substring(separator + 1).trim(),
+                    detail = text.substring(separator + 1).trim()
                 )
             }
         }

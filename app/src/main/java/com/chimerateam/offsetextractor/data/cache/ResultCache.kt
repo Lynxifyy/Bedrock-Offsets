@@ -27,7 +27,7 @@ class ResultCache(private val cache: ScanCache) {
         if (summary.buildId.isBlank()) return false
         val envelope = Envelope(
             schemaVersion = SCHEMA_VERSION,
-            summary = summary,
+            summary = summary
         )
         return cache.writeDocument(summary.buildId, gson.toJson(envelope))
     }
@@ -54,7 +54,7 @@ class ResultCache(private val cache: ScanCache) {
 
     private data class Envelope(
         val schemaVersion: Int,
-        val summary: ScanResultSummary?,
+        val summary: ScanResultSummary?
     )
 
     private companion object {

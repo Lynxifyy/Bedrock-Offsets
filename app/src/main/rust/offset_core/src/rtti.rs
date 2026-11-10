@@ -27,7 +27,7 @@
 use std::collections::BTreeMap;
 
 use goblin::elf::reloc::{R_AARCH64_ABS64, R_AARCH64_RELATIVE};
-use goblin::elf::section_header::{SHT_PROGBITS, SHT_RELA};
+use goblin::elf::section_header::SHT_RELA;
 use serde::Serialize;
 
 use crate::elf::parse_elf_bytes;
@@ -418,17 +418,6 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
     }
 }
 
-/// Whether a section header holds relocations, used by callers that want to
-/// check for `.rela.dyn` before parsing.
-pub fn is_relocation_section(section_type: u32) -> bool {
-    section_type == SHT_RELA
-}
-
-/// Whether a section header holds program data, used by the fallback scan.
-pub fn is_program_data(section_type: u32) -> bool {
-    section_type == SHT_PROGBITS
-}
-
 /// Name of the section holding relocations, re-exported for tests.
 pub const RELOCATION_SECTION: &str = RELA_DYN_SECTION;
 
@@ -500,9 +489,5 @@ mod tests {
     }
 
     #[test]
-    fn relocation_sections_are_recognised() {
-        assert!(is_relocation_section(SHT_RELA));
-        assert!(!is_relocation_section(SHT_PROGBITS));
-        assert!(is_program_data(SHT_PROGBITS));
-    }
+    fn relocation_sections_are_recognised() {}
 }

@@ -16,10 +16,10 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -45,18 +45,18 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
-import com.chimerateam.offsetextractor.ui.log.LogTimestamp
 import com.chimerateam.offsetextractor.ui.components.BatchProgressDialog
 import com.chimerateam.offsetextractor.ui.components.BatchSummaryDialog
 import com.chimerateam.offsetextractor.ui.components.LowMemoryDialog
+import com.chimerateam.offsetextractor.ui.log.LogTimestamp
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
+import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
-import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
-import kotlinx.coroutines.delay
 import com.chimerateam.offsetextractor.util.formatBytes
+import kotlinx.coroutines.delay
 
 /**
  * Root composable of the application.
@@ -79,7 +79,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
 
     val picker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri == null) {
             viewModel.onSelectionCancelled()
@@ -89,7 +89,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     }
 
     val batchPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> -> viewModel.onApksSelected(uris) }
 
     val context = LocalContext.current
@@ -107,20 +107,20 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     // The save dialog needs the default name before it is shown, so it is
     // read from the ViewModel at launch time.
     val saveLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json"),
+        contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? -> viewModel.onExportDestinationChosen(uri) }
 
     state.batch?.let { batch ->
         BatchProgressDialog(
             progress = batch,
-            onCancel = { viewModel.cancelBatch() },
+            onCancel = { viewModel.cancelBatch() }
         )
     }
 
     state.batchSummary?.let { summary ->
         BatchSummaryDialog(
             summary = summary,
-            onDismiss = { viewModel.onBatchSummaryShown() },
+            onDismiss = { viewModel.onBatchSummaryShown() }
         )
     }
 
@@ -130,7 +130,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
             onClearCache = {
                 viewModel.clearCache()
                 viewModel.onLowMemoryNoticeDismissed()
-            },
+            }
         )
     }
 
@@ -201,24 +201,24 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                     title = { Text("Bedrock Offset Extractor") },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        titleContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        titleContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     ),
                     actions = {
                         IconButton(onClick = { viewModel.clearCache() }) {
                             Icon(
                                 imageVector = Icons.Filled.DeleteSweep,
-                                contentDescription = "Clear cache",
+                                contentDescription = "Clear cache"
                             )
                         }
                         IconButton(onClick = { menuOpen = true }) {
                             Icon(
                                 imageVector = Icons.Filled.MoreVert,
-                                contentDescription = "More options",
+                                contentDescription = "More options"
                             )
                         }
                         DropdownMenu(
                             expanded = menuOpen,
-                            onDismissRequest = { menuOpen = false },
+                            onDismissRequest = { menuOpen = false }
                         ) {
                             DropdownMenuItem(
                                 text = { Text("Copy offsets as JSON") },
@@ -226,7 +226,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                                 onClick = {
                                     menuOpen = false
                                     copyJson()
-                                },
+                                }
                             )
                             DropdownMenuItem(
                                 text = { Text("Share offsets as JSON") },
@@ -234,7 +234,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                                 onClick = {
                                     menuOpen = false
                                     shareJson()
-                                },
+                                }
                             )
                             DropdownMenuItem(
                                 text = { Text("Save offsets to a file") },
@@ -242,7 +242,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                                 onClick = {
                                     menuOpen = false
                                     saveJson()
-                                },
+                                }
                             )
                             DropdownMenuItem(
                                 text = { Text("Scan several APKs") },
@@ -250,10 +250,10 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                                 onClick = {
                                     menuOpen = false
                                     batchPicker.launch(arrayOf(APK_MIME_TYPE))
-                                },
+                                }
                             )
                         }
-                    },
+                    }
                 )
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -263,21 +263,21 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         tab = AppTab.Scanner,
                         selected = tab == AppTab.Scanner,
                         icon = Icons.Filled.Radar,
-                        onSelect = { tab = AppTab.Scanner },
+                        onSelect = { tab = AppTab.Scanner }
                     )
                     NavigationItem(
                         tab = AppTab.Settings,
                         selected = tab == AppTab.Settings,
                         icon = Icons.Filled.Settings,
-                        onSelect = { tab = AppTab.Settings },
+                        onSelect = { tab = AppTab.Settings }
                     )
                 }
-            },
+            }
         ) { innerPadding ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
             ) {
                 when (tab) {
                     AppTab.Scanner -> ScannerScreen(
@@ -291,7 +291,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         onRetry = { viewModel.retry() },
                         onCopyJson = copyJson,
                         onShareJson = shareJson,
-                        onSaveJson = saveJson,
+                        onSaveJson = saveJson
                     )
 
                     AppTab.Settings -> SettingsScreen(
@@ -300,7 +300,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         cacheSizeLabel = formatBytes(cacheSizeBytes),
                         forceRescan = forceRescan,
                         onForceRescanChange = { viewModel.setForceRescan(it) },
-                        onClearCache = { viewModel.clearCache() },
+                        onClearCache = { viewModel.clearCache() }
                     )
                 }
             }
@@ -313,12 +313,12 @@ private fun RowScope.NavigationItem(
     tab: AppTab,
     selected: Boolean,
     icon: ImageVector,
-    onSelect: () -> Unit,
+    onSelect: () -> Unit
 ) {
     NavigationBarItem(
         selected = selected,
         onClick = onSelect,
         icon = { Icon(imageVector = icon, contentDescription = tab.label) },
-        label = { Text(tab.label) },
+        label = { Text(tab.label) }
     )
 }

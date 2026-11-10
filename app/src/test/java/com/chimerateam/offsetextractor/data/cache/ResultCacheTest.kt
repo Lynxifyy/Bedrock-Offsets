@@ -41,7 +41,7 @@ class ResultCacheTest {
             allocated = true,
             executable = true,
             writable = false,
-            occupiesFile = true,
+            occupiesFile = true
         ),
         buildId = "410ac215603eebd7",
         buildIdSource = "note",
@@ -53,8 +53,8 @@ class ResultCacheTest {
                 address = 0x401000,
                 addressHex = "0x401000",
                 prologueKind = "frame_push",
-                prologueInstruction = "stp x29, x30, [sp, #-16]!",
-            ),
+                prologueInstruction = "stp x29, x30, [sp, #-16]!"
+            )
         ),
         discardedMatches = 2,
         vtables = VtableMap(
@@ -68,9 +68,9 @@ class ResultCacheTest {
                     vtableAddress = 0x403000,
                     vtableHex = "0x403000",
                     vtableOffset = 0x3000,
-                    typeInfoAddress = 0x403080,
-                ),
-            ),
+                    typeInfoAddress = 0x403080
+                )
+            )
         ),
         symbols = listOf(
             ExportedSymbol(
@@ -78,10 +78,10 @@ class ResultCacheTest {
                 address = 0x410000,
                 addressHex = "0x410000",
                 size = 32,
-                binding = 1,
-            ),
+                binding = 1
+            )
         ),
-        expectedPatterns = listOf("clientInstance"),
+        expectedPatterns = listOf("clientInstance")
     )
 
     @Test

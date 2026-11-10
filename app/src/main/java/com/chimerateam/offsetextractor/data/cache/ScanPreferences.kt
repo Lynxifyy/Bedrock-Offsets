@@ -63,7 +63,7 @@ class DataStoreScanPreferences(private val store: DataStore<Preferences>) : Scan
 
 /** Application-wide DataStore instance; one per process, as DataStore requires. */
 private val Context.scanDataStore: DataStore<Preferences> by preferencesDataStore(
-    name = "scanner_preferences",
+    name = "scanner_preferences"
 )
 
 /**

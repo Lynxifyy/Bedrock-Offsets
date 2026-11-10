@@ -31,21 +31,21 @@ import com.chimerateam.offsetextractor.ui.theme.Honey300
 fun IdleScreen(
     onSelectApk: () -> Unit,
     modifier: Modifier = Modifier,
-    onSelectApks: () -> Unit = onSelectApk,
+    onSelectApks: () -> Unit = onSelectApk
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.Center
     ) {
         HoneycombCell(size = 72.dp, color = Honey300, fillAlpha = 0.2f)
         Spacer(Modifier.height(20.dp))
         Text(
             text = "Bedrock Offset Extractor",
             style = MaterialTheme.typography.headlineSmall,
-            textAlign = TextAlign.Center,
+            textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(8.dp))
         Text(
@@ -53,7 +53,7 @@ fun IdleScreen(
                 "Nothing leaves the device and the library is never executed.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
+            textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(24.dp))
         Button(onClick = onSelectApk) {

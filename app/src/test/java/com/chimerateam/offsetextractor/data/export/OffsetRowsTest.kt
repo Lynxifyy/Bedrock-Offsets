@@ -26,14 +26,14 @@ class OffsetRowsTest {
         allocated = true,
         executable = true,
         writable = false,
-        occupiesFile = true,
+        occupiesFile = true
     )
 
     private fun summary(
         hits: List<PatternHit> = emptyList(),
         expected: List<String> = emptyList(),
         vtables: VtableMap = VtableMap.EMPTY,
-        symbols: List<ExportedSymbol> = emptyList(),
+        symbols: List<ExportedSymbol> = emptyList()
     ) = ScanResultSummary(
         displayName = "minecraft.apk",
         sha256 = "abc",
@@ -47,14 +47,14 @@ class OffsetRowsTest {
         patternHits = hits,
         vtables = vtables,
         symbols = symbols,
-        expectedPatterns = expected,
+        expectedPatterns = expected
     )
 
     private fun hit(
         name: String,
         address: Long,
         kind: String? = "frame_push",
-        status: VerificationStatus = VerificationStatus.Unverified,
+        status: VerificationStatus = VerificationStatus.Unverified
     ) = PatternHit(
         name = name,
         sectionOffset = address - text.address,
@@ -63,7 +63,7 @@ class OffsetRowsTest {
         addressHex = "0x%x".format(address),
         prologueKind = kind,
         prologueInstruction = "stp x29, x30, [sp, #-16]!",
-        verificationStatus = status,
+        verificationStatus = status
     )
 
     @Test
@@ -83,9 +83,9 @@ class OffsetRowsTest {
                             vtableAddress = 0x403000,
                             vtableHex = "0x403000",
                             vtableOffset = 0x3000,
-                            typeInfoAddress = 0x403080,
-                        ),
-                    ),
+                            typeInfoAddress = 0x403080
+                        )
+                    )
                 ),
                 symbols = listOf(
                     ExportedSymbol(
@@ -93,26 +93,26 @@ class OffsetRowsTest {
                         address = 0x410000,
                         addressHex = "0x410000",
                         size = 32,
-                        binding = 1,
-                    ),
-                ),
-            ),
+                        binding = 1
+                    )
+                )
+            )
         )
 
         assertEquals(
             listOf(
                 OffsetCategory.VTable,
                 OffsetCategory.Pattern,
-                OffsetCategory.Symbol,
+                OffsetCategory.Symbol
             ),
-            rows.map { it.category },
+            rows.map { it.category }
         )
     }
 
     @Test
     fun aSignatureThatDidNotMatchIsReportedAsMissing() {
         val rows = OffsetRows.from(
-            summary(hits = emptyList(), expected = listOf("absentSignature")),
+            summary(hits = emptyList(), expected = listOf("absentSignature"))
         )
 
         assertEquals(1, rows.size)
@@ -125,7 +125,7 @@ class OffsetRowsTest {
     @Test
     fun aSignatureThatMatchedIsNotFlaggedAsMissing() {
         val rows = OffsetRows.from(
-            summary(hits = listOf(hit("present", 0x401000)), expected = listOf("present")),
+            summary(hits = listOf(hit("present", 0x401000)), expected = listOf("present"))
         )
 
         val row = rows.single()
@@ -139,8 +139,8 @@ class OffsetRowsTest {
         val rows = OffsetRows.from(
             summary(
                 hits = listOf(hit("dup", 0x402000), hit("dup", 0x401000)),
-                expected = listOf("dup"),
-            ),
+                expected = listOf("dup")
+            )
         )
 
         assertEquals(1, rows.size)
@@ -150,7 +150,7 @@ class OffsetRowsTest {
     @Test
     fun aHitWithNoConfiguredPatternStillAppears() {
         val rows = OffsetRows.from(
-            summary(hits = listOf(hit("legacySignature", 0x401000)), expected = emptyList()),
+            summary(hits = listOf(hit("legacySignature", 0x401000)), expected = emptyList())
         )
 
         assertEquals(1, rows.size)
@@ -163,7 +163,7 @@ class OffsetRowsTest {
             category = OffsetCategory.Pattern,
             name = "ClientInstance",
             addressHex = "0x401000",
-            detail = "frame_push",
+            detail = "frame_push"
         )
 
         assertTrue(row.matches("client"))
@@ -176,7 +176,7 @@ class OffsetRowsTest {
     @Test
     fun anEmptyQueryKeepsEveryRow() {
         val rows = OffsetRows.from(
-            summary(hits = listOf(hit("a", 0x401000)), expected = listOf("a", "b")),
+            summary(hits = listOf(hit("a", 0x401000)), expected = listOf("a", "b"))
         )
 
         assertEquals(2, rows.filter { it.matches("") }.size)
@@ -186,9 +186,11 @@ class OffsetRowsTest {
     fun aVerifiedHitCarriesItsStatusOntoTheRow() {
         val rows = OffsetRows.from(
             summary(
-                hits = listOf(hit("clientInstance", 0x401000, status = VerificationStatus.Verified)),
-                expected = listOf("clientInstance"),
-            ),
+                hits = listOf(
+                    hit("clientInstance", 0x401000, status = VerificationStatus.Verified)
+                ),
+                expected = listOf("clientInstance")
+            )
         )
 
         val row = rows.single { it.name == "clientInstance" }
@@ -200,9 +202,11 @@ class OffsetRowsTest {
     fun aConflictingHitIsMarkedAsAConflict() {
         val rows = OffsetRows.from(
             summary(
-                hits = listOf(hit("clientInstance", 0x401000, status = VerificationStatus.Conflict)),
-                expected = listOf("clientInstance"),
-            ),
+                hits = listOf(
+                    hit("clientInstance", 0x401000, status = VerificationStatus.Conflict)
+                ),
+                expected = listOf("clientInstance")
+            )
         )
 
         val row = rows.single { it.name == "clientInstance" }

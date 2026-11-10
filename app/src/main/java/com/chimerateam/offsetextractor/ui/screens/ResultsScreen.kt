@@ -32,11 +32,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.data.export.OffsetCategory
-import com.chimerateam.offsetextractor.ui.components.HoneycombCell
 import com.chimerateam.offsetextractor.data.export.OffsetRow
 import com.chimerateam.offsetextractor.data.export.OffsetRows
 import com.chimerateam.offsetextractor.data.native.VerificationStatus
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
+import com.chimerateam.offsetextractor.ui.components.HoneycombCell
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.MonoText
 
@@ -64,7 +64,7 @@ fun ResultsScreen(
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
     onStartNewScan: () -> Unit,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val rows = remember(result) { OffsetRows.from(result) }
@@ -78,7 +78,7 @@ fun ResultsScreen(
             text = "${visible.size} of ${rows.size} entries" +
                 if (query.isBlank()) "" else " matching \"$query\"",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(4.dp))
         ConfidenceBanner(verification = result.verification, conflicts = conflicts)
@@ -89,7 +89,7 @@ fun ResultsScreen(
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth().testTag(SEARCH_FIELD_TAG),
             singleLine = true,
-            label = { Text("Search offsets") },
+            label = { Text("Search offsets") }
         )
         Spacer(Modifier.height(12.dp))
 
@@ -99,7 +99,7 @@ fun ResultsScreen(
                     "This scan produced no offsets."
                 } else {
                     "No offset matches \"$query\"."
-                },
+                }
             )
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
@@ -139,10 +139,7 @@ fun ResultsScreen(
  * "everything is wrong".
  */
 @Composable
-private fun ConfidenceBanner(
-    verification: VerificationSummary,
-    conflicts: Int,
-) {
+private fun ConfidenceBanner(verification: VerificationSummary, conflicts: Int) {
     val hasConflicts = conflicts > 0
     val text = when {
         !verification.symbolsAvailable ->
@@ -163,7 +160,7 @@ private fun ConfidenceBanner(
             MaterialTheme.colorScheme.error
         } else {
             MaterialTheme.colorScheme.onSurfaceVariant
-        },
+        }
     )
 }
 
@@ -179,7 +176,7 @@ private fun OffsetRowItem(row: OffsetRow) {
             text = row.name,
             style = MonoText.label,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            overflow = TextOverflow.Ellipsis
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(text = row.addressHex, style = MonoText.body, color = addressColour)
@@ -191,7 +188,7 @@ private fun OffsetRowItem(row: OffsetRow) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -207,18 +204,18 @@ private fun OffsetRowItem(row: OffsetRow) {
 private fun EmptyResults(message: String) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         HoneycombCell(
             size = 48.dp,
             color = MaterialTheme.colorScheme.outline,
-            fillAlpha = 0.08f,
+            fillAlpha = 0.08f
         )
         Spacer(Modifier.height(12.dp))
         Text(
             text = message,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -234,20 +231,20 @@ private fun VerificationBadge(status: VerificationStatus) {
         Triple(
             Icons.Filled.VerifiedUser,
             "Verified against the symbol table",
-            MaterialTheme.colorScheme.primary,
+            MaterialTheme.colorScheme.primary
         )
     } else {
         Triple(
             Icons.Filled.Warning,
             "Conflicts with the symbol table",
-            MaterialTheme.colorScheme.error,
+            MaterialTheme.colorScheme.error
         )
     }
     Icon(
         imageVector = icon,
         contentDescription = description,
         tint = tint,
-        modifier = Modifier.padding(horizontal = 6.dp),
+        modifier = Modifier.padding(horizontal = 6.dp)
     )
 }
 

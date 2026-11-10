@@ -13,7 +13,7 @@ import android.net.Uri
 data class ApkMetadata(
     val uri: Uri,
     val displayName: String,
-    val sizeBytes: Long,
+    val sizeBytes: Long
 )
 
 /** Reason an APK could not be opened. */
@@ -28,7 +28,7 @@ enum class SafFailure {
     IoError,
 
     /** The provider returned something that is not an APK. */
-    InvalidMime,
+    InvalidMime
 }
 
 /**
@@ -47,7 +47,7 @@ sealed interface ApkOpenResult {
      */
     data class Success(
         val handle: ApkSource,
-        val usedCacheCopy: Boolean,
+        val usedCacheCopy: Boolean
     ) : ApkOpenResult
 
     /**
@@ -58,6 +58,6 @@ sealed interface ApkOpenResult {
      */
     data class Failure(
         val reason: SafFailure,
-        val message: String,
+        val message: String
     ) : ApkOpenResult
 }

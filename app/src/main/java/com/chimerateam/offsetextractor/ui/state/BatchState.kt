@@ -21,7 +21,7 @@ data class BatchProgress(
     val completed: Int = 0,
     val succeeded: Int = 0,
     val failed: Int = 0,
-    val currentName: String? = null,
+    val currentName: String? = null
 ) {
     /** One-based index of the APK being processed, for display. */
     val position: Int get() = (completed + 1).coerceAtMost(total.coerceAtLeast(1))
@@ -41,7 +41,7 @@ data class BatchProgress(
 data class BatchSummary(
     val total: Int,
     val succeeded: Int,
-    val failed: Int,
+    val failed: Int
 ) {
     /** One-line description of the run. */
     val message: String

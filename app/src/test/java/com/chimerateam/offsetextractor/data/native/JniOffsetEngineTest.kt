@@ -3,9 +3,6 @@ package com.chimerateam.offsetextractor.data.native
 import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
-import com.chimerateam.offsetextractor.data.native.PatternSpec
-import com.chimerateam.offsetextractor.data.native.ProgressCallback
-import com.chimerateam.offsetextractor.data.native.VtableMap
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -26,15 +23,15 @@ class JniOffsetEngineTest {
     private val extracted = ExtractedNativeLibrary(
         path = "/cache/libminecraftpe.so",
         sha256 = "abc123",
-        sizeBytes = 4096,
+        sizeBytes = 4096
     )
 
     @Test
     fun extractionPayloadIsParsedIntoATypedResult() = runTest {
         val engine = JniOffsetEngine(
             FakeBindings(
-                extraction = """{"path":"/cache/libminecraftpe.so","sha256":"abc123","size":4096}""",
-            ),
+                extraction = """{"path":"/cache/libminecraftpe.so","sha256":"abc123","size":4096}"""
+            )
         )
 
         val result = engine.extractNativeLibrary(rawFd = 42, destDir = File("/cache"))
@@ -65,7 +62,7 @@ class JniOffsetEngineTest {
         // soname must parse rather than fail.
         val withoutSoname = METADATA_JSON.replace(
             "\"libminecraftpe.so\"",
-            "null",
+            "null"
         )
         val engine = JniOffsetEngine(FakeBindings(mapping = withoutSoname))
 
@@ -75,7 +72,7 @@ class JniOffsetEngineTest {
     @Test
     fun nativeFailureBecomesATypedEngineException() = runTest {
         val engine = JniOffsetEngine(
-            FakeBindings(failure = EngineFailure("missing_so", "libminecraftpe.so not found")),
+            FakeBindings(failure = EngineFailure("missing_so", "libminecraftpe.so not found"))
         )
 
         val error = runCatching { engine.extractNativeLibrary(42, File("/cache")) }
@@ -88,21 +85,21 @@ class JniOffsetEngineTest {
     @Test
     fun unsupportedArchitectureIsClassifiedForTheUi() = runTest {
         val engine = JniOffsetEngine(
-            FakeBindings(failure = EngineFailure("unsupported_arch", "found 32-bit ARM")),
+            FakeBindings(failure = EngineFailure("unsupported_arch", "found 32-bit ARM"))
         )
 
         val error = runCatching { engine.mapLibrary(extracted) }.exceptionOrNull()
 
         assertEquals(
             EngineErrorKind.UnsupportedArchitecture,
-            (error as EngineException).kind,
+            (error as EngineException).kind
         )
     }
 
     @Test
     fun missingNativeLibraryIsReportedNotCrashing() = runTest {
         val engine = JniOffsetEngine(
-            FakeBindings(failure = UnsatisfiedLinkError("liboffset_core.so not found")),
+            FakeBindings(failure = UnsatisfiedLinkError("liboffset_core.so not found"))
         )
 
         val error = runCatching { engine.extractNativeLibrary(42, File("/cache")) }
@@ -168,7 +165,10 @@ class JniOffsetEngineTest {
 
     @Test
     fun derivedBuildIdIsFlagged() = runTest {
-        val derived = SYMBOL_REPORT_JSON.replace("\"source\": \"note\"", "\"source\": \"text_hash\"")
+        val derived = SYMBOL_REPORT_JSON.replace(
+            "\"source\": \"note\"",
+            "\"source\": \"text_hash\""
+        )
         val engine = JniOffsetEngine(FakeBindings(symbols = derived))
 
         val report = engine.describeSymbols(extracted)
@@ -239,8 +239,8 @@ class JniOffsetEngineTest {
                       "relocations_examined": 0,
                       "entries": {}
                     }
-                """,
-            ),
+                """
+            )
         )
 
         val map = engine.resolveVtables(extracted)
@@ -279,7 +279,7 @@ class JniOffsetEngineTest {
 
         engine.scanText(
             extracted,
-            listOf(PatternSpec("one", "48 8B ??"), PatternSpec("two", "DE AD")),
+            listOf(PatternSpec("one", "48 8B ??"), PatternSpec("two", "DE AD"))
         )
 
         val sent = bindings.lastPatterns
@@ -343,7 +343,7 @@ class JniOffsetEngineTest {
         var lastPatterns: String = "",
         var lastCallback: ProgressCallback? = null,
 
-        private val failure: Throwable? = null,
+        private val failure: Throwable? = null
     ) : NativeLibrary {
 
         override fun describeSections(path: String, sha256: String): String {
@@ -360,7 +360,7 @@ class JniOffsetEngineTest {
             path: String,
             sha256: String,
             patternsJson: String,
-            callback: ProgressCallback?,
+            callback: ProgressCallback?
         ): String {
             failure?.let { throw it }
             lastPatterns = patternsJson

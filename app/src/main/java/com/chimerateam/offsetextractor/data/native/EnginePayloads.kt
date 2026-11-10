@@ -33,14 +33,14 @@ data class NativeLibraryMetadata(
     val entryPoint: String,
     val sectionCount: Int,
     val programHeaderCount: Int,
-    val soname: String?,
+    val soname: String?
 )
 
 /** Wire model for the extraction payload; field names match the Rust output. */
 private data class ExtractionPayload(
     val path: String?,
     val sha256: String?,
-    val size: Long?,
+    val size: Long?
 )
 
 /** Wire model for the ELF metadata payload; field names match the Rust output. */
@@ -56,7 +56,7 @@ private data class ElfMetadataPayload(
     @SerializedName("entry_point") val entryPoint: String?,
     @SerializedName("section_count") val sectionCount: Int?,
     @SerializedName("program_header_count") val programHeaderCount: Int?,
-    val soname: String?,
+    val soname: String?
 )
 
 /**
@@ -85,7 +85,7 @@ object EnginePayloads {
         if (path.isNullOrEmpty() || hash.isNullOrEmpty() || size == null) {
             throw EngineException(
                 kind = EngineErrorKind.Unknown,
-                message = "the engine returned an incomplete extraction payload",
+                message = "the engine returned an incomplete extraction payload"
             )
         }
         return ExtractedNativeLibrary(path = path, sha256 = hash, sizeBytes = size)
@@ -106,7 +106,7 @@ object EnginePayloads {
         if (path.isNullOrEmpty() || hash.isNullOrEmpty() || architecture.isNullOrEmpty()) {
             throw EngineException(
                 kind = EngineErrorKind.Unknown,
-                message = "the engine returned an incomplete ELF metadata payload",
+                message = "the engine returned an incomplete ELF metadata payload"
             )
         }
         return NativeLibraryMetadata(
@@ -120,7 +120,7 @@ object EnginePayloads {
             entryPoint = payload.entryPoint ?: "0x0",
             sectionCount = payload.sectionCount ?: 0,
             programHeaderCount = payload.programHeaderCount ?: 0,
-            soname = payload.soname,
+            soname = payload.soname
         )
     }
 
@@ -138,13 +138,13 @@ object EnginePayloads {
         if (text == null || sections.isNullOrEmpty()) {
             throw EngineException(
                 kind = EngineErrorKind.MissingSection,
-                message = "the engine returned a section map without a .text section",
+                message = "the engine returned a section map without a .text section"
             )
         }
         return SectionMap(
             imageBase = payload.imageBase ?: 0L,
             text = text,
-            sections = sections,
+            sections = sections
         )
     }
 
@@ -162,7 +162,7 @@ object EnginePayloads {
         if (identity == null || symbols == null) {
             throw EngineException(
                 kind = EngineErrorKind.InvalidElf,
-                message = "the engine returned a symbol report without an identity",
+                message = "the engine returned a symbol report without an identity"
             )
         }
         return SymbolReport(identity = identity, symbols = symbols)
@@ -182,7 +182,7 @@ object EnginePayloads {
         if (section == null || hits == null) {
             throw EngineException(
                 kind = EngineErrorKind.InvalidElf,
-                message = "the engine returned a scan result without a section",
+                message = "the engine returned a scan result without a section"
             )
         }
         return ScanOutcome(
@@ -194,7 +194,7 @@ object EnginePayloads {
             peakResidentBytes = payload.peakResidentBytes,
             discarded = payload.discarded ?: 0,
             verified = payload.verified ?: false,
-            verification = payload.verification,
+            verification = payload.verification
         )
     }
 
@@ -212,12 +212,11 @@ object EnginePayloads {
      * @param failure the failure reported by the engine.
      * @return an exception carrying the mapped [EngineErrorKind].
      */
-    fun toEngineException(failure: EngineFailure): EngineException =
-        EngineException(
-            kind = kindOf(failure.kind),
-            message = failure.detail.ifEmpty { failure.message ?: "engine failure" },
-            cause = failure,
-        )
+    fun toEngineException(failure: EngineFailure): EngineException = EngineException(
+        kind = kindOf(failure.kind),
+        message = failure.detail.ifEmpty { failure.message ?: "engine failure" },
+        cause = failure
+    )
 
     /**
      * Maps an engine failure kind string onto the UI classification.
@@ -251,7 +250,7 @@ object EnginePayloads {
             source = payload.source ?: VtableMap.SOURCE_DIRECT_SCAN,
             typeInfoCandidates = payload.typeInfoCandidates ?: 0,
             relocationsExamined = payload.relocationsExamined ?: 0,
-            entries = payload.entries ?: emptyMap(),
+            entries = payload.entries ?: emptyMap()
         )
     }
 
@@ -259,20 +258,20 @@ object EnginePayloads {
         if (json.isNullOrBlank()) {
             throw EngineException(
                 kind = EngineErrorKind.Unknown,
-                message = "the engine returned no $what payload",
+                message = "the engine returned no $what payload"
             )
         }
         return try {
             gson.fromJson(json, type)
                 ?: throw EngineException(
                     kind = EngineErrorKind.Unknown,
-                    message = "the engine returned an empty $what payload",
+                    message = "the engine returned an empty $what payload"
                 )
         } catch (malformed: JsonSyntaxException) {
             throw EngineException(
                 kind = EngineErrorKind.Unknown,
                 message = "the engine returned a malformed $what payload",
-                cause = malformed,
+                cause = malformed
             )
         }
     }

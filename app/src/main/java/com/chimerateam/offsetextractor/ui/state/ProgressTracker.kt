@@ -8,7 +8,7 @@ package com.chimerateam.offsetextractor.ui.state
  */
 data class ProgressTracker(
     val percent: Int,
-    val task: String,
+    val task: String
 ) {
     companion object {
         /** A tracker clamped into the valid percentage range. */

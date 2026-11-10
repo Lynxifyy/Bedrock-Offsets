@@ -3,7 +3,6 @@ package com.chimerateam.offsetextractor.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +34,7 @@ fun SelectedApkCard(
     usedCacheCopy: Boolean,
     onCancel: () -> Unit,
     onSelectApk: () -> Unit,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
     SectionPanel(title = "Selected APK", modifier = modifier) {
         Text(text = displayName, style = MonoText.headline)
@@ -43,7 +42,7 @@ fun SelectedApkCard(
         Text(
             text = formatBytes(sizeBytes),
             style = MonoText.body,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         if (usedCacheCopy) {
             Spacer(Modifier.height(4.dp))
@@ -51,7 +50,7 @@ fun SelectedApkCard(
                 text = "Streamed to a private cache copy: the provider could not " +
                     "hand out a file descriptor.",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Spacer(Modifier.height(16.dp))
@@ -75,7 +74,7 @@ private fun SelectedApkCardPreview() {
             sizeBytes = 812L * 1024 * 1024,
             usedCacheCopy = false,
             onCancel = {},
-            onSelectApk = {},
+            onSelectApk = {}
         )
     }
 }
@@ -87,7 +86,7 @@ fun SelectedApkCard(
     usedCacheCopy: Boolean,
     onCancel: () -> Unit,
     onSelectApk: () -> Unit,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
     SelectedApkCard(
         displayName = metadata.displayName,
@@ -95,6 +94,6 @@ fun SelectedApkCard(
         usedCacheCopy = usedCacheCopy,
         onCancel = onCancel,
         onSelectApk = onSelectApk,
-        modifier = modifier,
+        modifier = modifier
     )
 }

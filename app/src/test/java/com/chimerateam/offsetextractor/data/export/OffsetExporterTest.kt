@@ -1,12 +1,12 @@
 package com.chimerateam.offsetextractor.data.export
 
-import com.google.gson.JsonParser
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.TypeVTable
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
+import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,7 +26,7 @@ class OffsetExporterTest {
         allocated = true,
         executable = true,
         writable = false,
-        occupiesFile = true,
+        occupiesFile = true
     )
 
     private val summary = ScanResultSummary(
@@ -47,8 +47,8 @@ class OffsetExporterTest {
                 address = 0x401000,
                 addressHex = "0x401000",
                 prologueKind = "frame_push",
-                prologueInstruction = "stp x29, x30, [sp, #-16]!",
-            ),
+                prologueInstruction = "stp x29, x30, [sp, #-16]!"
+            )
         ),
         discardedMatches = 2,
         vtables = VtableMap(
@@ -62,9 +62,9 @@ class OffsetExporterTest {
                     vtableAddress = 0x403000,
                     vtableHex = "0x403000",
                     vtableOffset = 0x3000,
-                    typeInfoAddress = 0x403080,
-                ),
-            ),
+                    typeInfoAddress = 0x403080
+                )
+            )
         ),
         symbols = listOf(
             ExportedSymbol(
@@ -72,10 +72,10 @@ class OffsetExporterTest {
                 address = 0x410000,
                 addressHex = "0x410000",
                 size = 32,
-                binding = 1,
-            ),
+                binding = 1
+            )
         ),
-        expectedPatterns = listOf("clientInstance", "absentSignature"),
+        expectedPatterns = listOf("clientInstance", "absentSignature")
     )
 
     @Test
@@ -164,7 +164,7 @@ class OffsetExporterTest {
             patternHits = emptyList(),
             vtables = VtableMap.EMPTY,
             symbols = emptyList(),
-            expectedPatterns = emptyList(),
+            expectedPatterns = emptyList()
         )
 
         val root = JsonParser.parseString(OffsetExporter.toJson(empty)).asJsonObject

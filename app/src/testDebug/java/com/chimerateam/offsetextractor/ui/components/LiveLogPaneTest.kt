@@ -26,8 +26,9 @@ class LiveLogPaneTest {
     private val entries = listOf(
         LogEntry(0, LogLevel.Info, "SAF", "Opened APK File Descriptor successfully."),
         LogEntry(1, LogLevel.Info, "RUST", "Parallel scan complete."),
-        LogEntry(2, LogLevel.Error, "ERROR", "Streaming extraction failed."),
+        LogEntry(2, LogLevel.Error, "ERROR", "Streaming extraction failed.")
     )
+
     @Test
     fun rendersEveryEntryWithItsTag() {
         composeTestRule.setContent {
@@ -35,11 +36,21 @@ class LiveLogPaneTest {
                 LiveLogPane(entries = entries, onCopyLog = {}, onClearLog = {})
             }
         }
-        composeTestRule.onNodeWithText("Opened APK File Descriptor successfully.", substring = true).assertExists()
+        composeTestRule.onNodeWithText(
+            "Opened APK File Descriptor successfully.",
+            substring = true
+        ).assertExists()
         composeTestRule.onNodeWithText("Parallel scan complete.", substring = true).assertExists()
-        composeTestRule.onNodeWithText("Streaming extraction failed.", substring = true).assertExists()
-        composeTestRule.onNodeWithText("[SAF] Parallel scan complete.", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText(
+            "Streaming extraction failed.",
+            substring = true
+        ).assertExists()
+        composeTestRule.onNodeWithText(
+            "[SAF] Parallel scan complete.",
+            substring = true
+        ).assertDoesNotExist()
     }
+
     @Test
     fun anEmptyLogExplainsItself() {
         composeTestRule.setContent {
@@ -49,6 +60,7 @@ class LiveLogPaneTest {
         }
         composeTestRule.onNodeWithText("Live log will appear here.").assertExists()
     }
+
     @Test
     fun copyAndClearInvokeTheirCallbacks() {
         var copies = 0
@@ -58,7 +70,7 @@ class LiveLogPaneTest {
                 LiveLogPane(
                     entries = entries,
                     onCopyLog = { copies++ },
-                    onClearLog = { clears++ },
+                    onClearLog = { clears++ }
                 )
             }
         }

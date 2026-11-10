@@ -82,7 +82,7 @@ class SignaturePackTest {
         assertTrue("the bundled pack declared no patterns", patterns.isNotEmpty())
         assertTrue(
             "every bundled pattern needs a name and bytes",
-            patterns.all { it.name.isNotBlank() && it.pattern.isNotBlank() },
+            patterns.all { it.name.isNotBlank() && it.pattern.isNotBlank() }
         )
     }
 }

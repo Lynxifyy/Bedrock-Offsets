@@ -2,30 +2,29 @@ package com.chimerateam.offsetextractor.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
-import com.chimerateam.offsetextractor.data.saf.ApkSource
-import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.cache.ResultCache
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
+import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.data.native.VtableMap
-import com.chimerateam.offsetextractor.data.saf.OffsetEngine
+import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
+import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.saf.DocumentWriter
+import com.chimerateam.offsetextractor.data.saf.EngineException
+import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.WriteResult
 import com.chimerateam.offsetextractor.ui.error.ErrorMapper
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.Logs
-import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.state.BatchProgress
-import com.chimerateam.offsetextractor.ui.state.BatchSummary
+import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.state.ScannerUiState
-import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.util.formatBytes
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -93,34 +92,39 @@ class MainViewModel(
     },
     private val cache: ScanCache? = null,
     private val preferences: ScanPreferences? = null,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : ViewModel() {
 
     private val supervisor = SupervisorJob(viewModelScope.coroutineContext[Job])
 
     private val _uiState = MutableStateFlow(ScannerUiState())
+
     /** Current scanner snapshot. */
     val uiState: StateFlow<ScannerUiState> = _uiState.asStateFlow()
 
     private val _logs = MutableSharedFlow<LogEntry>(
         replay = 0,
         extraBufferCapacity = LOG_BUFFER,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
+
     /** Live-log stream; buffered so a slow collector cannot block the engine. */
     val logs: SharedFlow<LogEntry> = _logs.asSharedFlow()
 
     private val _logEntries = MutableStateFlow<List<LogEntry>>(emptyList())
+
     /** Retained log entries in chronological order, capped at [MAX_LOG_ENTRIES]. */
     val logEntries: StateFlow<List<LogEntry>> = _logEntries.asStateFlow()
 
     private val resultCache = cache?.let(::ResultCache)
 
     private val _forceRescan = MutableStateFlow(false)
+
     /** Whether the next scan ignores a cached result. */
     val forceRescan: StateFlow<Boolean> = _forceRescan.asStateFlow()
 
     private val _cacheSizeBytes = MutableStateFlow(0L)
+
     /** Total size of everything held in the on-disk cache. */
     val cacheSizeBytes: StateFlow<Long> = _cacheSizeBytes.asStateFlow()
 
@@ -159,7 +163,7 @@ class MainViewModel(
                 error = null,
                 errorHint = null,
                 batch = null,
-                batchSummary = null,
+                batchSummary = null
             )
         }
 
@@ -198,55 +202,33 @@ class MainViewModel(
                 error = null,
                 errorHint = null,
                 batchSummary = null,
-                batch = BatchProgress(total = uris.size),
+                batch = BatchProgress(total = uris.size)
             )
         }
 
+        val queue = BatchQueue(
+            process = { uri -> processApk(uri) },
+            onProgress = { progress ->
+                _uiState.update { it.copy(batch = progress) }
+                emit(Logs.info(TAG_UI, "Batch ${progress.position} of ${progress.total}."))
+            },
+            onFailure = { throwable ->
+                // processApk reports its own failures; this is the
+                // belt-and-braces case where something escaped it.
+                val mapped = ErrorMapper.fromThrowable(throwable)
+                fail(mapped.message, mapped.hint, tag = TAG_UI)
+            }
+        )
+
         extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
-            var succeeded = 0
-            var failed = 0
-            uris.forEachIndexed { index, uri ->
-                _uiState.update { current ->
-                    current.copy(
-                        batch = BatchProgress(
-                            total = uris.size,
-                            completed = index,
-                            succeeded = succeeded,
-                            failed = failed,
-                        ),
-                    )
-                }
-                emit(Logs.info(TAG_UI, "Batch ${index + 1} of ${uris.size}."))
-
-                val ok = try {
-                    processApk(uri)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (throwable: Throwable) {
-                    // processApk already reports its own failures; this is the
-                    // belt-and-braces case where something escaped it.
-                    val mapped = ErrorMapper.fromThrowable(throwable)
-                    fail(mapped.message, mapped.hint, tag = TAG_UI)
-                    false
-                }
-                if (ok) succeeded++ else failed++
-            }
-
-            _uiState.update { current ->
-                current.copy(
-                    batch = null,
-                    batchSummary = BatchSummary(
-                        total = uris.size,
-                        succeeded = succeeded,
-                        failed = failed,
-                    ),
-                )
-            }
+            val summary = queue.run(uris)
+            _uiState.update { it.copy(batch = null, batchSummary = summary) }
             emit(
                 Logs.info(
                     TAG_UI,
-                    "Processed ${uris.size} APKs. $succeeded success, $failed error.",
-                ),
+                    "Processed ${summary.total} APKs. " +
+                        "${summary.succeeded} success, ${summary.failed} error."
+                )
             )
         }
     }
@@ -292,8 +274,8 @@ class MainViewModel(
                     Logs.info(
                         TAG_SAF,
                         "${metadata.displayName}: ${opened.handle.lengthBytes} bytes" +
-                            if (opened.usedCacheCopy) " (streamed cache copy)" else "",
-                    ),
+                            if (opened.usedCacheCopy) " (streamed cache copy)" else ""
+                    )
                 )
                 _uiState.update {
                     it.copy(
@@ -304,7 +286,7 @@ class MainViewModel(
                         usedCacheCopy = opened.usedCacheCopy,
                         result = null,
                         error = null,
-                        errorHint = null,
+                        errorHint = null
                     )
                 }
                 return extractNativeLibrary(opened.handle)
@@ -394,8 +376,8 @@ class MainViewModel(
         emit(
             Logs.warn(
                 TAG_UI,
-                "The system is low on memory. Clearing the cache frees the most space.",
-            ),
+                "The system is low on memory. Clearing the cache frees the most space."
+            )
         )
         _uiState.update { it.copy(lowMemory = true) }
     }
@@ -415,8 +397,12 @@ class MainViewModel(
         emit(
             Logs.info(
                 TAG_CACHE,
-                if (force) "Force rescan enabled; cached results are ignored." else "Force rescan disabled.",
-            ),
+                if (force) {
+                    "Force rescan enabled; cached results are ignored."
+                } else {
+                    "Force rescan disabled."
+                }
+            )
         )
         viewModelScope.launch(supervisor + ioDispatcher) {
             preferences?.setForceRescan(force)
@@ -501,22 +487,22 @@ class MainViewModel(
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Streaming extraction complete. Hash: ${extracted.sha256}",
-                ),
+                    "Streaming extraction complete. Hash: ${extracted.sha256}"
+                )
             )
             emit(
                 Logs.info(
                     TAG_RUST,
                     "Extracted ${extracted.path.substringAfterLast('/')} " +
-                        "(${extracted.sizeBytes} bytes)",
-                ),
+                        "(${extracted.sizeBytes} bytes)"
+                )
             )
 
             _uiState.update {
                 it.copy(
                     phase = ScannerPhase.Scanning,
                     progress = 100,
-                    progressTask = "Mapping native library",
+                    progressTask = "Mapping native library"
                 )
             }
 
@@ -525,14 +511,14 @@ class MainViewModel(
                 Logs.info(
                     TAG_RUST,
                     "Mapped ${mapped.sizeBytes} byte .so file with zero-copy. " +
-                        "Arch: ${mapped.architecture}.",
-                ),
+                        "Arch: ${mapped.architecture}."
+                )
             )
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Entry point ${mapped.entryPoint}, ${mapped.sectionCount} sections",
-                ),
+                    "Entry point ${mapped.entryPoint}, ${mapped.sectionCount} sections"
+                )
             )
 
             val sections = engine.describeSections(extracted)
@@ -542,30 +528,30 @@ class MainViewModel(
                     TAG_RUST,
                     "Section ${text.name} [${text.hex(text.address)}.." +
                         "${text.hex(text.address + text.size)}] file " +
-                        "${text.hex(text.offset)} delta ${text.hex(text.delta)}",
-                ),
+                        "${text.hex(text.offset)} delta ${text.hex(text.delta)}"
+                )
             )
             emit(
                 Logs.info(
                     TAG_RUST,
                     "Image base ${sections.hex(sections.imageBase)}, " +
-                        "${sections.sections.size} sections mapped",
-                ),
+                        "${sections.sections.size} sections mapped"
+                )
             )
 
             val symbols = engine.describeSymbols(extracted)
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Build ID extracted. Found ${symbols.symbols.jni.size} dynamic symbols.",
-                ),
+                    "Build ID extracted. Found ${symbols.symbols.jni.size} dynamic symbols."
+                )
             )
             emit(
                 Logs.info(
                     TAG_RUST,
                     "Build ID ${symbols.identity.buildId} " +
-                        "(${symbols.identity.source}, ${symbols.symbols.defined} defined)",
-                ),
+                        "(${symbols.identity.source}, ${symbols.symbols.defined} defined)"
+                )
             )
 
             cachedResultFor(symbols.identity.buildId)?.let { cached ->
@@ -578,10 +564,10 @@ class MainViewModel(
                         result = cached.copy(
                             displayName = source.metadata.displayName,
                             sizeBytes = extracted.sizeBytes,
-                            sha256 = extracted.sha256,
+                            sha256 = extracted.sha256
                         ),
                         error = null,
-                        errorHint = null,
+                        errorHint = null
                     )
                 }
                 return true
@@ -612,10 +598,10 @@ class MainViewModel(
                         vtables = vtables,
                         symbols = symbols.symbols.jni,
                         expectedPatterns = patterns.map { it.name },
-                        verification = scan?.verification ?: VerificationSummary.NONE,
+                        verification = scan?.verification ?: VerificationSummary.NONE
                     ),
                     error = null,
-                    errorHint = null,
+                    errorHint = null
                 )
             }
 
@@ -642,7 +628,7 @@ class MainViewModel(
      * @return the resolved vtables, or an empty map when the pass fails.
      */
     private suspend fun resolveVtables(
-        extracted: com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary,
+        extracted: com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
     ): VtableMap = try {
         val map = engine.resolveVtables(extracted)
         if (map.isEmpty) {
@@ -651,15 +637,15 @@ class MainViewModel(
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Resolved ${map.size} RTTI vtables from ${map.source}.",
-                ),
+                    "Resolved ${map.size} RTTI vtables from ${map.source}."
+                )
             )
             map.entries.values.take(MAX_LOGGED_VTABLES).forEach { vtable ->
                 emit(
                     Logs.info(
                         TAG_RUST,
-                        "Resolved ${vtable.name} vtable at ${vtable.vtableHex}",
-                    ),
+                        "Resolved ${vtable.name} vtable at ${vtable.vtableHex}"
+                    )
                 )
             }
         }
@@ -676,7 +662,7 @@ class MainViewModel(
      * @return the scan outcome, or `null` when no patterns are configured.
      */
     private suspend fun scanForOffsets(
-        extracted: com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary,
+        extracted: com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
     ): ScanOutcome? {
         if (patterns.isEmpty()) {
             emit(Logs.warn(TAG_RUST, "No signatures configured; skipping the scan."))
@@ -698,15 +684,15 @@ class MainViewModel(
         emit(
             Logs.info(
                 TAG_RUST,
-                "Parallel scan complete. Found ${outcome.hits.size} pattern matches.",
-            ),
+                "Parallel scan complete. Found ${outcome.hits.size} pattern matches."
+            )
         )
         emit(
             Logs.info(
                 TAG_RUST,
                 "Verified ${outcome.hits.size} valid function prologues " +
-                    "(${outcome.discarded} discarded).",
-            ),
+                    "(${outcome.discarded} discarded)."
+            )
         )
         outcome.peakResidentBytes?.let { peak ->
             emit(Logs.info(TAG_RUST, "Peak resident set ${formatBytes(peak)}"))
@@ -726,8 +712,8 @@ class MainViewModel(
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Offset verification skipped: the library exports no symbols.",
-                ),
+                    "Offset verification skipped: the library exports no symbols."
+                )
             )
             return
         }
@@ -735,16 +721,16 @@ class MainViewModel(
             Logs.info(
                 TAG_RUST,
                 "Offset verification complete. ${summary.verified} verified, " +
-                    "${summary.conflicts} conflicts, ${summary.confidencePercent}% confidence.",
-            ),
+                    "${summary.conflicts} conflicts, ${summary.confidencePercent}% confidence."
+            )
         )
         if (summary.conflicts > 0) {
             emit(
                 Logs.error(
                     TAG_RUST,
                     "${summary.conflicts} offset(s) disagree with the symbol table; " +
-                        "treat them as stale.",
-                ),
+                        "treat them as stale."
+                )
             )
         }
     }
@@ -761,7 +747,7 @@ class MainViewModel(
                 progress = 0,
                 progressTask = "",
                 error = message,
-                errorHint = hint,
+                errorHint = hint
             )
         }
     }
@@ -798,7 +784,7 @@ class MainViewModel(
      * @param safAccess storage-access implementation.
      * @param engine extraction engine.
      * @param cacheDir directory that receives extracted native libraries.
- * @param patterns signatures the scanner looks for; empty skips the scan.
+     * @param patterns signatures the scanner looks for; empty skips the scan.
      */
     companion object {
         private const val LOG_BUFFER = 64
@@ -809,7 +795,7 @@ class MainViewModel(
          * @param safAccess storage-access implementation used to open APKs.
          * @param engine extraction engine, JNI-backed in production.
          * @param cacheDir directory that receives extracted native libraries.
- * @param patterns signatures the scanner looks for; empty skips the scan.
+         * @param patterns signatures the scanner looks for; empty skips the scan.
          * @return a ready-to-use ViewModel.
          */
         fun create(
@@ -819,7 +805,7 @@ class MainViewModel(
             writer: DocumentWriter,
             cache: ScanCache,
             preferences: ScanPreferences,
-            patterns: List<PatternSpec> = emptyList(),
+            patterns: List<PatternSpec> = emptyList()
         ): MainViewModel = MainViewModel(
             safAccess = safAccess,
             engine = engine,
@@ -827,7 +813,7 @@ class MainViewModel(
             patterns = patterns,
             writer = writer,
             cache = cache,
-            preferences = preferences,
+            preferences = preferences
         )
     }
 }

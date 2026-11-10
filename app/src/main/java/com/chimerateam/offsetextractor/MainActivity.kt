@@ -13,11 +13,11 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.scanPreferences
 import com.chimerateam.offsetextractor.data.native.JniOffsetEngine
+import com.chimerateam.offsetextractor.data.patterns.SignaturePack
 import com.chimerateam.offsetextractor.data.saf.AndroidDocumentWriter
 import com.chimerateam.offsetextractor.data.saf.AndroidSafApkAccess
 import com.chimerateam.offsetextractor.ui.BedrockOffsetExtractorApp
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
-import com.chimerateam.offsetextractor.data.patterns.SignaturePack
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
 import java.io.File
 
@@ -40,7 +40,7 @@ class MainActivity : ComponentActivity() {
                     writer = AndroidDocumentWriter(applicationContext),
                     cache = ScanCache(File(cacheDir, "scan-cache").apply { mkdirs() }),
                     preferences = scanPreferences(this@MainActivity),
-                    patterns = SignaturePack.load(applicationContext),
+                    patterns = SignaturePack.load(applicationContext)
                 )
             }
         }
@@ -68,8 +68,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-
-
 
 @Preview(showBackground = true)
 @Composable

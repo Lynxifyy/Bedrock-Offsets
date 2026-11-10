@@ -1,10 +1,10 @@
 package com.chimerateam.offsetextractor.data.saf
 
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
-import com.chimerateam.offsetextractor.data.native.SectionMap
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
+import com.chimerateam.offsetextractor.data.native.SectionMap
 import com.chimerateam.offsetextractor.data.native.SymbolReport
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import java.io.File
@@ -76,7 +76,7 @@ interface OffsetEngine {
     suspend fun scanText(
         library: ExtractedNativeLibrary,
         patterns: List<PatternSpec>,
-        progress: ProgressCallback? = null,
+        progress: ProgressCallback? = null
     ): ScanOutcome
 
     /**
@@ -102,7 +102,7 @@ interface OffsetEngine {
 data class ExtractedNativeLibrary(
     val path: String,
     val sha256: String,
-    val sizeBytes: Long,
+    val sizeBytes: Long
 )
 
 /**
@@ -114,7 +114,7 @@ data class ExtractedNativeLibrary(
 class EngineException(
     val kind: EngineErrorKind,
     message: String,
-    cause: Throwable? = null,
+    cause: Throwable? = null
 ) : Exception(message, cause)
 
 /** Classification of engine failures. */
@@ -147,5 +147,5 @@ enum class EngineErrorKind {
     Cancelled,
 
     /** Anything else. */
-    Unknown,
+    Unknown
 }

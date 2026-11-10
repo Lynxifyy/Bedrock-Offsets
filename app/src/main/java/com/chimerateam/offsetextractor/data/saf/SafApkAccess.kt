@@ -96,9 +96,9 @@ class AndroidSafApkAccess(context: Context) : SafApkAccess {
                     usedCacheCopy = false,
                     lengthBytes = size,
                     descriptor = descriptor,
-                    cacheFile = null,
+                    cacheFile = null
                 ),
-                usedCacheCopy = false,
+                usedCacheCopy = false
             )
         }
 
@@ -131,7 +131,7 @@ class AndroidSafApkAccess(context: Context) : SafApkAccess {
                 if (input == null) {
                     return ApkOpenResult.Failure(
                         SafFailure.NotFound,
-                        "Provider returned no stream for ${metadata.displayName}",
+                        "Provider returned no stream for ${metadata.displayName}"
                     )
                 }
                 FileOutputStream(target).use { output ->
@@ -148,13 +148,13 @@ class AndroidSafApkAccess(context: Context) : SafApkAccess {
             target.delete()
             return ApkOpenResult.Failure(
                 SafFailure.SecurityDenied,
-                "Read access to ${metadata.displayName} was denied",
+                "Read access to ${metadata.displayName} was denied"
             )
         } catch (io: IOException) {
             target.delete()
             return ApkOpenResult.Failure(
                 SafFailure.IoError,
-                "Could not copy ${metadata.displayName}: ${io.message ?: "I/O error"}",
+                "Could not copy ${metadata.displayName}: ${io.message ?: "I/O error"}"
             )
         }
 
@@ -164,7 +164,7 @@ class AndroidSafApkAccess(context: Context) : SafApkAccess {
             target.delete()
             return ApkOpenResult.Failure(
                 SafFailure.IoError,
-                "Could not reopen cache copy of ${metadata.displayName}",
+                "Could not reopen cache copy of ${metadata.displayName}"
             )
         }
 
@@ -175,9 +175,9 @@ class AndroidSafApkAccess(context: Context) : SafApkAccess {
                 usedCacheCopy = true,
                 lengthBytes = target.length(),
                 descriptor = descriptor,
-                cacheFile = target,
+                cacheFile = target
             ),
-            usedCacheCopy = true,
+            usedCacheCopy = true
         )
     }
 

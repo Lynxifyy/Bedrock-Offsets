@@ -6,8 +6,10 @@ import androidx.compose.ui.graphics.Color
 
 /** Deep caramel, used as the light-theme primary. */
 val Caramel600 = Color(0xFFB06A16)
+
 /** Brighter caramel for dark-theme primary contrast. */
 val Caramel400 = Color(0xFFE39A45)
+
 /** Honey highlight used for accents and the scanning glow. */
 val Honey300 = Color(0xFFFFD07A)
 val Honey100 = Color(0xFFFFE9C2)
@@ -29,6 +31,7 @@ val Neutral100 = Color(0xFFF4EFE8)
 val Neutral50 = Color(0xFFFCF9F5)
 
 val SurfaceDark = Color(0xFF141210)
+
 /** Pure black used by the AMOLED theme. */
 val AmoledBlack = Color(0xFF000000)
 

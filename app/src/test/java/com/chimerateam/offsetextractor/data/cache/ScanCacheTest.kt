@@ -99,7 +99,7 @@ class ScanCacheTest {
         assertEquals(
             "every byte must be zeroed, including across block boundaries",
             0,
-            secret.readBytes().count { it != 0.toByte() },
+            secret.readBytes().count { it != 0.toByte() }
         )
     }
 
@@ -140,7 +140,7 @@ class ScanCacheTest {
         assertEquals("offsets_deadbeef.json", ScanCache.documentFileName("deadbeef"))
         assertEquals(
             "offsets_deadbeef.json",
-            ScanCache.documentFileName("dead/../beef"),
+            ScanCache.documentFileName("dead/../beef")
         )
         assertEquals("offsets_unknown.json", ScanCache.documentFileName("///"))
     }

@@ -1,11 +1,11 @@
 package com.chimerateam.offsetextractor.ui.state
 
+import androidx.compose.runtime.Immutable
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
-import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
+import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.data.native.VtableMap
-import androidx.compose.runtime.Immutable
 import com.chimerateam.offsetextractor.data.saf.ApkMetadata
 
 /**
@@ -45,7 +45,7 @@ data class ScannerUiState(
     val exportMessage: String? = null,
     val lowMemory: Boolean = false,
     val batch: BatchProgress? = null,
-    val batchSummary: BatchSummary? = null,
+    val batchSummary: BatchSummary? = null
 )
 
 /** Screen-level phases of the scanner. */
@@ -63,7 +63,7 @@ enum class ScannerPhase {
     Success,
 
     /** The last operation failed; the UI offers a retry. */
-    Error,
+    Error
 }
 
 /**
@@ -105,5 +105,5 @@ data class ScanResultSummary(
     val vtables: VtableMap = VtableMap.EMPTY,
     val symbols: List<ExportedSymbol> = emptyList(),
     val expectedPatterns: List<String> = emptyList(),
-    val verification: VerificationSummary = VerificationSummary.NONE,
+    val verification: VerificationSummary = VerificationSummary.NONE
 )

@@ -67,12 +67,12 @@ object SignaturePack {
 
     /** JSON shape of a signature pack document. */
     private data class PackDocument(
-        @SerializedName("patterns") val patterns: List<Entry>?,
+        @SerializedName("patterns") val patterns: List<Entry>?
     )
 
     /** One signature in the pack. */
     private data class Entry(
         @SerializedName("name") val name: String = "",
-        @SerializedName("pattern") val pattern: String = "",
+        @SerializedName("pattern") val pattern: String = ""
     )
 }

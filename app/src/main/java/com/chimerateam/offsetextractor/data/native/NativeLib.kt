@@ -85,6 +85,7 @@ object NativeLib {
         ensureLoaded()
         return describeSectionsNative(path, sha256)
     }
+
     /**
      * Reads the build identifier and exported symbols of the library at [path].
      *
@@ -112,7 +113,7 @@ object NativeLib {
         path: String,
         sha256: String,
         patternsJson: String,
-        callback: ProgressCallback? = null,
+        callback: ProgressCallback? = null
     ): String {
         ensureLoaded()
         return scanTextNative(path, sha256, patternsJson, callback)
@@ -135,7 +136,7 @@ object NativeLib {
         if (!isAvailable) {
             throw EngineFailure(
                 kind = "invalid_descriptor",
-                detail = "native engine unavailable: ${loadFailure ?: "unknown reason"}",
+                detail = "native engine unavailable: ${loadFailure ?: "unknown reason"}"
             )
         }
     }
@@ -151,7 +152,7 @@ object NativeLib {
         path: String,
         sha256: String,
         patternsJson: String,
-        callback: ProgressCallback?,
+        callback: ProgressCallback?
     ): String
 
     private external fun resolveVtablesNative(path: String, sha256: String): String

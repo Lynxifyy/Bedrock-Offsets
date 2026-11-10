@@ -54,7 +54,7 @@ data class VerificationSummary(
     val verified: Int = 0,
     val conflicts: Int = 0,
     val unverified: Int = 0,
-    @SerializedName("symbols_available") val symbolsAvailable: Boolean = false,
+    @SerializedName("symbols_available") val symbolsAvailable: Boolean = false
 ) {
     /** Total number of offsets considered. */
     val total: Int get() = verified + conflicts + unverified

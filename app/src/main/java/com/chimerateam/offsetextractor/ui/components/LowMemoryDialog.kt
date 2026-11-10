@@ -16,10 +16,7 @@ import androidx.compose.runtime.Composable
  * @param onClearCache empties the cache and dismisses the notice.
  */
 @Composable
-fun LowMemoryDialog(
-    onDismiss: () -> Unit,
-    onClearCache: () -> Unit,
-) {
+fun LowMemoryDialog(onDismiss: () -> Unit, onClearCache: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Low on memory") },
@@ -27,7 +24,7 @@ fun LowMemoryDialog(
             Text(
                 "The system is running low on memory. The scan keeps streaming " +
                     "rather than loading the file, so it can continue, but " +
-                    "clearing the cache will free the most space.",
+                    "clearing the cache will free the most space."
             )
         },
         confirmButton = {
@@ -39,6 +36,6 @@ fun LowMemoryDialog(
             TextButton(onClick = onDismiss) {
                 Text("Continue")
             }
-        },
+        }
     )
 }
