@@ -1,0 +1,43 @@
+# --- Android / Gradle ---
+.gradle/
+.kotlin/
+build/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+captures/
+.externalNativeBuild/
+.cxx/
+release/
+app/release/
+lint-results*.html
+lint-results*.xml
+
+# --- Release signing material; never commit a keystore or its password ---
+keystore.properties
+*.jks
+*.keystore
+
+# --- Rust ---
+target/
+**/*.rs.bk
+*.pdb
+# Rust output staged for packaging; rebuilt by scripts/build_rust.py.
+app/src/main/jniLibs/
+
+# --- IDE ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.DS_Store
+*.hprof
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/

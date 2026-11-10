@@ -1,0 +1,44 @@
+{
+  "patterns": [
+    {
+      "name": "adrp_add_page_off",
+      "pattern": "?? ?? ?? ?? ?? ?? ?? 91"
+    },
+    {
+      "name": "bti_c_landing_pad",
+      "pattern": "5F 24 03 D5"
+    },
+    {
+      "name": "callee_saved_save_x19_x20",
+      "pattern": "F3 53 BF A9"
+    },
+    {
+      "name": "callee_saved_save_x21_x22",
+      "pattern": "F5 5B BF A9"
+    },
+    {
+      "name": "frame_pointer_setup",
+      "pattern": "FD 03 00 91"
+    },
+    {
+      "name": "frame_push_with_pac",
+      "pattern": "FD 7B BF A9 7F 23 03 D5"
+    },
+    {
+      "name": "frame_push_x29_x30",
+      "pattern": "FD 7B BF A9"
+    },
+    {
+      "name": "pacibsp_prologue",
+      "pattern": "7F 23 03 D5 FD 7B BF A9"
+    },
+    {
+      "name": "stack_alloc_0x20",
+      "pattern": "FF 83 00 D1"
+    },
+    {
+      "name": "stp_q0_q1_frame",
+      "pattern": "FD 7B 01 A9"
+    }
+  ]
+}

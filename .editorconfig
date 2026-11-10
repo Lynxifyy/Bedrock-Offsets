@@ -1,0 +1,12 @@
+# Kotlin style for this project.
+#
+# The Android code style is the convention the Kotlin sources already follow,
+# and it is the one Compose code is written in. Composable functions are
+# PascalCase by Compose convention, so the naming rule is told to allow them.
+root = true
+
+[*.{kt,kts}]
+ktlint_code_style = android_studio
+ktlint_function_naming_ignore_when_annotated_with = Composable
+ktlint_standard_function-naming = disabled
+max_line_length = 100
