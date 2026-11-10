@@ -150,6 +150,16 @@ class MainViewModel(
         }
     }
 
+    /** Records that the user dismissed the picker without choosing a file. */
+    fun onSelectionCancelled() {
+        emit(Logs.info(TAG_SAF, "Selection cancelled."))
+        if (activeApk == null) {
+            _uiState.update {
+                it.copy(phase = ScannerPhase.Idle, progress = 0, progressTask = "")
+            }
+        }
+    }
+
     /** Clears the error state and returns the scanner to idle. */
     fun retry() {
         _uiState.update {
@@ -204,6 +214,24 @@ class MainViewModel(
                 ),
             )
 
+            val sections = engine.describeSections(extracted)
+            val text = sections.text
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Section ${text.name} [${text.hex(text.address)}.." +
+                        "${text.hex(text.address + text.size)}] file " +
+                        "${text.hex(text.offset)} delta ${text.hex(text.delta)}",
+                ),
+            )
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Image base ${sections.hex(sections.imageBase)}, " +
+                        "${sections.sections.size} sections mapped",
+                ),
+            )
+
             _uiState.update {
                 it.copy(
                     phase = ScannerPhase.Success,
@@ -216,6 +244,7 @@ class MainViewModel(
                         architecture = mapped.architecture,
                         entryPoint = mapped.entryPoint,
                         sectionCount = mapped.sectionCount,
+                        textSection = text,
                     ),
                     error = null,
                     errorHint = null,
@@ -228,6 +257,10 @@ class MainViewModel(
             fail(mapped.message, mapped.hint, tag = TAG_RUST)
         }
     }
+
+    /** Formats [value] as a `0x`-prefixed hexadecimal string. */
+    private fun com.chimerateam.offsetextractor.data.native.SectionMap.hex(value: Long): String =
+        "0x%x".format(value)
 
     private suspend fun fail(message: String, hint: String?, tag: String) {
         emit(Logs.error(tag, message))

@@ -51,6 +51,20 @@ class JniOffsetEngine(
         return EnginePayloads.parseLibraryMetadata(json)
     }
 
+    /**
+     * Reads the section header table of the mapped library.
+     *
+     * @param library the previously extracted library.
+     * @return the section layout, including the `.text` boundaries.
+     * @throws EngineException when the library is stripped or has no `.text`.
+     */
+    override suspend fun describeSections(library: ExtractedNativeLibrary): SectionMap {
+        val json = call("reading section headers") {
+            nativeLibrary.describeSections(library.path, library.sha256)
+        }
+        return EnginePayloads.parseSectionMap(json)
+    }
+
     private inline fun call(what: String, block: () -> String): String =
         try {
             block()
@@ -90,6 +104,15 @@ interface NativeLibrary {
      * @return a JSON payload describing the mapped library.
      */
     fun mapNativeLibrary(path: String, sha256: String): String
+
+    /**
+     * Reads the section header table of the library at [path].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @return a JSON payload describing every section.
+     */
+    fun describeSections(path: String, sha256: String): String
 }
 
 /** Production bindings, backed by [NativeLib]. */
@@ -100,4 +123,7 @@ object JniNativeLibrary : NativeLibrary {
 
     override fun mapNativeLibrary(path: String, sha256: String): String =
         NativeLib.mapNativeLibrary(path, sha256)
+
+    override fun describeSections(path: String, sha256: String): String =
+        NativeLib.describeSections(path, sha256)
 }

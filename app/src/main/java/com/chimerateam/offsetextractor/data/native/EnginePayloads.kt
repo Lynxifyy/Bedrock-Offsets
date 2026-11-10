@@ -125,6 +125,30 @@ object EnginePayloads {
     }
 
     /**
+     * Parses the JSON returned by the section-description entry point.
+     *
+     * @param json payload produced by the engine.
+     * @return the section layout of the mapped library.
+     * @throws EngineException when the payload is malformed or has no `.text`.
+     */
+    fun parseSectionMap(json: String?): SectionMap {
+        val payload = decode(json, SectionMapPayload::class.java, "section map")
+        val text = payload.text
+        val sections = payload.sections
+        if (text == null || sections.isNullOrEmpty()) {
+            throw EngineException(
+                kind = EngineErrorKind.MissingSection,
+                message = "the engine returned a section map without a .text section",
+            )
+        }
+        return SectionMap(
+            imageBase = payload.imageBase ?: 0L,
+            text = text,
+            sections = sections,
+        )
+    }
+
+    /**
      * Converts a failure thrown across the JNI boundary into a typed exception.
      *
      * @param failure the failure reported by the engine.

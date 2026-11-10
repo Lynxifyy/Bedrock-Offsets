@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor.ui.state
 
+import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.saf.ApkMetadata
 
 /**
@@ -55,6 +56,7 @@ enum class ScannerPhase {
  * @property architecture target architecture reported by the ELF header.
  * @property entryPoint entry point of the mapped library.
  * @property sectionCount number of section headers in the mapped library.
+ * @property textSection the executable section, or `null` when unreadable.
  */
 data class ScanResultSummary(
     val displayName: String,
@@ -63,4 +65,5 @@ data class ScanResultSummary(
     val architecture: String,
     val entryPoint: String,
     val sectionCount: Int,
+    val textSection: SectionInfo? = null,
 )

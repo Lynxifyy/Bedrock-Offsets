@@ -1,6 +1,7 @@
 package com.chimerateam.offsetextractor.data.saf
 
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
+import com.chimerateam.offsetextractor.data.native.SectionMap
 import java.io.File
 
 /**
@@ -36,6 +37,17 @@ interface OffsetEngine {
      * @throws EngineException when the file is not a 64-bit AArch64 ELF object.
      */
     suspend fun mapLibrary(library: ExtractedNativeLibrary): NativeLibraryMetadata
+
+    /**
+     * Reads the section header table of the mapped library.
+     *
+     * Only headers are read; no section body is copied.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @return the section layout, including the `.text` boundaries.
+     * @throws EngineException when the library is stripped or has no `.text`.
+     */
+    suspend fun describeSections(library: ExtractedNativeLibrary): SectionMap
 }
 
 /**

@@ -4,19 +4,27 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.ui.components.LiveLogPane
+import com.chimerateam.offsetextractor.ui.components.ResultsPanel
 import com.chimerateam.offsetextractor.ui.components.SelectedApkCard
+import com.chimerateam.offsetextractor.ui.state.ScannerPhase
+import com.chimerateam.offsetextractor.ui.state.ScannerUiState
 import com.chimerateam.offsetextractor.ui.theme.PanelGap
 
 /**
@@ -25,29 +33,34 @@ import com.chimerateam.offsetextractor.ui.theme.PanelGap
  * On compact widths the log is stacked below the controls; from 600dp the two
  * panes sit side by side.
  *
- * @param isBusy whether an extraction or scan is running.
- * @param progress completion in the range 0..100.
- * @param busyMessage task description shown while busy.
- * @param messages live log lines.
- * @param selectedApk the APK whose descriptor is currently held, if any.
+ * @param state the scanner snapshot published by the ViewModel.
+ * @param messages live log lines in chronological order.
  * @param onSelectApk invoked when the user requests the system file picker.
  * @param onCancelSelection releases the descriptor and resets the selection.
+ * @param onRetry clears an error and returns the scanner to idle.
  * @param modifier layout modifier for the screen.
  */
 @Composable
 fun ScannerScreen(
-    isBusy: Boolean,
-    progress: Int,
-    busyMessage: String,
+    state: ScannerUiState,
     messages: List<String>,
-    selectedApk: ApkSource?,
     onSelectApk: () -> Unit,
     onCancelSelection: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val availableWidth = maxWidth
         val sideBySide = availableWidth >= 600.dp
+
+        val controls: @Composable () -> Unit = {
+            ControlsPane(
+                state = state,
+                onSelectApk = onSelectApk,
+                onCancelSelection = onCancelSelection,
+                onRetry = onRetry,
+            )
+        }
 
         if (sideBySide) {
             Row(
@@ -62,14 +75,7 @@ fun ScannerScreen(
                         .fillMaxHeight()
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    ControlsPane(
-                        isBusy = isBusy,
-                        progress = progress,
-                        busyMessage = busyMessage,
-                        selectedApk = selectedApk,
-                        onSelectApk = onSelectApk,
-                        onCancelSelection = onCancelSelection,
-                    )
+                    controls()
                 }
                 LiveLogPane(
                     messages = messages,
@@ -85,14 +91,7 @@ fun ScannerScreen(
                     .padding(PanelGap),
                 verticalArrangement = Arrangement.spacedBy(PanelGap),
             ) {
-                ControlsPane(
-                    isBusy = isBusy,
-                    progress = progress,
-                    busyMessage = busyMessage,
-                    selectedApk = selectedApk,
-                    onSelectApk = onSelectApk,
-                    onCancelSelection = onCancelSelection,
-                )
+                controls()
                 LiveLogPane(
                     messages = messages,
                     modifier = Modifier
@@ -106,23 +105,88 @@ fun ScannerScreen(
 
 @Composable
 private fun ControlsPane(
-    isBusy: Boolean,
-    progress: Int,
-    busyMessage: String,
-    selectedApk: ApkSource?,
+    state: ScannerUiState,
     onSelectApk: () -> Unit,
     onCancelSelection: () -> Unit,
+    onRetry: () -> Unit,
 ) {
-    when {
-        isBusy -> LoadingScreen(message = busyMessage, progress = progress)
+    when (state.phase) {
+        ScannerPhase.Extracting, ScannerPhase.Scanning -> LoadingScreen(
+            message = state.progressTask,
+            progress = state.progress,
+        )
 
-        selectedApk != null -> SelectedApkCard(
-            metadata = selectedApk.metadata,
-            usedCacheCopy = selectedApk.usedCacheCopy,
-            onCancel = onCancelSelection,
+        ScannerPhase.Success -> SuccessPane(
+            state = state,
+            onStartNewScan = onCancelSelection,
+        )
+
+        ScannerPhase.Error -> ErrorPane(
+            message = state.error ?: "The scan failed.",
+            hint = state.errorHint,
+            onRetry = onRetry,
             onSelectApk = onSelectApk,
         )
 
-        else -> IdleScreen(onSelectApk = onSelectApk)
+        ScannerPhase.Idle -> if (state.selectedApk != null) {
+            SelectedApkCard(
+                metadata = state.selectedApk,
+                usedCacheCopy = state.usedCacheCopy,
+                onCancel = onCancelSelection,
+                onSelectApk = onSelectApk,
+            )
+        } else {
+            IdleScreen(onSelectApk = onSelectApk)
+        }
+    }
+}
+
+@Composable
+private fun SuccessPane(
+    state: ScannerUiState,
+    onStartNewScan: () -> Unit,
+) {
+    val result = state.result ?: return
+    Column(modifier = Modifier.fillMaxWidth()) {
+        ResultsPanel(result = result)
+        Spacer(Modifier.height(PanelGap))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = onStartNewScan) {
+                Text("Start new scan")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ErrorPane(
+    message: String,
+    hint: String?,
+    onRetry: () -> Unit,
+    onSelectApk: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+        if (hint != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = onRetry) {
+                Text("Retry")
+            }
+            OutlinedButton(onClick = onSelectApk) {
+                Text("Select another APK")
+            }
+        }
     }
 }

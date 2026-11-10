@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use crate::android::{catch_panics, install};
 use crate::elf::MappedLibrary;
 use crate::error::{CoreError, CoreResult};
+use crate::sections::build_section_map;
 use crate::zip_extract::extract_so_from_zip;
 
 /// Fully-qualified name of the Java exception raised for engine failures.
@@ -151,6 +152,68 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
             std::ptr::null_mut()
         }
     }
+}
+
+/// Maps the library and reports its section layout.
+///
+/// The section header table is read from the mapping; no section body is
+/// copied, so a large `.rodata` costs no extra memory.
+///
+/// # Returns
+///
+/// A JSON object with the image base, the `.text` boundaries and every section.
+///
+/// # Errors
+///
+/// Throws `EngineFailure` when the library cannot be mapped, has no section
+/// header table, or has no usable `.text` section.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_describeSectionsNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    path: JString,
+    sha256: JString,
+) -> jstring {
+    install();
+
+    let library_path = match read_jstring(&mut env, &path, "library path") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let library_hash = match read_jstring(&mut env, &sha256, "library hash") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+
+    let outcome = catch_panics("describing sections", move || {
+        describe_sections_json(&library_path, &library_hash)
+    });
+
+    match outcome {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(string) => string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(core_error)) => {
+            throw_core_error(&mut env, &core_error);
+            std::ptr::null_mut()
+        }
+        Err(panic_message) => {
+            throw_engine_failure(&mut env, "unknown", &panic_message);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Maps `path` and serialises its section layout, exposed for host tests.
+///
+/// # Errors
+///
+/// Propagates any mapping or section-parsing failure.
+pub fn describe_sections_json(path: &str, sha256: &str) -> CoreResult<String> {
+    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let map = build_section_map(library.bytes())?;
+    Ok(serde_json::to_string(&map).unwrap_or_default())
 }
 
 /// Reads a Java string argument, throwing `EngineFailure` when it is unusable.

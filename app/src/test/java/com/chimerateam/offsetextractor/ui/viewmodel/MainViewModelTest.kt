@@ -14,6 +14,8 @@ import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.SafFailure
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
+import com.chimerateam.offsetextractor.data.native.SectionInfo
+import com.chimerateam.offsetextractor.data.native.SectionMap
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogLevel
 import com.chimerateam.offsetextractor.ui.state.ProgressTracker
@@ -91,9 +93,13 @@ class MainViewModelTest {
         assertEquals("AArch64", state.result?.architecture)
         assertEquals("0x4000", state.result?.entryPoint)
         assertEquals(33, state.result?.sectionCount)
+        assertEquals(0x400000L, state.result?.textSection?.address)
+        assertEquals(0x7a0000L, state.result?.textSection?.size)
+        assertEquals(0x3fd000L, state.result?.textSection?.delta)
         assertNull(state.error)
         assertEquals(1, engine.calls)
         assertEquals(1, engine.mapCalls)
+        assertEquals(1, engine.sectionCalls)
     }
 
     @Test
@@ -175,6 +181,34 @@ class MainViewModelTest {
             "expected the zero-copy mapping line",
             collected.any { it.message.contains("zero-copy") },
         )
+    }
+
+    @Test
+    fun textSectionBoundariesAreLogged() = runTest(dispatcher) {
+        val engine = FakeEngine()
+        val viewModel = newViewModel(engine = engine)
+
+        val collected = mutableListOf<LogEntry>()
+        val job = startCollector(this, viewModel, collected)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+        job.cancel()
+
+        val boundary = collected.firstOrNull { it.message.contains("Section .text") }
+        assertNotNull("expected a .text boundary line", boundary)
+        assertTrue(boundary!!.message.contains("0x400000"))
+        assertTrue(boundary.message.contains("0xba0000"))
+    }
+
+    @Test
+    fun selectionCancelledWhileIdleReturnsToIdle() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.onSelectionCancelled()
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Idle, viewModel.uiState.value.phase)
     }
 
     @Test
@@ -308,7 +342,7 @@ class MainViewModelTest {
     }
 
     private fun newViewModel(
-        engine: OffsetEngine,
+        engine: OffsetEngine = FakeEngine(),
         access: SafApkAccess = FakeSafAccess(),
     ): MainViewModel = MainViewModel(
         safAccess = access,
@@ -317,6 +351,36 @@ class MainViewModelTest {
         ioDispatcher = dispatcher,
     )
 }
+
+/** The `.text` section used by the fake engine. */
+private val TEXT = SectionInfo(
+    name = ".text",
+    kind = "text",
+    address = 0x400000,
+    size = 0x7a0000,
+    offset = 0x3000,
+    align = 16,
+    delta = 0x3fd000,
+    allocated = true,
+    executable = true,
+    writable = false,
+    occupiesFile = true,
+)
+
+/** The `.rodata` section used by the fake engine. */
+private val RODATA = SectionInfo(
+    name = ".rodata",
+    kind = "rodata",
+    address = 0xba0000,
+    size = 0x2000,
+    offset = 0x7a3000,
+    align = 16,
+    delta = 0x3fd000,
+    allocated = true,
+    executable = false,
+    writable = false,
+    occupiesFile = true,
+)
 
 /** Deterministic engine double with virtual-time delay and call counting. */
 private class FakeEngine(
@@ -345,6 +409,22 @@ private class FakeEngine(
         }
         failure?.let { throw it }
         return result
+    }
+
+    var sectionCalls = 0
+        private set
+
+    override suspend fun describeSections(library: ExtractedNativeLibrary): SectionMap {
+        sectionCalls++
+        if (delayMillis > 0) {
+            delay(delayMillis)
+        }
+        failure?.let { throw it }
+        return SectionMap(
+            imageBase = TEXT.address,
+            text = TEXT,
+            sections = listOf(TEXT, RODATA),
+        )
     }
 
     override suspend fun mapLibrary(library: ExtractedNativeLibrary): NativeLibraryMetadata {

@@ -108,6 +108,45 @@ class JniOffsetEngineTest {
     }
 
     @Test
+    fun sectionPayloadIsParsedIntoALayout() = runTest {
+        val engine = JniOffsetEngine(FakeBindings(sections = SECTION_MAP_JSON))
+
+        val map = engine.describeSections(extracted)
+
+        assertEquals(0x400000L, map.imageBase)
+        assertEquals(".text", map.text.name)
+        assertEquals(0x400000L, map.text.address)
+        assertEquals(0x7a0000L, map.text.size)
+        assertEquals(0x3fd000L, map.text.delta)
+        assertEquals(2, map.sections.size)
+        assertEquals(".rodata", map.find(".rodata")?.name)
+    }
+
+    @Test
+    fun sectionMapWithoutTextIsRejected() = runTest {
+        val withoutText = SECTION_MAP_JSON
+            .substringBefore("\"text\":")
+            .plus("\"text\":null,\"sections\":[]}")
+        val engine = JniOffsetEngine(FakeBindings(sections = withoutText))
+
+        val error = runCatching { engine.describeSections(extracted) }.exceptionOrNull()
+
+        assertTrue("expected EngineException but was $error", error is EngineException)
+        assertEquals(EngineErrorKind.MissingSection, (error as EngineException).kind)
+    }
+
+    @Test
+    fun sectionAddressConversionUsesTheLoadDelta() = runTest {
+        val engine = JniOffsetEngine(FakeBindings(sections = SECTION_MAP_JSON))
+
+        val map = engine.describeSections(extracted)
+
+        assertEquals(0x400000L, map.text.addressOf(0x3000))
+        assertEquals(0x3000L, map.text.offsetOf(0x400000))
+        assertEquals(null, map.text.offsetOf(0x100))
+    }
+
+    @Test
     fun malformedPayloadIsRejected() = runTest {
         val engine = JniOffsetEngine(FakeBindings(extraction = "{not json"))
 
@@ -142,8 +181,14 @@ class JniOffsetEngineTest {
     private class FakeBindings(
         private val extraction: String = "",
         private val mapping: String = "",
+        private val sections: String = "",
         private val failure: Throwable? = null,
     ) : NativeLibrary {
+
+        override fun describeSections(path: String, sha256: String): String {
+            failure?.let { throw it }
+            return sections
+        }
 
         override fun extractNativeLibrary(fd: Int, destinationDir: String): String {
             failure?.let { throw it }
@@ -157,6 +202,53 @@ class JniOffsetEngineTest {
     }
 
     private companion object {
+        const val SECTION_MAP_JSON = """
+            {
+              "image_base": 4194304,
+              "text": {
+                "name": ".text",
+                "kind": "text",
+                "address": 4194304,
+                "size": 7995392,
+                "offset": 12288,
+                "align": 16,
+                "delta": 4182016,
+                "allocated": true,
+                "executable": true,
+                "writable": false,
+                "occupies_file": true
+              },
+              "sections": [
+                {
+                  "name": ".text",
+                  "kind": "text",
+                  "address": 4194304,
+                  "size": 7995392,
+                  "offset": 12288,
+                  "align": 16,
+                  "delta": 4182016,
+                  "allocated": true,
+                  "executable": true,
+                  "writable": false,
+                  "occupies_file": true
+                },
+                {
+                  "name": ".rodata",
+                  "kind": "rodata",
+                  "address": 12189696,
+                  "size": 8192,
+                  "offset": 8007680,
+                  "align": 16,
+                  "delta": 4182016,
+                  "allocated": true,
+                  "executable": false,
+                  "writable": false,
+                  "occupies_file": true
+                }
+              ]
+            }
+        """
+
         const val METADATA_JSON = """
             {
               "path": "/cache/libminecraftpe.so",

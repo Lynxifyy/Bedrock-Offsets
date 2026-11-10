@@ -14,7 +14,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+use goblin::container::{Container, Ctx, Endian};
 use goblin::elf::header::{EM_386, EM_AARCH64, EM_ARM, ET_DYN, ET_EXEC};
+use goblin::elf::section_header::SectionHeader;
 use goblin::elf::Elf;
 use memmap2::Mmap;
 use serde::Serialize;
@@ -166,6 +168,36 @@ pub fn parse_elf_bytes(bytes: &[u8]) -> CoreResult<Elf<'_>> {
 
     Elf::lazy_parse(header)
         .map_err(|error| CoreError::InvalidElf(format!("cannot decode ELF header: {error}")))
+}
+
+/// Parses the section header table of an ELF image.
+///
+/// `Elf::lazy_parse` deliberately leaves the header table empty, so it is read
+/// here when a caller actually needs it. Only the headers are read: no section
+/// body is copied, which is what keeps an 800 MB library cheap.
+///
+/// # Errors
+///
+/// Returns [`CoreError::InvalidElf`] when the header table lies outside the
+/// file or cannot be decoded.
+pub fn parse_section_headers<'a>(image: &'a [u8]) -> CoreResult<Vec<SectionHeader>> {
+    let header = Elf::parse_header(image)
+        .map_err(|error| CoreError::InvalidElf(format!("cannot parse ELF header: {error}")))?;
+
+    let container = if header.e_ident[4] == ELFCLASS64 {
+        Container::Big
+    } else {
+        Container::Little
+    };
+    let endian = if header.e_ident[5] == 2 {
+        Endian::Big
+    } else {
+        Endian::Little
+    };
+    let ctx = Ctx::new(container, endian);
+
+    SectionHeader::parse(image, header.e_shoff as usize, header.e_shnum as usize, ctx)
+        .map_err(|error| CoreError::InvalidElf(format!("cannot read section headers: {error}")))
 }
 
 /// Builds the metadata payload from an ELF image.

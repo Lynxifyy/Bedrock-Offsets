@@ -73,6 +73,18 @@ object NativeLib {
         return mapNativeLibraryNative(path, sha256)
     }
 
+    /**
+     * Reads the section header table of the library at [path].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @return a JSON object describing every section.
+     * @throws EngineFailure when the library has no section table or no `.text`.
+     */
+    fun describeSections(path: String, sha256: String): String {
+        ensureLoaded()
+        return describeSectionsNative(path, sha256)
+    }
     private fun ensureLoaded() {
         if (!isAvailable) {
             throw EngineFailure(
@@ -87,4 +99,5 @@ object NativeLib {
     private external fun extractNativeLibraryNative(fd: Int, destinationDir: String): String
 
     private external fun mapNativeLibraryNative(path: String, sha256: String): String
+    private external fun describeSectionsNative(path: String, sha256: String): String
 }
