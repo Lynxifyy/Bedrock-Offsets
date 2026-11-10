@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor.data.saf
 
+import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import java.io.File
 
 /**
@@ -23,6 +24,18 @@ interface OffsetEngine {
      *   absent.
      */
     suspend fun extractNativeLibrary(rawFd: Int, destDir: File): ExtractedNativeLibrary
+
+    /**
+     * Maps the extracted library with `mmap` and reports its ELF metadata.
+     *
+     * Implementations must not read the file into a heap buffer: a shared
+     * object can be hundreds of megabytes.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @return the mapped library description.
+     * @throws EngineException when the file is not a 64-bit AArch64 ELF object.
+     */
+    suspend fun mapLibrary(library: ExtractedNativeLibrary): NativeLibraryMetadata
 }
 
 /**
@@ -63,6 +76,21 @@ enum class EngineErrorKind {
 
     /** The device ran out of storage while writing the extracted file. */
     StorageFull,
+
+    /** The file is not a parseable ELF object. */
+    InvalidElf,
+
+    /** The file targets an architecture other than 64-bit AArch64. */
+    UnsupportedArchitecture,
+
+    /** A section the scanner needs is absent from the library. */
+    MissingSection,
+
+    /** A signature pattern could not be compiled. */
+    InvalidPattern,
+
+    /** The user cancelled the operation. */
+    Cancelled,
 
     /** Anything else. */
     Unknown,

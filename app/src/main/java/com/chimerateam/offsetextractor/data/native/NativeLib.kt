@@ -60,6 +60,19 @@ object NativeLib {
         return extractNativeLibraryNative(fd, destinationDir)
     }
 
+    /**
+     * Maps the library at [path] and returns its ELF metadata as JSON.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @return a JSON object describing the mapped library.
+     * @throws EngineFailure when the file is not a 64-bit AArch64 ELF object.
+     */
+    fun mapNativeLibrary(path: String, sha256: String): String {
+        ensureLoaded()
+        return mapNativeLibraryNative(path, sha256)
+    }
+
     private fun ensureLoaded() {
         if (!isAvailable) {
             throw EngineFailure(
@@ -72,4 +85,6 @@ object NativeLib {
     private external fun rustTestNative(): String
 
     private external fun extractNativeLibraryNative(fd: Int, destinationDir: String): String
+
+    private external fun mapNativeLibraryNative(path: String, sha256: String): String
 }

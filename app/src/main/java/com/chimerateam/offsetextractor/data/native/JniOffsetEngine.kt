@@ -1,0 +1,103 @@
+package com.chimerateam.offsetextractor.data.native
+
+import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
+import com.chimerateam.offsetextractor.data.saf.EngineException
+import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
+import com.chimerateam.offsetextractor.data.saf.OffsetEngine
+import java.io.File
+
+/**
+ * [OffsetEngine] backed by the Rust library through JNI.
+ *
+ * Extraction streams the entry out of the archive; mapping then `mmap`s the
+ * result, so neither operation copies the file into the JVM heap.
+ *
+ * @param nativeLibrary the loaded native bindings; injectable for tests.
+ */
+class JniOffsetEngine(
+    private val nativeLibrary: NativeLibrary = JniNativeLibrary,
+) : OffsetEngine {
+
+    /**
+     * Streams the native library out of the APK behind [rawFd].
+     *
+     * @param rawFd read-only descriptor owned by the caller.
+     * @param destDir cache directory that receives the extracted file.
+     * @return the extracted path, its SHA-256 and its size.
+     * @throws EngineException when the archive is unreadable or the entry is
+     *   absent.
+     */
+    override suspend fun extractNativeLibrary(
+        rawFd: Int,
+        destDir: File,
+    ): ExtractedNativeLibrary {
+        val json = call("extracting the native library") {
+            nativeLibrary.extractNativeLibrary(rawFd, destDir.absolutePath)
+        }
+        return EnginePayloads.parseExtraction(json)
+    }
+
+    /**
+     * Maps the extracted library and reports its ELF metadata.
+     *
+     * @param library the previously extracted library.
+     * @return the mapped library description.
+     * @throws EngineException when the file is not a 64-bit AArch64 ELF object.
+     */
+    override suspend fun mapLibrary(library: ExtractedNativeLibrary): NativeLibraryMetadata {
+        val json = call("mapping the native library") {
+            nativeLibrary.mapNativeLibrary(library.path, library.sha256)
+        }
+        return EnginePayloads.parseLibraryMetadata(json)
+    }
+
+    private inline fun call(what: String, block: () -> String): String =
+        try {
+            block()
+        } catch (failure: EngineFailure) {
+            throw EnginePayloads.toEngineException(failure)
+        } catch (unsatisfied: UnsatisfiedLinkError) {
+            throw EngineException(
+                kind = EngineErrorKind.InvalidDescriptor,
+                message = "the native engine is unavailable: ${unsatisfied.message ?: "link error"}",
+                cause = unsatisfied,
+            )
+        }
+}
+
+/**
+ * The subset of the native bindings the engine uses.
+ *
+ * Declaring it as an interface lets tests substitute a deterministic double
+ * without loading a shared object.
+ */
+interface NativeLibrary {
+
+    /**
+     * Extracts the native library from the APK behind [fd].
+     *
+     * @param fd read-only descriptor owned by the caller.
+     * @param destinationDir absolute cache directory for the extracted file.
+     * @return a JSON payload with `path`, `sha256` and `size`.
+     */
+    fun extractNativeLibrary(fd: Int, destinationDir: String): String
+
+    /**
+     * Maps the library at [path] and returns its ELF metadata as JSON.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @return a JSON payload describing the mapped library.
+     */
+    fun mapNativeLibrary(path: String, sha256: String): String
+}
+
+/** Production bindings, backed by [NativeLib]. */
+object JniNativeLibrary : NativeLibrary {
+
+    override fun extractNativeLibrary(fd: Int, destinationDir: String): String =
+        NativeLib.extractNativeLibrary(fd, destinationDir)
+
+    override fun mapNativeLibrary(path: String, sha256: String): String =
+        NativeLib.mapNativeLibrary(path, sha256)
+}

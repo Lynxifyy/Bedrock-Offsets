@@ -180,15 +180,42 @@ class MainViewModel(
                         "(${extracted.sizeBytes} bytes)",
                 ),
             )
+
+            _uiState.update {
+                it.copy(
+                    phase = ScannerPhase.Scanning,
+                    progress = 100,
+                    progressTask = "Mapping native library",
+                )
+            }
+
+            val mapped = engine.mapLibrary(extracted)
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Mapped ${mapped.sizeBytes} byte .so file with zero-copy. " +
+                        "Arch: ${mapped.architecture}.",
+                ),
+            )
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Entry point ${mapped.entryPoint}, ${mapped.sectionCount} sections",
+                ),
+            )
+
             _uiState.update {
                 it.copy(
                     phase = ScannerPhase.Success,
                     progress = 100,
-                    progressTask = "Extraction complete",
+                    progressTask = "Mapping complete",
                     result = ScanResultSummary(
                         displayName = source.metadata.displayName,
                         sha256 = extracted.sha256,
                         sizeBytes = extracted.sizeBytes,
+                        architecture = mapped.architecture,
+                        entryPoint = mapped.entryPoint,
+                        sectionCount = mapped.sectionCount,
                     ),
                     error = null,
                     errorHint = null,

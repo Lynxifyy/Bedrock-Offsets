@@ -5,6 +5,7 @@
 //! `mmap`, so peak resident memory stays flat regardless of input size.
 
 pub mod android;
+pub mod elf;
 pub mod error;
 pub mod fd;
 pub mod jni_bridge;

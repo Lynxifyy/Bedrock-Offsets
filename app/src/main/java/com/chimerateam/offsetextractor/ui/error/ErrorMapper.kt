@@ -101,6 +101,31 @@ object ErrorMapper {
                 hint = "Free some space and retry.",
             )
 
+            EngineErrorKind.InvalidElf -> UserFacingError(
+                message = "$subject is not a valid ELF shared object.",
+                hint = "The file inside the APK may be corrupted or truncated.",
+            )
+
+            EngineErrorKind.UnsupportedArchitecture -> UserFacingError(
+                message = "Only arm64-v8a is supported.",
+                hint = "This APK ships a different architecture, such as 32-bit ARM or x86.",
+            )
+
+            EngineErrorKind.MissingSection -> UserFacingError(
+                message = "A required section is missing from the native library.",
+                hint = "The library looks stripped or corrupted.",
+            )
+
+            EngineErrorKind.InvalidPattern -> UserFacingError(
+                message = "A signature pattern could not be compiled.",
+                hint = "Check patterns.json for malformed wildcard syntax.",
+            )
+
+            EngineErrorKind.Cancelled -> UserFacingError(
+                message = "The scan was cancelled.",
+                hint = null,
+            )
+
             EngineErrorKind.Unknown -> UserFacingError(
                 message = exception.message ?: "The scan engine reported an unknown failure.",
                 hint = "Try again, and report this message if it persists.",

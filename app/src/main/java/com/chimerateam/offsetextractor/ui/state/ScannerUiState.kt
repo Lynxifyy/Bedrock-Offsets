@@ -52,9 +52,15 @@ enum class ScannerPhase {
  * @property displayName name of the APK the offsets came from.
  * @property sha256 hash of the extracted native library.
  * @property sizeBytes size of the extracted native library.
+ * @property architecture target architecture reported by the ELF header.
+ * @property entryPoint entry point of the mapped library.
+ * @property sectionCount number of section headers in the mapped library.
  */
 data class ScanResultSummary(
     val displayName: String,
     val sha256: String,
     val sizeBytes: Long,
+    val architecture: String,
+    val entryPoint: String,
+    val sectionCount: Int,
 )

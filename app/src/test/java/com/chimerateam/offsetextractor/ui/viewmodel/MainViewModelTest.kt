@@ -13,6 +13,7 @@ import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.SafFailure
+import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogLevel
 import com.chimerateam.offsetextractor.ui.state.ProgressTracker
@@ -87,8 +88,12 @@ class MainViewModelTest {
         assertNotNull(state.result)
         assertEquals("abc123", state.result?.sha256)
         assertEquals(4096L, state.result?.sizeBytes)
+        assertEquals("AArch64", state.result?.architecture)
+        assertEquals("0x4000", state.result?.entryPoint)
+        assertEquals(33, state.result?.sectionCount)
         assertNull(state.error)
         assertEquals(1, engine.calls)
+        assertEquals(1, engine.mapCalls)
     }
 
     @Test
@@ -137,6 +142,39 @@ class MainViewModelTest {
         assertEquals(ScannerPhase.Error, state.phase)
         assertTrue(state.error!!.contains("denied read access"))
         assertEquals(0, engine.calls)
+    }
+
+    @Test
+    fun unsupportedArchitectureSurfacesAsAnError() = runTest(dispatcher) {
+        val engine = FakeEngine(
+            failure = EngineException(EngineErrorKind.UnsupportedArchitecture, "32-bit"),
+        )
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(ScannerPhase.Error, state.phase)
+        assertTrue(state.error!!.contains("Only arm64-v8a"))
+    }
+
+    @Test
+    fun mappingLogLineIsEmittedAfterExtraction() = runTest(dispatcher) {
+        val engine = FakeEngine()
+        val viewModel = newViewModel(engine = engine)
+
+        val collected = mutableListOf<LogEntry>()
+        val job = startCollector(this, viewModel, collected)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+        job.cancel()
+
+        assertTrue(
+            "expected the zero-copy mapping line",
+            collected.any { it.message.contains("zero-copy") },
+        )
     }
 
     @Test
@@ -294,6 +332,9 @@ private class FakeEngine(
     var calls = 0
         private set
 
+    var mapCalls = 0
+        private set
+
     override suspend fun extractNativeLibrary(
         rawFd: Int,
         destDir: File,
@@ -304,6 +345,27 @@ private class FakeEngine(
         }
         failure?.let { throw it }
         return result
+    }
+
+    override suspend fun mapLibrary(library: ExtractedNativeLibrary): NativeLibraryMetadata {
+        mapCalls++
+        if (delayMillis > 0) {
+            delay(delayMillis)
+        }
+        failure?.let { throw it }
+        return NativeLibraryMetadata(
+            path = library.path,
+            sha256 = library.sha256,
+            sizeBytes = library.sizeBytes,
+            architecture = "AArch64",
+            bits = 64,
+            endianness = "little",
+            elfType = "DYN",
+            entryPoint = "0x4000",
+            sectionCount = 33,
+            programHeaderCount = 9,
+            soname = "libminecraftpe.so",
+        )
     }
 }
 

@@ -11,6 +11,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::android::{catch_panics, install};
+use crate::elf::MappedLibrary;
 use crate::error::{CoreError, CoreResult};
 use crate::zip_extract::extract_so_from_zip;
 
@@ -101,6 +102,72 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
     }
 }
 
+/// Maps the extracted native library and reports its ELF metadata.
+///
+/// The library is mapped with `mmap`; its bytes are never copied into the JVM
+/// heap, so an 800 MB shared object costs address space rather than memory.
+///
+/// # Returns
+///
+/// A JSON object describing the mapped library.
+///
+/// # Errors
+///
+/// Throws `EngineFailure` with the message `kind: detail` when the file is not
+/// a 64-bit AArch64 ELF object.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_mapNativeLibraryNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    path: JString,
+    sha256: JString,
+) -> jstring {
+    install();
+
+    let library_path = match read_jstring(&mut env, &path, "library path") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let library_hash = match read_jstring(&mut env, &sha256, "library hash") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+
+    let outcome = catch_panics("mapping native library", move || {
+        map_library_json(&library_path, &library_hash)
+    });
+
+    match outcome {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(string) => string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(core_error)) => {
+            throw_core_error(&mut env, &core_error);
+            std::ptr::null_mut()
+        }
+        Err(panic_message) => {
+            throw_engine_failure(&mut env, "unknown", &panic_message);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Reads a Java string argument, throwing `EngineFailure` when it is unusable.
+fn read_jstring(env: &mut JNIEnv, value: &JString, what: &str) -> Option<String> {
+    match env.get_string(value) {
+        Ok(text) => Some(text.to_string_lossy().into_owned()),
+        Err(error) => {
+            throw_engine_failure(
+                env,
+                "invalid_descriptor",
+                &format!("cannot read {what}: {error}"),
+            );
+            None
+        }
+    }
+}
+
 /// Returns the JNI version, telling Android the library is usable.
 ///
 /// # Safety
@@ -139,6 +206,17 @@ fn throw_engine_failure(env: &mut JNIEnv, kind: &str, detail: &str) {
         // is undefined behaviour.
         let _ = env.exception_clear();
     }
+}
+
+/// Maps `path` and serialises its metadata, exposed for host tests.
+///
+/// # Errors
+///
+/// Propagates any mapping or parsing failure.
+pub fn map_library_json(path: &str, sha256: &str) -> CoreResult<String> {
+    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let metadata = library.metadata()?;
+    Ok(serde_json::to_string(&metadata).unwrap_or_default())
 }
 
 /// Builds the payload the JNI function serialises, exposed for host tests.
