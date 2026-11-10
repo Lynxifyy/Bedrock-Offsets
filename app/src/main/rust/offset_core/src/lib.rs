@@ -1,5 +1,8 @@
 //! Zero-copy extraction and parsing core for the Bedrock Offset Extractor.
 //!
+//! Every public item is documented; the lint below keeps it that way.
+#![warn(missing_docs)]
+//!
 //! The engine never loads a whole APK or native library into memory. Archives
 //! are streamed through a fixed-size buffer and shared objects are mapped with
 //! `mmap`, so peak resident memory stays flat regardless of input size.

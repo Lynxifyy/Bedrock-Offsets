@@ -105,6 +105,12 @@ jobs:
         working-directory: app/src/main/rust/offset_core
         run: cargo test --all-targets
 
+      - name: Check the documentation builds
+        working-directory: app/src/main/rust/offset_core
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
+
       - name: Audit dependencies
         run: |
           cargo install cargo-audit --locked

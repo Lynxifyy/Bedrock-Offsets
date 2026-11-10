@@ -111,9 +111,9 @@ pub enum VtableSource {
 ///
 /// # Errors
 ///
-/// Returns [`CoreError::InvalidElf`] when the library cannot be parsed, and
-/// [`CoreError::MissingSection`] when neither `.data.rel.ro` nor `.rodata` is
-/// usable.
+/// Returns [`crate::error::CoreError::InvalidElf`] when the library cannot be
+/// parsed, and [`crate::error::CoreError::MissingSection`] when neither
+/// `.data.rel.ro` nor `.rodata` is usable.
 pub fn resolve_vtables(image: &[u8]) -> CoreResult<VtableMap> {
     // Parsing validates the header and the machine type before any pointer is
     // followed.
