@@ -1,0 +1,35 @@
+# --- Android / Gradle ---
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+captures/
+.externalNativeBuild/
+.cxx/
+release/
+app/release/
+lint-results*.html
+lint-results*.xml
+
+# --- Rust ---
+target/
+**/*.rs.bk
+*.pdb
+
+# --- IDE ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.DS_Store
+*.hprof
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/

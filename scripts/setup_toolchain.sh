@@ -45,7 +45,7 @@ export ANDROID_SDK_ROOT="$SDK"
 export PATH="$SDK/cmdline-tools/latest/bin:$PATH"
 
 yes | sdkmanager --licenses >/dev/null
-sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" \
+sdkmanager "platform-tools" "platforms;android-34" "platforms;android-35" "build-tools;34.0.0" \
   "ndk;$NDK_VERSION" "cmake;3.31.6"
 export ANDROID_NDK_HOME="$SDK/ndk/$NDK_VERSION"
 
