@@ -578,6 +578,47 @@ class MainViewModelTest {
     }
 
     @Test
+    fun theLogIsCappedAndDropsTheOldestEntries() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+        repeat(MAX_LOG_ENTRIES + 25) { index ->
+            viewModel.onExportActionTaken("line $index")
+        }
+
+        val entries = viewModel.logEntries.value
+        assertEquals(MAX_LOG_ENTRIES, entries.size)
+        assertEquals("the oldest entries must be dropped", "line 25", entries.first().message)
+        assertEquals("line ${MAX_LOG_ENTRIES + 24}", entries.last().message)
+    }
+
+    @Test
+    fun clearingTheLogLeavesOnlyTheConfirmation() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+        viewModel.onExportActionTaken("something")
+        assertEquals(1, viewModel.logEntries.value.size)
+
+        viewModel.clearLog()
+
+        val entries = viewModel.logEntries.value
+        assertEquals(1, entries.size)
+        assertEquals("Log cleared.", entries.single().message)
+    }
+
+    @Test
+    fun retainedLogEntriesCarryTheirTagAndLevel() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val entries = viewModel.logEntries.value
+        assertTrue("expected a SAF line", entries.any { it.tag == "SAF" })
+        assertTrue("expected a RUST line", entries.any { it.tag == "RUST" })
+        assertTrue(
+            "expected the timestamps to advance",
+            entries.map { it.timestampMillis }.distinct().isNotEmpty(),
+        )
+    }
+
+    @Test
     fun progressTrackerClampsOutOfRangeValues() {
         assertEquals(0, ProgressTracker.of(-5, "x").percent)
         assertEquals(100, ProgressTracker.of(250, "x").percent)

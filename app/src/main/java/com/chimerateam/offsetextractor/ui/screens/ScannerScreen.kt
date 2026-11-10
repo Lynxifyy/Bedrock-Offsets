@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.ui.components.LiveLogPane
+import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.components.ResultsPanel
 import com.chimerateam.offsetextractor.ui.components.SelectedApkCard
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
@@ -34,7 +35,9 @@ import com.chimerateam.offsetextractor.ui.theme.PanelGap
  * panes sit side by side.
  *
  * @param state the scanner snapshot published by the ViewModel.
- * @param messages live log lines in chronological order.
+ * @param entries live log entries in chronological order.
+ * @param onCopyLog copies the log to the clipboard.
+ * @param onClearLog discards the log.
  * @param onSelectApk invoked when the user requests the system file picker.
  * @param onCancelSelection releases the descriptor and resets the selection.
  * @param onRetry clears an error and returns the scanner to idle.
@@ -46,7 +49,9 @@ import com.chimerateam.offsetextractor.ui.theme.PanelGap
 @Composable
 fun ScannerScreen(
     state: ScannerUiState,
-    messages: List<String>,
+    entries: List<LogEntry>,
+    onCopyLog: () -> Unit,
+    onClearLog: () -> Unit,
     onSelectApk: () -> Unit,
     onCancelSelection: () -> Unit,
     onRetry: () -> Unit,
@@ -87,7 +92,9 @@ fun ScannerScreen(
                     controls()
                 }
                 LiveLogPane(
-                    messages = messages,
+                    entries = entries,
+                    onCopyLog = onCopyLog,
+                    onClearLog = onClearLog,
                     modifier = Modifier
                         .width(availableWidth * 0.42f)
                         .fillMaxHeight(),
@@ -102,7 +109,9 @@ fun ScannerScreen(
             ) {
                 controls()
                 LiveLogPane(
-                    messages = messages,
+                    entries = entries,
+                    onCopyLog = onCopyLog,
+                    onClearLog = onClearLog,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),

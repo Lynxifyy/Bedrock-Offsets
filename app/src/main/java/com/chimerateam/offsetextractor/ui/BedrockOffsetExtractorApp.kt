@@ -33,7 +33,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -44,15 +43,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
+import com.chimerateam.offsetextractor.ui.log.LogTimestamp
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
 import com.chimerateam.offsetextractor.util.formatBytes
-
-/** Maximum number of log lines kept in memory and shown in the pane. */
-private const val MAX_LOG_LINES = 500
 
 /**
  * Root composable of the application.
@@ -72,16 +69,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val forceRescan by viewModel.forceRescan.collectAsStateWithLifecycle()
     val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsStateWithLifecycle()
-    val messages = remember { mutableStateListOf<String>() }
-
-    LaunchedEffect(viewModel) {
-        viewModel.logs.collect { entry ->
-            if (messages.size >= MAX_LOG_LINES) {
-                messages.removeAt(0)
-            }
-            messages.add(entry.render())
-        }
-    }
+    val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
 
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -94,6 +82,14 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     }
 
     val context = LocalContext.current
+    val copyLog = {
+        val text = logEntries.joinToString("\n") { entry ->
+            "${LogTimestamp.format(entry.timestampMillis)} ${entry.render()}"
+        }
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Bedrock log", text))
+        viewModel.onExportActionTaken("Log copied to the clipboard.")
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -224,7 +220,9 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                 when (tab) {
                     AppTab.Scanner -> ScannerScreen(
                         state = state,
-                        messages = messages,
+                        entries = logEntries,
+                        onCopyLog = copyLog,
+                        onClearLog = { viewModel.clearLog() },
                         onSelectApk = { picker.launch(arrayOf(APK_MIME_TYPE)) },
                         onCancelSelection = { viewModel.cancel() },
                         onRetry = { viewModel.retry() },

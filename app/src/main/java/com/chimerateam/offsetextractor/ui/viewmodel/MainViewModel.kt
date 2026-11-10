@@ -51,6 +51,15 @@ private const val TAG_RUST = "RUST"
 /** Number of resolved vtables written to the live log. */
 private const val MAX_LOGGED_VTABLES = 10
 
+/**
+ * Number of entries retained in the log pane.
+ *
+ * A long scan emits progress lines continuously, so the list is bounded: the
+ * oldest line is dropped once the cap is reached rather than growing without
+ * limit on a memory-constrained device.
+ */
+const val MAX_LOG_ENTRIES = 500
+
 /** Origin tag used for storage-access lines. */
 private const val TAG_SAF = "SAF"
 
@@ -97,6 +106,10 @@ class MainViewModel(
     )
     /** Live-log stream; buffered so a slow collector cannot block the engine. */
     val logs: SharedFlow<LogEntry> = _logs.asSharedFlow()
+
+    private val _logEntries = MutableStateFlow<List<LogEntry>>(emptyList())
+    /** Retained log entries in chronological order, capped at [MAX_LOG_ENTRIES]. */
+    val logEntries: StateFlow<List<LogEntry>> = _logEntries.asStateFlow()
 
     private val resultCache = cache?.let(::ResultCache)
 
@@ -586,6 +599,20 @@ class MainViewModel(
 
     private fun emit(entry: LogEntry) {
         _logs.tryEmit(entry)
+        _logEntries.update { existing ->
+            val appended = existing + entry
+            if (appended.size <= MAX_LOG_ENTRIES) {
+                appended
+            } else {
+                appended.takeLast(MAX_LOG_ENTRIES)
+            }
+        }
+    }
+
+    /** Discards every retained log entry. */
+    fun clearLog() {
+        _logEntries.value = emptyList()
+        emit(Logs.info(TAG_UI, "Log cleared."))
     }
 
     /**
