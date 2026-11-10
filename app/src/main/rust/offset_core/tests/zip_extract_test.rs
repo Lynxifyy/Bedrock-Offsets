@@ -33,8 +33,7 @@ fn temp_dir(label: &str) -> PathBuf {
 fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
     let file = fs::File::create(path).expect("create zip");
     let mut writer = zip::ZipWriter::new(file);
-    let options =
-        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (name, bytes) in entries {
         writer.start_file(*name, options).expect("start file");
         writer.write_all(bytes).expect("write entry");
@@ -84,7 +83,10 @@ fn reports_missing_so_file_with_a_specific_error() {
     let error = extract_so_from_zip(archive.as_raw_fd(), &dir.join("out"))
         .expect_err("must fail without the native library");
 
-    assert!(matches!(error, CoreError::MissingSoFile(_)), "got {error:?}");
+    assert!(
+        matches!(error, CoreError::MissingSoFile(_)),
+        "got {error:?}"
+    );
 }
 
 #[test]

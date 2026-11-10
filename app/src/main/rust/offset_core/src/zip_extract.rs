@@ -93,10 +93,7 @@ pub fn extract_named_so_from_zip(
 /// Streams `entry` into `destination`, hashing as it copies.
 ///
 /// Only [`STREAM_BUFFER_BYTES`] are ever held in memory.
-fn stream_entry_to_file<R: Read>(
-    entry: &mut R,
-    destination: &Path,
-) -> CoreResult<(String, u64)> {
+fn stream_entry_to_file<R: Read>(entry: &mut R, destination: &Path) -> CoreResult<(String, u64)> {
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; STREAM_BUFFER_BYTES];
     let mut written: u64 = 0;

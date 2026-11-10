@@ -2,7 +2,13 @@
 -keepclasseswithmembernames,includedescriptorclasses class * {
     native <methods>;
 }
--keep class com.chimerateam.offsetextractor.jni.** { *; }
+
+# The engine loads by name and throws EngineFailure back across the boundary, so
+# its name and constructor must survive shrinking unchanged.
+-keep class com.chimerateam.offsetextractor.data.native.NativeLib { *; }
+-keep class com.chimerateam.offsetextractor.data.native.EngineFailure {
+    <init>(java.lang.String, java.lang.String);
+}
 
 # Gson reflects over the JSON models, so their field names must survive shrinking.
 -keep class com.chimerateam.offsetextractor.model.** { *; }
@@ -14,5 +20,5 @@
     @com.google.gson.annotations.SerializedName <fields>;
 }
 
-# The Rust library is loaded by name through System.loadLibrary.
--keep class com.chimerateam.offsetextractor.NativeLib { *; }
+# Extracted-offset payloads are serialised by name.
+-keep class com.chimerateam.offsetextractor.data.model.** { *; }

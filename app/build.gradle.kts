@@ -6,6 +6,14 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// The Rust engine is cross-compiled by scripts/build_rust.py. CMake is only
+// wired in once its output exists, so a checkout without the Rust toolchain
+// still configures, tests and assembles cleanly.
+val rustEngineLibrary = layout.projectDirectory
+    .file("src/main/jniLibs/arm64-v8a/liboffset_core.so")
+    .asFile
+val rustEnginePresent = rustEngineLibrary.exists()
+
 android {
     namespace = "com.chimerateam.offsetextractor"
     compileSdk = 35
@@ -17,6 +25,11 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        if (rustEnginePresent) {
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
+        }
     }
 
     buildTypes {
@@ -52,6 +65,9 @@ android {
             "AndroidGradlePluginVersion",
             "OldTargetApi",
             "NewerVersionAvailable",
+            // The engine ships arm64-v8a only by design: the target device is a
+            // 64-bit ARM tablet and there is no x86 native library to offer.
+            "ChromeOsAbiSupport",
         )
     }
 
@@ -67,6 +83,34 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    if (rustEnginePresent) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1+"
+            }
+        }
+    }
+}
+
+/**
+ * Cross-compiles the Rust engine and stages liboffset_core.so in jniLibs.
+ *
+ * The script exits successfully when the Rust toolchain is absent, so this
+ * never blocks a build on a machine that only needs the Kotlin code.
+ */
+val buildRustEngine by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Cross-compile the Rust engine for arm64-v8a."
+    workingDir = rootProject.projectDir
+    commandLine("python3", "scripts/build_rust.py")
+    isIgnoreExitValue = false
+    outputs.upToDateWhen { false }
+}
+
+tasks.named("preBuild") {
+    dependsOn(buildRustEngine)
 }
 
 kotlin {

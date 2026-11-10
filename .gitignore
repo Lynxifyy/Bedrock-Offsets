@@ -1,5 +1,6 @@
 # --- Android / Gradle ---
 .gradle/
+.kotlin/
 build/
 local.properties
 *.apk
@@ -18,6 +19,8 @@ lint-results*.xml
 target/
 **/*.rs.bk
 *.pdb
+# Rust output staged for packaging; rebuilt by scripts/build_rust.py.
+app/src/main/jniLibs/
 
 # --- IDE ---
 .idea/
