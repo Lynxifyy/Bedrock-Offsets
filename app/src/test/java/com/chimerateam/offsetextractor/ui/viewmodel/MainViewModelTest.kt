@@ -15,7 +15,11 @@ import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.SafFailure
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.data.native.SectionInfo
+import com.chimerateam.offsetextractor.data.native.BuildIdentity
+import com.chimerateam.offsetextractor.data.native.ExportedSymbol
 import com.chimerateam.offsetextractor.data.native.SectionMap
+import com.chimerateam.offsetextractor.data.native.SymbolReport
+import com.chimerateam.offsetextractor.data.native.SymbolTable
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogLevel
 import com.chimerateam.offsetextractor.ui.state.ProgressTracker
@@ -100,6 +104,9 @@ class MainViewModelTest {
         assertEquals(1, engine.calls)
         assertEquals(1, engine.mapCalls)
         assertEquals(1, engine.sectionCalls)
+        assertEquals(1, engine.symbolCalls)
+        assertEquals("abcdef0123456789", state.result?.buildId)
+        assertEquals(1, state.result?.jniSymbolCount)
     }
 
     @Test
@@ -424,6 +431,38 @@ private class FakeEngine(
             imageBase = TEXT.address,
             text = TEXT,
             sections = listOf(TEXT, RODATA),
+        )
+    }
+
+    var symbolCalls = 0
+        private set
+
+    override suspend fun describeSymbols(library: ExtractedNativeLibrary): SymbolReport {
+        symbolCalls++
+        if (delayMillis > 0) {
+            delay(delayMillis)
+        }
+        failure?.let { throw it }
+        return SymbolReport(
+            identity = BuildIdentity(
+                buildId = "abcdef0123456789",
+                source = "note",
+                textSize = 0,
+            ),
+            symbols = SymbolTable(
+                total = 42,
+                defined = 7,
+                jni = listOf(
+                    ExportedSymbol(
+                        name = "Java_com_example_NativeLib_start",
+                        address = 0x410000,
+                        addressHex = "0x410000",
+                        size = 32,
+                        binding = 1,
+                    ),
+                ),
+                truncated = false,
+            ),
         )
     }
 

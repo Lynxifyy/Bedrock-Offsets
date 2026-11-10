@@ -147,6 +147,41 @@ class JniOffsetEngineTest {
     }
 
     @Test
+    fun symbolPayloadIsParsedIntoAReport() = runTest {
+        val engine = JniOffsetEngine(FakeBindings(symbols = SYMBOL_REPORT_JSON))
+
+        val report = engine.describeSymbols(extracted)
+
+        assertEquals("410ac215603eebd7", report.identity.buildId)
+        assertEquals("note", report.identity.source)
+        assertEquals(false, report.identity.isDerived)
+        assertEquals(42, report.symbols.total)
+        assertEquals(1, report.symbols.jni.size)
+        assertEquals(0x410000L, report.symbol(NAME)?.address)
+        assertEquals("0x410000", report.symbol(NAME)?.addressHex)
+    }
+
+    @Test
+    fun derivedBuildIdIsFlagged() = runTest {
+        val derived = SYMBOL_REPORT_JSON.replace("\"source\": \"note\"", "\"source\": \"text_hash\"")
+        val engine = JniOffsetEngine(FakeBindings(symbols = derived))
+
+        val report = engine.describeSymbols(extracted)
+
+        assertEquals(true, report.identity.isDerived)
+    }
+
+    @Test
+    fun symbolReportWithoutIdentityIsRejected() = runTest {
+        val engine = JniOffsetEngine(FakeBindings(symbols = "{\"identity\":null,\"symbols\":null}"))
+
+        val error = runCatching { engine.describeSymbols(extracted) }.exceptionOrNull()
+
+        assertTrue("expected EngineException but was $error", error is EngineException)
+        assertEquals(EngineErrorKind.InvalidElf, (error as EngineException).kind)
+    }
+
+    @Test
     fun malformedPayloadIsRejected() = runTest {
         val engine = JniOffsetEngine(FakeBindings(extraction = "{not json"))
 
@@ -182,12 +217,18 @@ class JniOffsetEngineTest {
         private val extraction: String = "",
         private val mapping: String = "",
         private val sections: String = "",
+        private val symbols: String = "",
         private val failure: Throwable? = null,
     ) : NativeLibrary {
 
         override fun describeSections(path: String, sha256: String): String {
             failure?.let { throw it }
             return sections
+        }
+
+        override fun describeSymbols(path: String, sha256: String): String {
+            failure?.let { throw it }
+            return symbols
         }
 
         override fun extractNativeLibrary(fd: Int, destinationDir: String): String {
@@ -202,6 +243,32 @@ class JniOffsetEngineTest {
     }
 
     private companion object {
+        const val NAME = "Java_com_chimerateam_offsetextractor_data_native_NativeLib_rustTestNative"
+
+        const val SYMBOL_REPORT_JSON = """
+            {
+              "identity": {
+                "build_id": "410ac215603eebd7",
+                "source": "note",
+                "text_size": 0
+              },
+              "symbols": {
+                "total": 42,
+                "defined": 7,
+                "jni": [
+                  {
+                    "name": "Java_com_chimerateam_offsetextractor_data_native_NativeLib_rustTestNative",
+                    "address": 4259840,
+                    "address_hex": "0x410000",
+                    "size": 32,
+                    "binding": 1
+                  }
+                ],
+                "truncated": false
+              }
+            }
+        """
+
         const val SECTION_MAP_JSON = """
             {
               "image_base": 4194304,

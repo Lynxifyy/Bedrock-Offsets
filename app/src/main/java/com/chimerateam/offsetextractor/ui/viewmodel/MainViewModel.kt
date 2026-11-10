@@ -232,6 +232,21 @@ class MainViewModel(
                 ),
             )
 
+            val symbols = engine.describeSymbols(extracted)
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Build ID extracted. Found ${symbols.symbols.jni.size} dynamic symbols.",
+                ),
+            )
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Build ID ${symbols.identity.buildId} " +
+                        "(${symbols.identity.source}, ${symbols.symbols.defined} defined)",
+                ),
+            )
+
             _uiState.update {
                 it.copy(
                     phase = ScannerPhase.Success,
@@ -245,6 +260,9 @@ class MainViewModel(
                         entryPoint = mapped.entryPoint,
                         sectionCount = mapped.sectionCount,
                         textSection = text,
+                        buildId = symbols.identity.buildId,
+                        buildIdSource = symbols.identity.source,
+                        jniSymbolCount = symbols.symbols.jni.size,
                     ),
                     error = null,
                     errorHint = null,

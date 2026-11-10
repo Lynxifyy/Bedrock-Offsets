@@ -1,0 +1,6 @@
+# Android builds carry a GNU build identifier so the engine's own artifact
+# exercises the same note path as the library it inspects. Minecraft Bedrock
+# ships `libminecraftpe.so` with a build id, and the cache keys on it, so the
+# engine must not depend on the `.text` fallback being available.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,--build-id=sha1"]

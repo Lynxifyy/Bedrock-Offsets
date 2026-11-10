@@ -149,6 +149,26 @@ object EnginePayloads {
     }
 
     /**
+     * Parses the JSON returned by the symbol-description entry point.
+     *
+     * @param json payload produced by the engine.
+     * @return the build identity and exported symbols.
+     * @throws EngineException when the payload is malformed.
+     */
+    fun parseSymbolReport(json: String?): SymbolReport {
+        val payload = decode(json, SymbolReportPayload::class.java, "symbol report")
+        val identity = payload.identity
+        val symbols = payload.symbols
+        if (identity == null || symbols == null) {
+            throw EngineException(
+                kind = EngineErrorKind.InvalidElf,
+                message = "the engine returned a symbol report without an identity",
+            )
+        }
+        return SymbolReport(identity = identity, symbols = symbols)
+    }
+
+    /**
      * Converts a failure thrown across the JNI boundary into a typed exception.
      *
      * @param failure the failure reported by the engine.

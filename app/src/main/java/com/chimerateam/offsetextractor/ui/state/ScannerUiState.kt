@@ -57,6 +57,9 @@ enum class ScannerPhase {
  * @property entryPoint entry point of the mapped library.
  * @property sectionCount number of section headers in the mapped library.
  * @property textSection the executable section, or `null` when unreadable.
+ * @property buildId build identifier of the library, used as the cache key.
+ * @property buildIdSource where the identifier came from.
+ * @property jniSymbolCount number of `Java_` symbols exported by the library.
  */
 data class ScanResultSummary(
     val displayName: String,
@@ -66,4 +69,7 @@ data class ScanResultSummary(
     val entryPoint: String,
     val sectionCount: Int,
     val textSection: SectionInfo? = null,
+    val buildId: String = "",
+    val buildIdSource: String = "",
+    val jniSymbolCount: Int = 0,
 )

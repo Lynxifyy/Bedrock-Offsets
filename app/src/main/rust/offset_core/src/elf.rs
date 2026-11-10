@@ -180,7 +180,7 @@ pub fn parse_elf_bytes(bytes: &[u8]) -> CoreResult<Elf<'_>> {
 ///
 /// Returns [`CoreError::InvalidElf`] when the header table lies outside the
 /// file or cannot be decoded.
-pub fn parse_section_headers<'a>(image: &'a [u8]) -> CoreResult<Vec<SectionHeader>> {
+pub fn parse_section_headers(image: &[u8]) -> CoreResult<Vec<SectionHeader>> {
     let header = Elf::parse_header(image)
         .map_err(|error| CoreError::InvalidElf(format!("cannot parse ELF header: {error}")))?;
 

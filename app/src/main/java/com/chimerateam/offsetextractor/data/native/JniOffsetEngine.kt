@@ -65,6 +65,20 @@ class JniOffsetEngine(
         return EnginePayloads.parseSectionMap(json)
     }
 
+    /**
+     * Reads the build identifier and the exported JNI symbols.
+     *
+     * @param library the previously extracted library.
+     * @return the library identity and its exported entry points.
+     * @throws EngineException when the library cannot be parsed.
+     */
+    override suspend fun describeSymbols(library: ExtractedNativeLibrary): SymbolReport {
+        val json = call("reading symbols") {
+            nativeLibrary.describeSymbols(library.path, library.sha256)
+        }
+        return EnginePayloads.parseSymbolReport(json)
+    }
+
     private inline fun call(what: String, block: () -> String): String =
         try {
             block()
@@ -113,6 +127,15 @@ interface NativeLibrary {
      * @return a JSON payload describing every section.
      */
     fun describeSections(path: String, sha256: String): String
+
+    /**
+     * Reads the build identifier and exported symbols of the library at [path].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @return a JSON payload with `identity` and `symbols`.
+     */
+    fun describeSymbols(path: String, sha256: String): String
 }
 
 /** Production bindings, backed by [NativeLib]. */
@@ -126,4 +149,7 @@ object JniNativeLibrary : NativeLibrary {
 
     override fun describeSections(path: String, sha256: String): String =
         NativeLib.describeSections(path, sha256)
+
+    override fun describeSymbols(path: String, sha256: String): String =
+        NativeLib.describeSymbols(path, sha256)
 }

@@ -85,6 +85,19 @@ object NativeLib {
         ensureLoaded()
         return describeSectionsNative(path, sha256)
     }
+    /**
+     * Reads the build identifier and exported symbols of the library at [path].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @return a JSON object with `identity` and `symbols`.
+     * @throws EngineFailure when the library cannot be parsed.
+     */
+    fun describeSymbols(path: String, sha256: String): String {
+        ensureLoaded()
+        return describeSymbolsNative(path, sha256)
+    }
+
     private fun ensureLoaded() {
         if (!isAvailable) {
             throw EngineFailure(
@@ -100,4 +113,5 @@ object NativeLib {
 
     private external fun mapNativeLibraryNative(path: String, sha256: String): String
     private external fun describeSectionsNative(path: String, sha256: String): String
+    private external fun describeSymbolsNative(path: String, sha256: String): String
 }

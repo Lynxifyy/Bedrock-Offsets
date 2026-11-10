@@ -10,6 +10,7 @@ pub mod error;
 pub mod fd;
 pub mod jni_bridge;
 pub mod sections;
+pub mod symbols;
 pub mod zip_extract;
 
 pub use error::{CoreError, CoreResult};

@@ -149,3 +149,12 @@ installed from the repo root (`-e .`).
   `MissingSuperCall` — do not override `onBackPressed()` without calling `super`; register an
   `OnBackPressedCallback` on `getOnBackPressedDispatcher()` instead. Full unit suite is
   **3844 tests, 0 failures, 1 skipped** (~25s warm).
+
+## Bedrock-Offsets (Lynxifyy/Bedrock-Offsets)
+Android (Kotlin/Compose) + Rust (JNI/NDK) Minecraft-Bedrock offset harvester. 30-phase
+plan, one commit per phase, branch `feat/offset-extractor-engine`. Phases 0-8 done.
+See `.openhands/memory/<date>.md` daily logs for detail. Key traps:
+`createComposeRule` tests belong in `app/src/testDebug/` (release variant has no
+Compose test manifest); goblin's `Elf::lazy_parse` leaves `section_headers` empty
+(use `parse_section_headers`); JNI symbols are
+`Java_com_chimerateam_offsetextractor_data_native_NativeLib_<method>`.

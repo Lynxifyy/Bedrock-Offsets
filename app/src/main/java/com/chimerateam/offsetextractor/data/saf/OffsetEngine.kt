@@ -2,6 +2,7 @@ package com.chimerateam.offsetextractor.data.saf
 
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.data.native.SectionMap
+import com.chimerateam.offsetextractor.data.native.SymbolReport
 import java.io.File
 
 /**
@@ -48,6 +49,15 @@ interface OffsetEngine {
      * @throws EngineException when the library is stripped or has no `.text`.
      */
     suspend fun describeSections(library: ExtractedNativeLibrary): SectionMap
+
+    /**
+     * Reads the build identifier and the exported JNI symbols.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @return the library identity and its exported entry points.
+     * @throws EngineException when the library cannot be parsed.
+     */
+    suspend fun describeSymbols(library: ExtractedNativeLibrary): SymbolReport
 }
 
 /**
