@@ -38,6 +38,8 @@ import com.chimerateam.offsetextractor.ui.theme.PanelGap
  * @param onSelectApk invoked when the user requests the system file picker.
  * @param onCancelSelection releases the descriptor and resets the selection.
  * @param onRetry clears an error and returns the scanner to idle.
+ * @param onCopyJson copies the exported JSON to the clipboard.
+ * @param onShareJson shares the exported JSON.
  * @param modifier layout modifier for the screen.
  */
 @Composable
@@ -47,6 +49,8 @@ fun ScannerScreen(
     onSelectApk: () -> Unit,
     onCancelSelection: () -> Unit,
     onRetry: () -> Unit,
+    onCopyJson: () -> Unit,
+    onShareJson: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -59,6 +63,8 @@ fun ScannerScreen(
                 onSelectApk = onSelectApk,
                 onCancelSelection = onCancelSelection,
                 onRetry = onRetry,
+                onCopyJson = onCopyJson,
+                onShareJson = onShareJson,
             )
         }
 
@@ -109,6 +115,8 @@ private fun ControlsPane(
     onSelectApk: () -> Unit,
     onCancelSelection: () -> Unit,
     onRetry: () -> Unit,
+    onCopyJson: () -> Unit,
+    onShareJson: () -> Unit,
 ) {
     when (state.phase) {
         ScannerPhase.Extracting, ScannerPhase.Scanning -> LoadingScreen(
@@ -119,6 +127,8 @@ private fun ControlsPane(
         ScannerPhase.Success -> SuccessPane(
             state = state,
             onStartNewScan = onCancelSelection,
+            onCopyJson = onCopyJson,
+            onShareJson = onShareJson,
         )
 
         ScannerPhase.Error -> ErrorPane(
@@ -145,16 +155,19 @@ private fun ControlsPane(
 private fun SuccessPane(
     state: ScannerUiState,
     onStartNewScan: () -> Unit,
+    onCopyJson: () -> Unit,
+    onShareJson: () -> Unit,
 ) {
     val result = state.result ?: return
     Column(modifier = Modifier.fillMaxWidth()) {
         ResultsPanel(result = result)
         Spacer(Modifier.height(PanelGap))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = onStartNewScan) {
-                Text("Start new scan")
-            }
-        }
+        ResultsScreen(
+            result = result,
+            onCopyJson = onCopyJson,
+            onShareJson = onShareJson,
+            onStartNewScan = onStartNewScan,
+        )
     }
 }
 

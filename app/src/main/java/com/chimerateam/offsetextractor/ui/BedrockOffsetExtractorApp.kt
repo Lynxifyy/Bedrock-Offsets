@@ -1,5 +1,9 @@
 package com.chimerateam.offsetextractor.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,7 +35,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
@@ -76,6 +82,35 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
             viewModel.onSelectionCancelled()
         } else {
             viewModel.onApkSelected(uri)
+        }
+    }
+
+    val context = LocalContext.current
+
+    // The exported document is built on demand and shared as a whole, so a
+    // large result set is never held twice.
+    val exportJson = {
+        state.result?.let { OffsetExporter.toJson(it) }.orEmpty()
+    }
+    val copyJson = {
+        val json = exportJson()
+        if (json.isNotEmpty()) {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Bedrock offsets", json))
+            viewModel.onExportActionTaken("Offsets copied to the clipboard.")
+        }
+    }
+    val shareJson = {
+        val json = exportJson()
+        if (json.isNotEmpty()) {
+            val result = state.result
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_TEXT, json)
+                putExtra(Intent.EXTRA_SUBJECT, "Bedrock offsets ${result?.buildId.orEmpty()}")
+            }
+            context.startActivity(Intent.createChooser(intent, "Share offsets"))
+            viewModel.onExportActionTaken("Offsets handed to the share sheet.")
         }
     }
 
@@ -127,6 +162,8 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         onSelectApk = { picker.launch(arrayOf(APK_MIME_TYPE)) },
                         onCancelSelection = { viewModel.cancel() },
                         onRetry = { viewModel.retry() },
+                        onCopyJson = copyJson,
+                        onShareJson = shareJson,
                     )
 
                     AppTab.Settings -> SettingsScreen(

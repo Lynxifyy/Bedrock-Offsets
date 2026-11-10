@@ -161,6 +161,15 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Records that an export action ran, so the log shows what the user did.
+     *
+     * @param message short description of the action that completed.
+     */
+    fun onExportActionTaken(message: String) {
+        emit(Logs.info(TAG_UI, message))
+    }
+
     /** Records that the user dismissed the picker without choosing a file. */
     fun onSelectionCancelled() {
         emit(Logs.info(TAG_SAF, "Selection cancelled."))
@@ -281,6 +290,8 @@ class MainViewModel(
                         discardedMatches = scan?.discarded ?: 0,
                         peakResidentBytes = scan?.peakResidentBytes,
                         vtables = vtables,
+                        symbols = symbols.symbols.jni,
+                        expectedPatterns = patterns.map { it.name },
                     ),
                     error = null,
                     errorHint = null,

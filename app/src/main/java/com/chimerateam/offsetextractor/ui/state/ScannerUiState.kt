@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor.ui.state
 
+import com.chimerateam.offsetextractor.data.native.ExportedSymbol
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.VtableMap
@@ -66,6 +67,9 @@ enum class ScannerPhase {
  * @property discardedMatches candidates the prologue check threw away.
  * @property peakResidentBytes peak resident set after the scan, when reported.
  * @property vtables RTTI vtables resolved from the library.
+ * @property symbols exported JNI symbols, used for symbol cross-checking.
+ * @property expectedPatterns every signature the app looked for, so a missing
+ *   one can be reported rather than silently omitted.
  */
 data class ScanResultSummary(
     val displayName: String,
@@ -82,4 +86,6 @@ data class ScanResultSummary(
     val discardedMatches: Int = 0,
     val peakResidentBytes: Long? = null,
     val vtables: VtableMap = VtableMap.EMPTY,
+    val symbols: List<ExportedSymbol> = emptyList(),
+    val expectedPatterns: List<String> = emptyList(),
 )
