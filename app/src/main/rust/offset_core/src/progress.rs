@@ -70,6 +70,11 @@ impl JniProgressSink {
             // returning to Java with one pending is undefined behaviour.
             let _ = env.exception_clear();
         }
+
+        // On a worker thread the local frame goes away with the detach, but on
+        // the thread that entered from Java it would accumulate one reference
+        // per progress event, so drop it explicitly.
+        let _ = env.delete_local_ref(text);
     }
 }
 

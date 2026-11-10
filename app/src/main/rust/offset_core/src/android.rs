@@ -23,11 +23,27 @@ fn install_logger() {
     use android_logger::Config;
     use log::LevelFilter;
 
+    // A release build keeps logcat at warnings and above. The engine logs
+    // section boundaries and library sizes at info level, and those are the
+    // details of the file the user chose; logcat is readable by other apps on
+    // an old enough device, so they do not belong in a shipping build.
     android_logger::init_once(
         Config::default()
-            .with_max_level(LevelFilter::Info)
+            .with_max_level(log_level())
             .with_tag(LOG_TAG),
     );
+}
+
+/// Log level used for the platform logger.
+///
+/// Debug builds keep info; release builds drop to warnings and errors.
+#[cfg(target_os = "android")]
+const fn log_level() -> log::LevelFilter {
+    if cfg!(debug_assertions) {
+        log::LevelFilter::Info
+    } else {
+        log::LevelFilter::Warn
+    }
 }
 
 #[cfg(not(target_os = "android"))]

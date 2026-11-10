@@ -35,6 +35,9 @@ jobs:
       - name: Run unit tests
         run: ./gradlew test --stacktrace --no-daemon
 
+      - name: Run Android lint
+        run: ./gradlew lintDebug --stacktrace --no-daemon
+
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -61,3 +64,42 @@ jobs:
 
       - name: Check the signature pack is up to date
         run: python3 scripts/generate_patterns.py patterns.txt --check
+  rust:
+    name: Rust engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache the cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src/main/rust/offset_core/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('app/src/main/rust/offset_core/Cargo.lock') }}
+
+      - name: Check formatting
+        working-directory: app/src/main/rust/offset_core
+        run: cargo fmt --all --check
+
+      - name: Lint
+        working-directory: app/src/main/rust/offset_core
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: app/src/main/rust/offset_core
+        run: cargo test --all-targets
+
+      - name: Audit dependencies
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --file app/src/main/rust/offset_core/Cargo.lock

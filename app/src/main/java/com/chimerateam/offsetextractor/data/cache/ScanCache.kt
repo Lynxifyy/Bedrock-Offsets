@@ -89,6 +89,12 @@ class ScanCache(private val root: File) {
     /**
      * Deletes every cached artefact.
      *
+     * Every file is overwritten with zeros before it is unlinked. These are
+     * copies of a user's APK, so a plain delete would leave the data readable
+     * in free space until the block is reused. The overwrite is best-effort:
+     * flash storage can remap a block regardless, and a failure to overwrite
+     * must never stop the app from freeing the space.
+     *
      * @return whether the cache is empty afterwards.
      */
     fun clear(): Boolean {
@@ -105,13 +111,43 @@ class ScanCache(private val root: File) {
             if (entry.isDirectory) {
                 entry.deleteRecursively()
             } else {
+                shred(entry)
                 entry.delete()
             }
         }
         true
     }.getOrDefault(false)
 
+    /**
+     * Overwrites [file] with zeros.
+     *
+     * Streams in fixed-size blocks so a cached library of hundreds of
+     * megabytes is never held in memory. Any failure leaves the file intact
+     * for the caller's delete to handle.
+     *
+     * @param file the file to overwrite.
+     */
+    internal fun shred(file: File) {
+        runCatching {
+            val length = file.length()
+            if (length == 0L) return@runCatching
+            java.io.RandomAccessFile(file, "rw").use { handle ->
+                val block = ByteArray(SHRED_BLOCK_BYTES)
+                var remaining = length
+                while (remaining > 0) {
+                    val count = minOf(remaining, block.size.toLong()).toInt()
+                    handle.write(block, 0, count)
+                    remaining -= count
+                }
+                handle.fd.sync()
+            }
+        }
+    }
+
     companion object {
+        /** Size of the block used to overwrite a file during [shred]. */
+        private const val SHRED_BLOCK_BYTES = 64 * 1024
+
         /**
          * File name used for the document of [buildId].
          *

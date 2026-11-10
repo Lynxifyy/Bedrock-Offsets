@@ -88,6 +88,46 @@ class ScanCacheTest {
     }
 
     @Test
+    fun shreddingOverwritesTheFileWithZerosBeforeItIsDeleted() {
+        val cache = cache()
+        val secret = File(temporary.root, "libminecraftpe.so")
+        secret.writeBytes(ByteArray(200_000) { 0x5A })
+
+        cache.shred(secret)
+
+        assertTrue("the file must still exist for the caller to delete", secret.isFile)
+        assertEquals(
+            "every byte must be zeroed, including across block boundaries",
+            0,
+            secret.readBytes().count { it != 0.toByte() },
+        )
+    }
+
+    @Test
+    fun shreddingAnEmptyFileIsHarmless() {
+        val cache = cache()
+        val empty = File(temporary.root, "empty.so")
+        empty.writeBytes(ByteArray(0))
+
+        cache.shred(empty)
+
+        assertEquals(0L, empty.length())
+    }
+
+    @Test
+    fun clearingShredsTheCachedLibraries() {
+        val cache = cache()
+        cache.ensureDirectories()
+        val library = File(cache.libraryDir, "libminecraftpe.so")
+        library.writeBytes(ByteArray(70_000) { 0x11 })
+
+        assertTrue(cache.clear())
+
+        assertFalse("the library must be gone", library.exists())
+        assertEquals(0L, cache.totalSizeBytes())
+    }
+
+    @Test
     fun aMissingCacheDirectoryIsNotAnError() {
         val cache = ScanCache(File(temporary.root, "does-not-exist"))
 
