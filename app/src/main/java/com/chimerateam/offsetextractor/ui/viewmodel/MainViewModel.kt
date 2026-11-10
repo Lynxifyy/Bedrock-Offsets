@@ -5,11 +5,14 @@ import androidx.lifecycle.viewModelScope
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
+import com.chimerateam.offsetextractor.data.saf.DocumentWriter
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
+import com.chimerateam.offsetextractor.data.saf.WriteResult
 import com.chimerateam.offsetextractor.ui.error.ErrorMapper
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.Logs
@@ -65,6 +68,9 @@ class MainViewModel(
     private val engine: OffsetEngine,
     private val cacheDir: File,
     private val patterns: List<PatternSpec> = emptyList(),
+    private val writer: DocumentWriter = DocumentWriter { _, _ ->
+        WriteResult.Failure("No document writer is configured.")
+    },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
@@ -168,6 +174,55 @@ class MainViewModel(
      */
     fun onExportActionTaken(message: String) {
         emit(Logs.info(TAG_UI, message))
+    }
+
+    /**
+     * Default file name offered by the save dialog.
+     *
+     * @return the name keyed by build identifier, or `null` when no scan has
+     *   completed.
+     */
+    fun defaultExportFileName(): String? = _uiState.value.result?.let(OffsetExporter::fileName)
+
+    /**
+     * Writes the current result to [uri].
+     *
+     * A `null` [uri] means the user dismissed the save dialog; that is a
+     * normal outcome and only a log line is produced. The write runs on the
+     * I/O dispatcher and always closes the stream.
+     *
+     * @param uri destination document, or `null` when the dialog was dismissed.
+     */
+    fun onExportDestinationChosen(uri: android.net.Uri?) {
+        if (uri == null) {
+            emit(Logs.warn(TAG_UI, "Export cancelled."))
+            return
+        }
+        val result = _uiState.value.result
+        if (result == null) {
+            emit(Logs.warn(TAG_UI, "There is nothing to export yet."))
+            return
+        }
+
+        extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
+            val json = OffsetExporter.toJson(result)
+            when (val outcome = writer.writeText(uri, json)) {
+                is WriteResult.Success -> {
+                    emit(Logs.info(TAG_UI, "Exported offsets to $uri"))
+                    _uiState.update { it.copy(exportMessage = "Offsets exported.") }
+                }
+
+                is WriteResult.Failure -> {
+                    emit(Logs.error(TAG_UI, outcome.message))
+                    _uiState.update { it.copy(exportMessage = outcome.message) }
+                }
+            }
+        }
+    }
+
+    /** Clears the transient export message once it has been shown. */
+    fun onExportMessageShown() {
+        _uiState.update { it.copy(exportMessage = null) }
     }
 
     /** Records that the user dismissed the picker without choosing a file. */
@@ -440,7 +495,8 @@ class MainViewModel(
             safAccess: SafApkAccess,
             engine: OffsetEngine,
             cacheDir: File,
+            writer: DocumentWriter,
             patterns: List<PatternSpec> = emptyList(),
-        ): MainViewModel = MainViewModel(safAccess, engine, cacheDir, patterns)
+        ): MainViewModel = MainViewModel(safAccess, engine, cacheDir, patterns, writer)
     }
 }

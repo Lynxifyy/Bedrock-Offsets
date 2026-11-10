@@ -10,6 +10,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.chimerateam.offsetextractor.data.native.JniOffsetEngine
+import com.chimerateam.offsetextractor.data.saf.AndroidDocumentWriter
 import com.chimerateam.offsetextractor.data.saf.AndroidSafApkAccess
 import com.chimerateam.offsetextractor.ui.BedrockOffsetExtractorApp
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
@@ -33,6 +34,7 @@ class MainActivity : ComponentActivity() {
                     safAccess = AndroidSafApkAccess(applicationContext),
                     engine = JniOffsetEngine(),
                     cacheDir = File(cacheDir, "engine").apply { mkdirs() },
+                    writer = AndroidDocumentWriter(applicationContext),
                     patterns = SignaturePack.load(applicationContext),
                 )
             }

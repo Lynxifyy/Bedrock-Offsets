@@ -72,6 +72,7 @@ class ResultsScreenTest {
                     result = summary,
                     onCopyJson = {},
                     onShareJson = {},
+                    onSaveJson = {},
                     onStartNewScan = {},
                 )
             }
@@ -106,6 +107,7 @@ class ResultsScreenTest {
 
         composeTestRule.onNodeWithText("Copy JSON").assertExists()
         composeTestRule.onNodeWithText("Share JSON").assertExists()
+        composeTestRule.onNodeWithText("Save JSON").assertExists()
         composeTestRule.onNodeWithText("Start new scan").assertExists()
     }
 }

@@ -48,6 +48,7 @@ internal const val SEARCH_FIELD_TAG = "results-search"
  * @param result the completed scan summary.
  * @param onCopyJson copies the exported JSON to the clipboard.
  * @param onShareJson shares the exported JSON.
+ * @param onSaveJson writes the exported JSON to a user-chosen location.
  * @param onStartNewScan resets the scanner.
  * @param modifier layout modifier for the screen.
  */
@@ -56,6 +57,7 @@ fun ResultsScreen(
     result: ScanResultSummary,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
+    onSaveJson: () -> Unit,
     onStartNewScan: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -111,6 +113,9 @@ fun ResultsScreen(
             OutlinedButton(onClick = onShareJson) {
                 Icon(Icons.Filled.Share, contentDescription = null)
                 Text("Share JSON", modifier = Modifier.padding(start = 8.dp))
+            }
+            OutlinedButton(onClick = onSaveJson) {
+                Text("Save JSON")
             }
         }
         Spacer(Modifier.height(8.dp))

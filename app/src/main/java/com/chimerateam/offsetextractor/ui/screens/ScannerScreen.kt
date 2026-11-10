@@ -40,6 +40,7 @@ import com.chimerateam.offsetextractor.ui.theme.PanelGap
  * @param onRetry clears an error and returns the scanner to idle.
  * @param onCopyJson copies the exported JSON to the clipboard.
  * @param onShareJson shares the exported JSON.
+ * @param onSaveJson writes the exported JSON to a user-chosen location.
  * @param modifier layout modifier for the screen.
  */
 @Composable
@@ -51,6 +52,7 @@ fun ScannerScreen(
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
+    onSaveJson: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -65,6 +67,7 @@ fun ScannerScreen(
                 onRetry = onRetry,
                 onCopyJson = onCopyJson,
                 onShareJson = onShareJson,
+                onSaveJson = onSaveJson,
             )
         }
 
@@ -117,6 +120,7 @@ private fun ControlsPane(
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
+    onSaveJson: () -> Unit,
 ) {
     when (state.phase) {
         ScannerPhase.Extracting, ScannerPhase.Scanning -> LoadingScreen(
@@ -129,6 +133,7 @@ private fun ControlsPane(
             onStartNewScan = onCancelSelection,
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
+            onSaveJson = onSaveJson,
         )
 
         ScannerPhase.Error -> ErrorPane(
@@ -157,6 +162,7 @@ private fun SuccessPane(
     onStartNewScan: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
+    onSaveJson: () -> Unit,
 ) {
     val result = state.result ?: return
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -166,6 +172,7 @@ private fun SuccessPane(
             result = result,
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
+            onSaveJson = onSaveJson,
             onStartNewScan = onStartNewScan,
         )
     }

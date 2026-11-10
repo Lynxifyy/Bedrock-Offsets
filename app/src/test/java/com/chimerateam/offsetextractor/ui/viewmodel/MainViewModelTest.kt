@@ -11,7 +11,9 @@ import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
+import com.chimerateam.offsetextractor.data.saf.DocumentWriter
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
+import com.chimerateam.offsetextractor.data.saf.WriteResult
 import com.chimerateam.offsetextractor.data.saf.SafFailure
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.data.native.SectionInfo
@@ -389,6 +391,100 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aSuccessfulExportWritesTheDocumentAndReportsIt() = runTest(dispatcher) {
+        var writtenUri: android.net.Uri? = null
+        var writtenText = ""
+        val writer = DocumentWriter { uri, text ->
+            writtenUri = uri
+            writtenText = text
+            WriteResult.Success
+        }
+        val viewModel = newViewModel(writer = writer)
+        val logs = mutableListOf<LogEntry>()
+        val collector = startCollector(this, viewModel, logs)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val destination = android.net.Uri.parse("content://downloads/offsets.json")
+        viewModel.onExportDestinationChosen(destination)
+        advanceUntilIdle()
+        collector.cancel()
+
+        assertEquals(destination, writtenUri)
+        assertTrue("expected the JSON document", writtenText.contains("schemaVersion"))
+        assertEquals("Offsets exported.", viewModel.uiState.value.exportMessage)
+        assertTrue(logs.any { it.message.startsWith("Exported offsets to") })
+    }
+
+    @Test
+    fun aDismissedSaveDialogIsNotAnError() = runTest(dispatcher) {
+        var writeCalls = 0
+        val writer = DocumentWriter { _, _ ->
+            writeCalls++
+            WriteResult.Success
+        }
+        val viewModel = newViewModel(writer = writer)
+        val logs = mutableListOf<LogEntry>()
+        val collector = startCollector(this, viewModel, logs)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+        viewModel.onExportDestinationChosen(null)
+        advanceUntilIdle()
+        collector.cancel()
+
+        assertEquals(0, writeCalls)
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertNull(viewModel.uiState.value.exportMessage)
+        assertTrue(logs.any { it.message.contains("Export cancelled") })
+    }
+
+    @Test
+    fun aFailedExportSurfacesTheReasonAndKeepsTheResult() = runTest(dispatcher) {
+        val writer = DocumentWriter { _, _ -> WriteResult.Failure("Storage is full.") }
+        val viewModel = newViewModel(writer = writer)
+        val logs = mutableListOf<LogEntry>()
+        val collector = startCollector(this, viewModel, logs)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+        viewModel.onExportDestinationChosen(android.net.Uri.parse("content://x/y.json"))
+        advanceUntilIdle()
+        collector.cancel()
+
+        assertEquals("Storage is full.", viewModel.uiState.value.exportMessage)
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertNotNull("the result must survive a failed export", viewModel.uiState.value.result)
+        assertTrue(logs.any { it.level == LogLevel.Error })
+    }
+
+    @Test
+    fun theExportMessageIsClearedOnceShown() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        viewModel.onExportDestinationChosen(android.net.Uri.parse("content://x/y.json"))
+        advanceUntilIdle()
+        assertEquals("Offsets exported.", viewModel.uiState.value.exportMessage)
+
+        viewModel.onExportMessageShown()
+        assertNull(viewModel.uiState.value.exportMessage)
+    }
+
+    @Test
+    fun theDefaultExportNameIsKeyedByBuildId() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+        assertNull("no name before a scan", viewModel.defaultExportFileName())
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals("offsets_abcdef0123456789.json", viewModel.defaultExportFileName())
+    }
+
+    @Test
     fun progressTrackerClampsOutOfRangeValues() {
         assertEquals(0, ProgressTracker.of(-5, "x").percent)
         assertEquals(100, ProgressTracker.of(250, "x").percent)
@@ -406,11 +502,13 @@ class MainViewModelTest {
         engine: OffsetEngine = FakeEngine(),
         access: SafApkAccess = FakeSafAccess(),
         patterns: List<PatternSpec> = listOf(PatternSpec("prologue", "FD 7B BF A9")),
+        writer: DocumentWriter = DocumentWriter { _, _ -> WriteResult.Success },
     ): MainViewModel = MainViewModel(
         safAccess = access,
         engine = engine,
         cacheDir = cacheDir,
         patterns = patterns,
+        writer = writer,
         ioDispatcher = dispatcher,
     )
 }

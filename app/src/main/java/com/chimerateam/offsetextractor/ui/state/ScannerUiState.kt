@@ -20,6 +20,8 @@ import com.chimerateam.offsetextractor.data.saf.ApkMetadata
  * @property result summary of the last successful extraction, if any.
  * @property error user-facing failure message, if any.
  * @property errorHint actionable follow-up shown under the error message.
+ * @property exportMessage transient confirmation shown after an export, or
+ *   `null` when there is nothing to announce.
  */
 data class ScannerUiState(
     val phase: ScannerPhase = ScannerPhase.Idle,
@@ -30,6 +32,7 @@ data class ScannerUiState(
     val result: ScanResultSummary? = null,
     val error: String? = null,
     val errorHint: String? = null,
+    val exportMessage: String? = null,
 )
 
 /** Screen-level phases of the scanner. */

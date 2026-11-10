@@ -13,15 +13,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -86,6 +91,20 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     }
 
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    var menuOpen by remember { mutableStateOf(false) }
+
+    // The save dialog needs the default name before it is shown, so it is
+    // read from the ViewModel at launch time.
+    val saveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? -> viewModel.onExportDestinationChosen(uri) }
+
+    LaunchedEffect(state.exportMessage) {
+        val message = state.exportMessage ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(message)
+        viewModel.onExportMessageShown()
+    }
 
     // The exported document is built on demand and shared as a whole, so a
     // large result set is never held twice.
@@ -113,6 +132,14 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
             viewModel.onExportActionTaken("Offsets handed to the share sheet.")
         }
     }
+    val saveJson = {
+        val name = viewModel.defaultExportFileName()
+        if (name == null) {
+            viewModel.onExportActionTaken("There is nothing to export yet.")
+        } else {
+            saveLauncher.launch(name)
+        }
+    }
 
     BedrockOffsetExtractorTheme(themeMode = themeMode) {
         Scaffold(
@@ -130,9 +157,45 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                                 contentDescription = "Clear cache",
                             )
                         }
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.MoreVert,
+                                contentDescription = "More options",
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Copy offsets as JSON") },
+                                enabled = state.result != null,
+                                onClick = {
+                                    menuOpen = false
+                                    copyJson()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share offsets as JSON") },
+                                enabled = state.result != null,
+                                onClick = {
+                                    menuOpen = false
+                                    shareJson()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Save offsets to a file") },
+                                enabled = state.result != null,
+                                onClick = {
+                                    menuOpen = false
+                                    saveJson()
+                                },
+                            )
+                        }
                     },
                 )
             },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 NavigationBar {
                     NavigationItem(
@@ -164,6 +227,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         onRetry = { viewModel.retry() },
                         onCopyJson = copyJson,
                         onShareJson = shareJson,
+                        onSaveJson = saveJson,
                     )
 
                     AppTab.Settings -> SettingsScreen(
