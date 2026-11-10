@@ -22,29 +22,37 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
+import com.chimerateam.offsetextractor.data.saf.AndroidSafApkAccess
+import com.chimerateam.offsetextractor.data.saf.ApkHandle
+import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
-
-/** MIME type of an Android application package. */
-private const val APK_MIME = "application/vnd.android.package-archive"
+import com.chimerateam.offsetextractor.util.formatBytes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Root composable of the application.
  *
- * Owns the shell state: the selected destination, the theme palette, the busy
- * flag and the live log buffer.
+ * Owns the shell state: the selected destination, the theme palette, the open
+ * APK descriptor and the live log buffer. The descriptor ownership stays here
+ * so it is released when the composition leaves.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,29 +62,71 @@ fun BedrockOffsetExtractorApp() {
     var isBusy by remember { mutableStateOf(false) }
     var progress by remember { mutableIntStateOf(0) }
     var busyMessage by remember { mutableStateOf("") }
+    var selectedApk by remember { mutableStateOf<ApkHandle?>(null) }
     val messages = remember { mutableStateListOf<String>() }
 
     val context = LocalContext.current
+    val safAccess = remember(context) { AndroidSafApkAccess(context) }
+    val scope = rememberCoroutineScope()
+
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
-        isBusy = false
-        progress = 0
         if (uri == null) {
+            isBusy = false
+            progress = 0
             messages.add("[SAF] Selection cancelled.")
-        } else {
-            messages.add("[SAF] Selected APK: $uri")
-            messages.add(
-                "[SAF] MIME type: ${context.contentResolver.getType(uri) ?: APK_MIME}",
-            )
+            return@rememberLauncherForActivityResult
+        }
+
+        busyMessage = "Opening APK"
+        isBusy = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { safAccess.openApk(uri) }
+            when (result) {
+                is ApkOpenResult.Success -> {
+                    selectedApk?.close()
+                    selectedApk = result.handle
+                    val handle = result.handle
+                    messages.add("[SAF] Opened APK File Descriptor successfully.")
+                    messages.add(
+                        "[SAF] ${handle.metadata.displayName} " +
+                            "(${formatBytes(handle.lengthBytes)})",
+                    )
+                    if (handle.usedCacheCopy) {
+                        messages.add(
+                            "[SAF] Provider had no descriptor; streamed a private " +
+                                "cache copy instead.",
+                        )
+                    }
+                }
+
+                is ApkOpenResult.Failure -> {
+                    messages.add("[ERROR] ${result.message}")
+                }
+            }
+            isBusy = false
+            progress = 0
         }
     }
 
+    DisposableEffect(Unit) {
+        onDispose { selectedApk?.close() }
+    }
+
     val clearCache: () -> Unit = {
-        messages.clear()
+        selectedApk?.close()
+        selectedApk = null
         progress = 0
+        messages.clear()
         messages.add("[CACHE] Cache cleared.")
-        Unit
+    }
+
+    val cancelSelection: () -> Unit = {
+        selectedApk?.close()
+        selectedApk = null
+        progress = 0
+        messages.add("[SAF] Descriptor released and selection reset.")
     }
 
     BedrockOffsetExtractorTheme(themeMode = themeMode) {
@@ -126,12 +176,14 @@ fun BedrockOffsetExtractorApp() {
                         progress = progress,
                         busyMessage = busyMessage,
                         messages = messages,
+                        selectedApk = selectedApk,
                         onSelectApk = {
                             busyMessage = "Opening file picker"
                             progress = 0
                             isBusy = true
-                            picker.launch(arrayOf(APK_MIME))
+                            picker.launch(arrayOf(APK_MIME_TYPE))
                         },
+                        onCancelSelection = cancelSelection,
                     )
 
                     AppTab.Settings -> SettingsScreen(

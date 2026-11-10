@@ -14,7 +14,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.chimerateam.offsetextractor.data.saf.ApkHandle
 import com.chimerateam.offsetextractor.ui.components.LiveLogPane
+import com.chimerateam.offsetextractor.ui.components.SelectedApkCard
 import com.chimerateam.offsetextractor.ui.theme.PanelGap
 
 /**
@@ -27,7 +29,9 @@ import com.chimerateam.offsetextractor.ui.theme.PanelGap
  * @param progress completion in the range 0..100.
  * @param busyMessage task description shown while busy.
  * @param messages live log lines.
+ * @param selectedApk the APK whose descriptor is currently held, if any.
  * @param onSelectApk invoked when the user requests the system file picker.
+ * @param onCancelSelection releases the descriptor and resets the selection.
  * @param modifier layout modifier for the screen.
  */
 @Composable
@@ -36,7 +40,9 @@ fun ScannerScreen(
     progress: Int,
     busyMessage: String,
     messages: List<String>,
+    selectedApk: ApkHandle?,
     onSelectApk: () -> Unit,
+    onCancelSelection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -60,7 +66,9 @@ fun ScannerScreen(
                         isBusy = isBusy,
                         progress = progress,
                         busyMessage = busyMessage,
+                        selectedApk = selectedApk,
                         onSelectApk = onSelectApk,
+                        onCancelSelection = onCancelSelection,
                     )
                 }
                 LiveLogPane(
@@ -81,7 +89,9 @@ fun ScannerScreen(
                     isBusy = isBusy,
                     progress = progress,
                     busyMessage = busyMessage,
+                    selectedApk = selectedApk,
                     onSelectApk = onSelectApk,
+                    onCancelSelection = onCancelSelection,
                 )
                 LiveLogPane(
                     messages = messages,
@@ -99,11 +109,20 @@ private fun ControlsPane(
     isBusy: Boolean,
     progress: Int,
     busyMessage: String,
+    selectedApk: ApkHandle?,
     onSelectApk: () -> Unit,
+    onCancelSelection: () -> Unit,
 ) {
-    if (isBusy) {
-        LoadingScreen(message = busyMessage, progress = progress)
-    } else {
-        IdleScreen(onSelectApk = onSelectApk)
+    when {
+        isBusy -> LoadingScreen(message = busyMessage, progress = progress)
+
+        selectedApk != null -> SelectedApkCard(
+            metadata = selectedApk.metadata,
+            usedCacheCopy = selectedApk.usedCacheCopy,
+            onCancel = onCancelSelection,
+            onSelectApk = onSelectApk,
+        )
+
+        else -> IdleScreen(onSelectApk = onSelectApk)
     }
 }
