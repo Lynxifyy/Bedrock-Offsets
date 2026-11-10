@@ -49,6 +49,7 @@ import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
+import com.chimerateam.offsetextractor.util.formatBytes
 
 /** Maximum number of log lines kept in memory and shown in the pane. */
 private const val MAX_LOG_LINES = 500
@@ -69,6 +70,8 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     var tab by rememberSaveable { mutableStateOf(AppTab.Scanner) }
 
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val forceRescan by viewModel.forceRescan.collectAsStateWithLifecycle()
+    val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsStateWithLifecycle()
     val messages = remember { mutableStateListOf<String>() }
 
     LaunchedEffect(viewModel) {
@@ -151,7 +154,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         titleContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),
                     actions = {
-                        IconButton(onClick = { viewModel.cancel() }) {
+                        IconButton(onClick = { viewModel.clearCache() }) {
                             Icon(
                                 imageVector = Icons.Filled.DeleteSweep,
                                 contentDescription = "Clear cache",
@@ -233,8 +236,10 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                     AppTab.Settings -> SettingsScreen(
                         themeMode = themeMode,
                         onThemeModeChange = { themeMode = it },
-                        cacheSizeLabel = "0 B",
-                        onClearCache = { viewModel.cancel() },
+                        cacheSizeLabel = formatBytes(cacheSizeBytes),
+                        forceRescan = forceRescan,
+                        onForceRescanChange = { viewModel.setForceRescan(it) },
+                        onClearCache = { viewModel.clearCache() },
                     )
                 }
             }

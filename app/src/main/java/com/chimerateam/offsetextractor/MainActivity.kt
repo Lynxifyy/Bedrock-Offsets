@@ -9,6 +9,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.chimerateam.offsetextractor.data.cache.ScanCache
+import com.chimerateam.offsetextractor.data.cache.scanPreferences
 import com.chimerateam.offsetextractor.data.native.JniOffsetEngine
 import com.chimerateam.offsetextractor.data.saf.AndroidDocumentWriter
 import com.chimerateam.offsetextractor.data.saf.AndroidSafApkAccess
@@ -35,6 +37,8 @@ class MainActivity : ComponentActivity() {
                     engine = JniOffsetEngine(),
                     cacheDir = File(cacheDir, "engine").apply { mkdirs() },
                     writer = AndroidDocumentWriter(applicationContext),
+                    cache = ScanCache(File(cacheDir, "scan-cache").apply { mkdirs() }),
+                    preferences = scanPreferences(this@MainActivity),
                     patterns = SignaturePack.load(applicationContext),
                 )
             }

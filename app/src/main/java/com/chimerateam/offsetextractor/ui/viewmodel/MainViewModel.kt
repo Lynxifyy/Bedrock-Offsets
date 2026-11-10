@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.cache.ResultCache
+import com.chimerateam.offsetextractor.data.cache.ScanCache
+import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
@@ -34,6 +37,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -48,6 +53,9 @@ private const val MAX_LOGGED_VTABLES = 10
 
 /** Origin tag used for storage-access lines. */
 private const val TAG_SAF = "SAF"
+
+/** Origin tag used for cache lines. */
+private const val TAG_CACHE = "CACHE"
 
 /**
  * Drives APK selection, native library extraction and scan progress.
@@ -71,6 +79,8 @@ class MainViewModel(
     private val writer: DocumentWriter = DocumentWriter { _, _ ->
         WriteResult.Failure("No document writer is configured.")
     },
+    private val cache: ScanCache? = null,
+    private val preferences: ScanPreferences? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
@@ -88,8 +98,28 @@ class MainViewModel(
     /** Live-log stream; buffered so a slow collector cannot block the engine. */
     val logs: SharedFlow<LogEntry> = _logs.asSharedFlow()
 
+    private val resultCache = cache?.let(::ResultCache)
+
+    private val _forceRescan = MutableStateFlow(false)
+    /** Whether the next scan ignores a cached result. */
+    val forceRescan: StateFlow<Boolean> = _forceRescan.asStateFlow()
+
+    private val _cacheSizeBytes = MutableStateFlow(0L)
+    /** Total size of everything held in the on-disk cache. */
+    val cacheSizeBytes: StateFlow<Long> = _cacheSizeBytes.asStateFlow()
+
     private var activeApk: ApkSource? = null
     private var extractionJob: Job? = null
+
+    init {
+        cache?.ensureDirectories()
+        refreshCacheSize()
+        preferences?.let { store ->
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.forceRescan.collect { force -> _forceRescan.value = force }
+            }
+        }
+    }
 
     /**
      * Opens [uri] and starts extracting its native library.
@@ -225,6 +255,72 @@ class MainViewModel(
         _uiState.update { it.copy(exportMessage = null) }
     }
 
+    /**
+     * Turns cached-result reuse on or off.
+     *
+     * @param force true to always rescan, ignoring a cached document.
+     */
+    fun setForceRescan(force: Boolean) {
+        _forceRescan.value = force
+        emit(
+            Logs.info(
+                TAG_CACHE,
+                if (force) "Force rescan enabled; cached results are ignored." else "Force rescan disabled.",
+            ),
+        )
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setForceRescan(force)
+        }
+    }
+
+    /** Recomputes the reported cache size. */
+    fun refreshCacheSize() {
+        _cacheSizeBytes.value = cache?.totalSizeBytes() ?: 0L
+    }
+
+    /**
+     * Deletes every cached library and document.
+     *
+     * The cache is only a convenience: a failure to clear it is logged and the
+     * app carries on with whatever remains.
+     */
+    fun clearCache() {
+        val store = cache
+        if (store == null) {
+            emit(Logs.warn(TAG_CACHE, "No cache is configured."))
+            return
+        }
+        val cleared = store.clear()
+        refreshCacheSize()
+        if (cleared) {
+            emit(Logs.info(TAG_CACHE, "Cache cleared."))
+            _uiState.update { it.copy(exportMessage = "Cache cleared.") }
+        } else {
+            emit(Logs.warn(TAG_CACHE, "Some cached files could not be deleted."))
+        }
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setLastBuildId("")
+        }
+    }
+
+    /** Returns the cached result for [buildId], or `null` when it must be rescanned. */
+    private fun cachedResultFor(buildId: String): ScanResultSummary? {
+        if (_forceRescan.value) return null
+        return resultCache?.load(buildId)
+    }
+
+    /** Stores [summary] as the cache entry for [buildId]. */
+    private fun rememberScan(buildId: String, summary: ScanResultSummary?) {
+        if (summary == null) return
+        val stored = resultCache?.store(summary) ?: false
+        if (stored) {
+            refreshCacheSize()
+        }
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setLastBuildId(buildId)
+        }
+    }
+
     /** Records that the user dismissed the picker without choosing a file. */
     fun onSelectionCancelled() {
         emit(Logs.info(TAG_SAF, "Selection cancelled."))
@@ -322,6 +418,25 @@ class MainViewModel(
                 ),
             )
 
+            cachedResultFor(symbols.identity.buildId)?.let { cached ->
+                emit(Logs.info(TAG_CACHE, "Loaded offsets from previous scan."))
+                _uiState.update {
+                    it.copy(
+                        phase = ScannerPhase.Success,
+                        progress = 100,
+                        progressTask = "Loaded from cache",
+                        result = cached.copy(
+                            displayName = source.metadata.displayName,
+                            sizeBytes = extracted.sizeBytes,
+                            sha256 = extracted.sha256,
+                        ),
+                        error = null,
+                        errorHint = null,
+                    )
+                }
+                return
+            }
+
             val scan = scanForOffsets(extracted)
             val vtables = resolveVtables(extracted)
 
@@ -352,6 +467,8 @@ class MainViewModel(
                     errorHint = null,
                 )
             }
+
+            rememberScan(symbols.identity.buildId, _uiState.value.result)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (throwable: Throwable) {
@@ -496,7 +613,17 @@ class MainViewModel(
             engine: OffsetEngine,
             cacheDir: File,
             writer: DocumentWriter,
+            cache: ScanCache,
+            preferences: ScanPreferences,
             patterns: List<PatternSpec> = emptyList(),
-        ): MainViewModel = MainViewModel(safAccess, engine, cacheDir, patterns, writer)
+        ): MainViewModel = MainViewModel(
+            safAccess = safAccess,
+            engine = engine,
+            cacheDir = cacheDir,
+            patterns = patterns,
+            writer = writer,
+            cache = cache,
+            preferences = preferences,
+        )
     }
 }

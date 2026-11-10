@@ -11,6 +11,8 @@ import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
+import com.chimerateam.offsetextractor.data.cache.ScanCache
+import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.saf.DocumentWriter
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.WriteResult
@@ -485,6 +487,97 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aSecondScanOfTheSameBuildLoadsFromTheCache() = runTest(dispatcher) {
+        val cache = newCache()
+        val first = newViewModel(cache = cache)
+        first.onApkSelected(uri)
+        advanceUntilIdle()
+        assertEquals(1, first.uiState.value.result?.patternHits?.size)
+
+        val engine = FakeEngine()
+        val second = newViewModel(engine = engine, cache = cache)
+        second.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Success, second.uiState.value.phase)
+        assertEquals("a cache hit must skip the scan", 0, engine.scanCalls)
+        assertEquals("the cached result must be reused", 1, second.uiState.value.result?.patternHits?.size)
+    }
+
+    @Test
+    fun forceRescanIgnoresTheCache() = runTest(dispatcher) {
+        val cache = newCache()
+        newViewModel(cache = cache).onApkSelected(uri)
+        advanceUntilIdle()
+
+        val engine = FakeEngine()
+        val viewModel = newViewModel(engine = engine, cache = cache)
+        viewModel.setForceRescan(true)
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals("a forced scan must run the engine", 1, engine.scanCalls)
+    }
+
+    @Test
+    fun clearingTheCacheRemovesStoredDocuments() = runTest(dispatcher) {
+        val cache = newCache()
+        val viewModel = newViewModel(cache = cache)
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+        assertTrue("expected a stored document", cache.totalSizeBytes() > 0)
+
+        viewModel.clearCache()
+        advanceUntilIdle()
+
+        assertEquals(0L, cache.totalSizeBytes())
+        assertEquals(0L, viewModel.cacheSizeBytes.value)
+    }
+
+    @Test
+    fun theReportedCacheSizeGrowsAfterAScan() = runTest(dispatcher) {
+        val cache = newCache()
+        val viewModel = newViewModel(cache = cache)
+        assertEquals(0L, viewModel.cacheSizeBytes.value)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertTrue(
+            "the cache size must reflect the stored document",
+            viewModel.cacheSizeBytes.value > 0,
+        )
+    }
+
+    @Test
+    fun aCorruptCacheEntryFallsBackToScanning() = runTest(dispatcher) {
+        val cache = newCache()
+        cache.ensureDirectories()
+        cache.writeDocument("abcdef0123456789", "{ not json")
+
+        val engine = FakeEngine()
+        val viewModel = newViewModel(engine = engine, cache = cache)
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertEquals("a corrupt entry must not be trusted", 1, engine.scanCalls)
+    }
+
+    @Test
+    fun aScanWithoutACacheStillSucceeds() = runTest(dispatcher) {
+        val engine = FakeEngine()
+        val viewModel = newViewModel(engine = engine, cache = null)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertEquals(1, engine.scanCalls)
+        assertEquals(0L, viewModel.cacheSizeBytes.value)
+    }
+
+    @Test
     fun progressTrackerClampsOutOfRangeValues() {
         assertEquals(0, ProgressTracker.of(-5, "x").percent)
         assertEquals(100, ProgressTracker.of(250, "x").percent)
@@ -503,14 +596,20 @@ class MainViewModelTest {
         access: SafApkAccess = FakeSafAccess(),
         patterns: List<PatternSpec> = listOf(PatternSpec("prologue", "FD 7B BF A9")),
         writer: DocumentWriter = DocumentWriter { _, _ -> WriteResult.Success },
+        cache: ScanCache? = null,
+        preferences: ScanPreferences? = null,
     ): MainViewModel = MainViewModel(
         safAccess = access,
         engine = engine,
         cacheDir = cacheDir,
         patterns = patterns,
         writer = writer,
+        cache = cache,
+        preferences = preferences,
         ioDispatcher = dispatcher,
     )
+
+    private fun newCache(): ScanCache = ScanCache(File(cacheDir, "scan-cache"))
 }
 
 /** The `.text` section used by the fake engine. */
