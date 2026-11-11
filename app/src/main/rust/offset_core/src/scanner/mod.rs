@@ -137,8 +137,14 @@ pub struct ScanOutcome {
     pub chunks: usize,
     /// Number of workers the pool actually used.
     pub workers: usize,
-    /// Every hit, sorted by address.
+    /// Every hit that survived the prologue check, sorted by address.
     pub hits: Vec<PatternHit>,
+    /// Every match the byte scan produced, before the prologue check ran.
+    ///
+    /// Reported separately so the two counts in the live log cannot be read as
+    /// a contradiction: the byte scan finds `raw_matches`, the prologue check
+    /// discards `discarded` of them, and `hits` is what is left.
+    pub raw_matches: usize,
     /// Candidates the prologue check discarded; 0 before verification runs.
     pub discarded: usize,
     /// Whether the prologue check was applied.

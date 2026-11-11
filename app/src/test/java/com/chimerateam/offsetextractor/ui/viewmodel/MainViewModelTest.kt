@@ -949,6 +949,53 @@ class MainViewModelTest {
         assertEquals(100, ProgressTracker.of(250, "x").percent)
     }
 
+    @Test
+    fun theTwoScanCountsAreReportedSeparately() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val messages = viewModel.logEntries.value.map { it.message }
+        assertTrue(
+            "the byte-scan total must be the raw count: $messages",
+            messages.any { it.contains("Found 3 pattern matches") }
+        )
+        assertTrue(
+            "the verified line must separate kept from raw: $messages",
+            messages.any { it.contains("Verified 1 valid function prologues (0 of 3 discarded)") }
+        )
+    }
+
+    @Test
+    fun anUnfinishedPreviousRunIsReported() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+        val breadcrumb = File(cacheDir, "libminecraftpe.so.breadcrumb")
+        breadcrumb.writeText("rtti: indexing relocations")
+
+        viewModel.reportPreviousRun(listOf("Previous run ended: native crash (status 11)."))
+
+        val messages = viewModel.logEntries.value.map { it.message }
+        assertTrue(
+            "the exit reason must be logged: $messages",
+            messages.any { it.contains("native crash") }
+        )
+        assertTrue(
+            "the breadcrumb phase must be logged: $messages",
+            messages.any { it.contains("Previous run stopped during: rtti: indexing relocations") }
+        )
+        assertTrue("the breadcrumb must be cleared", !breadcrumb.exists())
+    }
+
+    @Test
+    fun aCleanPreviousRunAddsNoLines() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.reportPreviousRun(emptyList())
+
+        assertEquals(0, viewModel.logEntries.value.size)
+    }
+
     private fun startCollector(
         scope: CoroutineScope,
         viewModel: MainViewModel,
@@ -993,6 +1040,7 @@ private fun scanOutcome(): ScanOutcome = ScanOutcome(
             addressHex = "0x400000"
         )
     ),
+    rawMatches = 3,
     peakResidentBytes = 32L * 1024 * 1024
 )
 
@@ -1109,6 +1157,9 @@ private class FakeEngine(
                     addressHex = "0x400000"
                 )
             ),
+            // One verified hit out of three raw matches, so the two counts the
+            // live log prints can be told apart.
+            rawMatches = 3,
             peakResidentBytes = 32L * 1024 * 1024
         )
     }

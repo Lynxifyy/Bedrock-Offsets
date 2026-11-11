@@ -149,6 +149,7 @@ class EnginePayloadsWireTest {
               "scanned_bytes": 4096,
               "chunks": 1,
               "workers": 4,
+              "raw_matches": 3,
               "discarded": 2,
               "verified": true,
               "truncated": true,
@@ -177,6 +178,7 @@ class EnginePayloadsWireTest {
         assertEquals(".text", outcome.section)
         assertEquals(4096L, outcome.scannedBytes)
         assertEquals(4, outcome.workers)
+        assertEquals(3, outcome.rawMatches)
         assertEquals(2, outcome.discarded)
         assertTrue(outcome.verified)
         assertTrue(outcome.truncated)
@@ -193,6 +195,31 @@ class EnginePayloadsWireTest {
         assertNotNull(outcome.verification)
         assertEquals(1, outcome.verification!!.verified)
         assertTrue(outcome.verification!!.symbolsAvailable)
+    }
+
+    @Test
+    fun aScanPayloadWithoutRawMatchesFallsBackToTheHitCount() {
+        val json = """
+            {
+              "section": ".text",
+              "scanned_bytes": 4096,
+              "chunks": 1,
+              "workers": 4,
+              "hits": [
+                {
+                  "name": "client_instance",
+                  "section_offset": 16,
+                  "file_offset": 4112,
+                  "address": 4112,
+                  "address_hex": "0x1010"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val outcome = EnginePayloads.parseScanOutcome(json)
+
+        assertEquals(1, outcome.rawMatches)
     }
 
     @Test

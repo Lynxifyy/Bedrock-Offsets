@@ -92,6 +92,9 @@ pub fn scan_section_releasing_pages(
     // processed in waves so a progress update can be emitted between them.
     let wave = (ranges.len() / PROGRESS_STEPS).max(1);
     let mut per_chunk: Vec<Vec<(usize, usize)>> = Vec::with_capacity(ranges.len());
+    // Set by a worker whose chunk hit the per-pattern cap, so a capped scan is
+    // reported even when the surviving hit count stays below the global cap.
+    let capped_any = std::sync::atomic::AtomicBool::new(false);
     let mut done = 0usize;
     for batch in ranges.chunks(wave) {
         if control.is_cancelled() {
@@ -106,7 +109,11 @@ pub fn scan_section_releasing_pages(
                 let start = range.start;
                 let end = range.end.min(bytes.len());
                 let chunk = &bytes[start..end];
-                set.find_all(chunk)
+                let (found, capped) = set.find_all_with_truncation(chunk);
+                if capped {
+                    capped_any.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                found
                     .into_iter()
                     .map(|(pattern_index, offset)| (pattern_index, start + offset))
                     .collect()
@@ -147,7 +154,7 @@ pub fn scan_section_releasing_pages(
     // is surfaced through `truncated` rather than silently ignored.
     let mut hits: Vec<PatternHit> = Vec::new();
     let mut per_pattern: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    let mut truncated = false;
+    let mut truncated = capped_any.load(std::sync::atomic::Ordering::Relaxed);
     for (pattern_index, offset) in positions {
         let Some(pattern) = set.patterns().get(pattern_index) else {
             continue;
@@ -181,12 +188,14 @@ pub fn scan_section_releasing_pages(
             .then_with(|| left.name.cmp(&right.name))
     });
 
+    let raw_matches = hits.len();
     Ok(ScanOutcome {
         section: section.name.clone(),
         scanned_bytes: bytes.len() as u64,
         chunks: ranges.len(),
         workers,
         hits,
+        raw_matches,
         discarded: 0,
         verified: false,
         truncated,

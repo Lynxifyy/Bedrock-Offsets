@@ -13,6 +13,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.scanPreferences
+import com.chimerateam.offsetextractor.data.diagnostics.PreviousRunReport
 import com.chimerateam.offsetextractor.data.native.JniOffsetEngine
 import com.chimerateam.offsetextractor.data.patterns.SignaturePack
 import com.chimerateam.offsetextractor.data.saf.AndroidDocumentWriter
@@ -53,6 +54,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // A native crash or a low-memory kill leaves nothing in this process's
+        // log. The next launch is the only chance to explain it, so the record
+        // of the previous exit is read once and handed to the ViewModel.
+        viewModel.reportPreviousRun(PreviousRunReport.collect(this))
         setContent {
             BedrockOffsetExtractorApp(viewModel = viewModel)
         }

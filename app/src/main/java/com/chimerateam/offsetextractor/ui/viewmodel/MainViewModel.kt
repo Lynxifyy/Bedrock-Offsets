@@ -68,6 +68,9 @@ private const val TAG_SAF = "SAF"
 /** Origin tag used for cache lines. */
 private const val TAG_CACHE = "CACHE"
 
+/** Suffix of the engine's phase breadcrumb file, written beside the library. */
+private const val BREADCRUMB_SUFFIX = ".breadcrumb"
+
 /**
  * Drives APK selection, native library extraction and scan progress.
  *
@@ -697,7 +700,7 @@ class MainViewModel(
         emit(
             Logs.info(
                 TAG_RUST,
-                "Parallel scan complete. Found ${outcome.hits.size} pattern matches."
+                "Parallel scan complete. Found ${outcome.rawMatches} pattern matches."
             )
         )
         if (outcome.truncated) {
@@ -713,7 +716,7 @@ class MainViewModel(
             Logs.info(
                 TAG_RUST,
                 "Verified ${outcome.hits.size} valid function prologues " +
-                    "(${outcome.discarded} discarded)."
+                    "(${outcome.discarded} of ${outcome.rawMatches} discarded)."
             )
         )
         outcome.peakResidentBytes?.let { peak ->
@@ -798,6 +801,40 @@ class MainViewModel(
     fun clearLog() {
         _logEntries.value = emptyList()
         emit(Logs.info(TAG_UI, "Log cleared."))
+    }
+
+    /**
+     * Reports how the previous process ended, when it ended badly.
+     *
+     * A native crash or a low-memory kill leaves no Kotlin behind to log, so the
+     * only place the failure can surface is the next launch. The engine also
+     * writes a breadcrumb beside the extracted library while it resolves RTTI;
+     * a breadcrumb still present on this launch means the previous run died
+     * there, which pins the phase even when Android kept no exit record.
+     *
+     * @param exitLines lines from [com.chimerateam.offsetextractor.data.diagnostics.PreviousRunReport].
+     */
+    fun reportPreviousRun(exitLines: List<String>) {
+        val leftover = cacheDir
+            .listFiles { file -> file.name.endsWith(BREADCRUMB_SUFFIX) }
+            .orEmpty()
+        val phases = leftover.mapNotNull { file ->
+            runCatching { file.readText().trim() }.getOrNull()?.takeIf { it.isNotEmpty() }
+        }.distinct()
+
+        exitLines.forEach { emit(Logs.warn(TAG_UI, it)) }
+        phases.forEach { emit(Logs.warn(TAG_RUST, "Previous run stopped during: $it")) }
+        leftover.forEach { file -> runCatching { file.delete() } }
+
+        if (exitLines.isNotEmpty() || phases.isNotEmpty()) {
+            emit(
+                Logs.info(
+                    TAG_UI,
+                    "A previous run did not finish. Scan again with the same APK to " +
+                        "collect a fresh log."
+                )
+            )
+        }
     }
 
     /**
