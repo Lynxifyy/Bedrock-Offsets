@@ -3,7 +3,7 @@ package com.chimerateam.offsetextractor.data.cache
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
-import com.google.gson.JsonSyntaxException
+import com.google.gson.JsonParseException
 
 /**
  * Serialises a completed scan so a later run can skip the work.
@@ -42,7 +42,10 @@ class ResultCache(private val cache: ScanCache) {
         val text = cache.readDocument(buildId) ?: return null
         val envelope = try {
             gson.fromJson(text, Envelope::class.java)
-        } catch (malformed: JsonSyntaxException) {
+        } catch (malformed: JsonParseException) {
+            // Covers a truncated document (JsonSyntaxException) and a payload
+            // model that did not survive shrinking (JsonIOException). Either way
+            // the cache is unusable, so the scan simply runs again.
             return null
         }
         if (envelope == null || envelope.schemaVersion != SCHEMA_VERSION) {

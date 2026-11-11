@@ -9,6 +9,7 @@ Checks:
     * the APK is under the size budget,
     * the engine and the native shim are packaged for arm64-v8a,
     * the R8-processed classes are present and no debug-only class survived,
+    * every Gson model still has a constructor after shrinking,
     * the manifest does not request INTERNET.
 
 Exit codes:
@@ -20,11 +21,12 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+
+import dex
 
 # The shipping budget from the release plan.
 SIZE_BUDGET_BYTES = 20 * 1024 * 1024
@@ -40,6 +42,53 @@ REQUIRED_NATIVE_OBJECTS = (
 FORBIDDEN_BYTECODE_MARKERS = (
     b"android/util/Log->d(",
     b"android/util/Log->v(",
+)
+
+# Every class Gson instantiates by reflection, written as a type descriptor.
+#
+# R8 cannot see those reflective calls, so without a keep rule it strips the
+# constructor and marks the class abstract, and the release build then fails on
+# the first payload it parses with "Abstract classes can't be instantiated!".
+# This list mirrors the packages protected by app/proguard-rules.pro; a class
+# that is deserialised but missing here would go unguarded, so keep the two in
+# step when a payload is added.
+GSON_MODEL_CLASSES = (
+    # data/native -- engine payloads and the models they carry.
+    "Lcom/chimerateam/offsetextractor/data/native/ExtractionPayload;",
+    "Lcom/chimerateam/offsetextractor/data/native/ElfMetadataPayload;",
+    "Lcom/chimerateam/offsetextractor/data/native/NativeLibraryMetadata;",
+    "Lcom/chimerateam/offsetextractor/data/native/SectionMapPayload;",
+    "Lcom/chimerateam/offsetextractor/data/native/SectionInfo;",
+    "Lcom/chimerateam/offsetextractor/data/native/SectionMap;",
+    "Lcom/chimerateam/offsetextractor/data/native/SymbolReportPayload;",
+    "Lcom/chimerateam/offsetextractor/data/native/SymbolReport;",
+    "Lcom/chimerateam/offsetextractor/data/native/BuildIdentity;",
+    "Lcom/chimerateam/offsetextractor/data/native/SymbolTable;",
+    "Lcom/chimerateam/offsetextractor/data/native/ExportedSymbol;",
+    "Lcom/chimerateam/offsetextractor/data/native/ScanOutcomePayload;",
+    "Lcom/chimerateam/offsetextractor/data/native/ScanOutcome;",
+    "Lcom/chimerateam/offsetextractor/data/native/PatternHit;",
+    "Lcom/chimerateam/offsetextractor/data/native/PatternSpec;",
+    "Lcom/chimerateam/offsetextractor/data/native/VerificationSummary;",
+    "Lcom/chimerateam/offsetextractor/data/native/VtableMapPayload;",
+    "Lcom/chimerateam/offsetextractor/data/native/VtableMap;",
+    "Lcom/chimerateam/offsetextractor/data/native/TypeVTable;",
+    # data/export -- the exported offsets document.
+    "Lcom/chimerateam/offsetextractor/data/export/OffsetDocument;",
+    "Lcom/chimerateam/offsetextractor/data/export/SourceInfo;",
+    "Lcom/chimerateam/offsetextractor/data/export/VTableEntry;",
+    "Lcom/chimerateam/offsetextractor/data/export/Stats;",
+    # data/cache -- the cached scan summary.
+    "Lcom/chimerateam/offsetextractor/data/cache/ResultCache$Envelope;",
+    # data/patterns -- the bundled signature pack.
+    "Lcom/chimerateam/offsetextractor/data/patterns/SignaturePack$PackDocument;",
+    "Lcom/chimerateam/offsetextractor/data/patterns/SignaturePack$Entry;",
+    # ui/state -- the cached summary's own models.
+    "Lcom/chimerateam/offsetextractor/ui/state/ScanResultSummary;",
+    "Lcom/chimerateam/offsetextractor/ui/state/ScannerUiState;",
+    "Lcom/chimerateam/offsetextractor/ui/state/BatchProgress;",
+    "Lcom/chimerateam/offsetextractor/ui/state/BatchSummary;",
+    "Lcom/chimerateam/offsetextractor/ui/state/ProgressTracker;",
 )
 
 
@@ -140,6 +189,101 @@ def check_no_debug_logging(apk: Path) -> CheckResult:
     )
 
 
+def check_gson_models(apk: Path) -> CheckResult:
+    """Verify every Gson model survived shrinking intact.
+
+    A model is intact when it is present, is not abstract, and still declares a
+    constructor. R8 removes the constructor and marks the class abstract when it
+    cannot see a `new` call site, and Gson then throws when it tries to build
+    one, so this is the failure that turns a release build into a crash on a
+    device.
+
+    Args:
+        apk: the artefact to inspect.
+
+    Returns:
+        The check result.
+    """
+    try:
+        tables = _read_dex_tables(apk)
+    except dex.DexError as error:
+        return CheckResult(name="Gson models", passed=False, detail=str(error))
+
+    missing: list[str] = []
+    broken: list[str] = []
+    for descriptor in GSON_MODEL_CLASSES:
+        entry = _find_class(tables, descriptor)
+        if entry is None:
+            missing.append(_simple_name(descriptor))
+        elif entry.is_abstract or not entry.has_constructor:
+            reason = "abstract" if entry.is_abstract else "no constructor"
+            broken.append(f"{_simple_name(descriptor)} ({reason})")
+
+    passed = not missing and not broken
+    if passed:
+        detail = f"{len(GSON_MODEL_CLASSES)} models instantiable"
+    else:
+        parts = []
+        if missing:
+            parts.append("shrunk away: " + ", ".join(missing))
+        if broken:
+            parts.append("not instantiable: " + ", ".join(broken))
+        detail = "; ".join(parts)
+    return CheckResult(name="Gson models", passed=passed, detail=detail)
+
+
+def _read_dex_tables(apk: Path) -> list[dex.DexFile]:
+    """Parse every ``classes*.dex`` in ``apk``.
+
+    Args:
+        apk: the artefact to read.
+
+    Returns:
+        One parsed table per dex entry.
+
+    Raises:
+        dex.DexError: if any entry is not a readable dex file.
+    """
+    with zipfile.ZipFile(apk) as archive:
+        blobs = [
+            archive.read(name)
+            for name in sorted(archive.namelist())
+            if name.endswith(".dex")
+        ]
+    if not blobs:
+        raise dex.DexError("the APK contains no dex bytecode")
+    return [dex.DexFile(blob) for blob in blobs]
+
+
+def _find_class(tables: list[dex.DexFile], descriptor: str) -> dex.DexClass | None:
+    """Return the class with ``descriptor`` from any table, or ``None``.
+
+    Args:
+        tables: parsed dex tables, in load order.
+        descriptor: type descriptor to look for.
+
+    Returns:
+        The matching class definition, or ``None`` when it was shrunk away.
+    """
+    for table in tables:
+        entry = table.find(descriptor)
+        if entry is not None:
+            return entry
+    return None
+
+
+def _simple_name(descriptor: str) -> str:
+    """Return the readable name of a type descriptor.
+
+    Args:
+        descriptor: type descriptor, for example ``Lcom/example/Thing;``.
+
+    Returns:
+        The dotted name without the surrounding ``L`` and ``;``.
+    """
+    return descriptor[1:-1].replace("/", ".").replace("$", ".")
+
+
 def check_manifest(apk: Path) -> CheckResult:
     """Verify the manifest requests no network permission.
 
@@ -185,6 +329,7 @@ def run_checks(apk: Path) -> list[CheckResult]:
         check_size(apk),
         check_native_objects(names),
         check_no_debug_logging(apk),
+        check_gson_models(apk),
         check_manifest(apk),
     ]
 
