@@ -126,7 +126,16 @@ pub fn resolve_vtables(image: &[u8]) -> CoreResult<VtableMap> {
     let map = build_section_map(image)?;
 
     let relocations = read_relocations(image)?;
-    let reloc_pointer = relocation_targets(&relocations);
+    let reloc_pointer = RelocationIndex::build(&relocations);
+    // The flat list is no longer needed; dropping it before the scan keeps only
+    // the sorted index resident.
+    let relocations_examined = reloc_pointer.len();
+    let source = if reloc_pointer.is_empty() {
+        VtableSource::DirectScan
+    } else {
+        VtableSource::Relocations
+    };
+    drop(relocations);
 
     let candidates = find_type_info_pointers(&map, image, &reloc_pointer);
 
@@ -151,22 +160,16 @@ pub fn resolve_vtables(image: &[u8]) -> CoreResult<VtableMap> {
         });
     }
 
-    let source = if relocations.is_empty() {
-        VtableSource::DirectScan
-    } else {
-        VtableSource::Relocations
-    };
-
     Ok(VtableMap {
         source,
         type_info_candidates: candidates.len(),
-        relocations_examined: relocations.len(),
+        relocations_examined,
         entries,
     })
 }
 
-/// A `type_info` pointer found in the read-only data.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A resolved `type_info` pointer, kept only long enough to read its name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TypeInfoCandidate {
     /// Virtual address of the slot holding the `type_info` pointer.
     ///
@@ -180,15 +183,19 @@ struct TypeInfoCandidate {
 
 /// Finds every pointer in `.data.rel.ro` that could be a `type_info` pointer.
 ///
-/// A `type_info` pointer is an eight-byte little-endian value that relocation
-/// information places inside a mapped section and that is followed, at the next
-/// slot, by another pointer into `.rodata`. That pairing is the signature of a
+/// A `type_info` pointer is an eight-byte value that relocation information
+/// places inside a non-executable, allocated section, and whose target is a
+/// second pointer into read-only data. That pairing is the signature of a
 /// vtable prefix: `typeinfo` pointer followed by the start of the function
 /// pointer table.
+///
+/// Function pointers are relocated too, but they point into executable code, so
+/// requiring the target to be non-executable is what keeps a library with
+/// millions of virtual functions from producing millions of candidates.
 fn find_type_info_pointers(
     map: &crate::sections::SectionMap,
     image: &[u8],
-    relocation_targets: &BTreeMap<u64, u64>,
+    relocation_targets: &RelocationIndex,
 ) -> Vec<TypeInfoCandidate> {
     let mut candidates = Vec::new();
     let sections: Vec<_> = map
@@ -212,7 +219,7 @@ fn find_type_info_pointers(
             // The relocation table wins when it knows the slot. With RELA the
             // in-place value is usually zero, so a zero slot must not be skipped
             // before the table has been consulted.
-            let relocated = relocation_targets.get(&slot_address).copied();
+            let relocated = relocation_targets.target_of(slot_address);
             let type_info_address = relocated.unwrap_or(raw);
             if type_info_address == 0 {
                 continue;
@@ -239,17 +246,21 @@ fn find_type_info_pointers(
 /// Reads the name pointer out of a `type_info` object.
 ///
 /// A `type_info` starts with its own vtable pointer, so the name pointer is the
-/// second slot. The object is located by its virtual address. The name slot is
-/// relocated too, so its in-place value may be zero on a RELA build; the
-/// relocation table is consulted first for that reason.
+/// second slot. The object must live in allocated, non-executable data: a
+/// `type_info` never sits in `.text`, and a relocated function pointer always
+/// does. Accepting a `.text` target here is what made a real library report one
+/// candidate per virtual function pointer.
+///
+/// The name slot is relocated too, so its in-place value may be zero on a RELA
+/// build; the relocation table is consulted first for that reason.
 fn type_info_name_address(
     map: &crate::sections::SectionMap,
     image: &[u8],
     type_info_address: u64,
-    relocation_targets: &BTreeMap<u64, u64>,
+    relocation_targets: &RelocationIndex,
 ) -> Option<u64> {
     let section = map.sections.iter().find(|section| {
-        if !section.occupies_file {
+        if !section.occupies_file || !section.allocated || section.executable {
             return false;
         }
         let end = section.address.saturating_add(section.size);
@@ -263,8 +274,7 @@ fn type_info_name_address(
     }
     let name_slot = type_info_address.saturating_add(8);
     let name = relocation_targets
-        .get(&name_slot)
-        .copied()
+        .target_of(name_slot)
         .unwrap_or_else(|| read_u64(bytes, offset + 8));
     if name == 0 {
         return None;
@@ -352,7 +362,10 @@ fn is_name_byte(byte: u8) -> bool {
 }
 
 /// One `.rela.dyn` entry, reduced to what vtable resolution needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Only the slot address and its target are kept: the relocation kind is
+/// filtered as the entry is read, so the list holds exactly the entries the
+/// resolver will look up.
 struct Relocation {
     /// Virtual address the relocation writes to.
     offset: u64,
@@ -360,6 +373,62 @@ struct Relocation {
     addend: u64,
     /// Relocation type.
     kind: u32,
+}
+
+/// A sorted slot-address-to-target index over `.rela.dyn`.
+///
+/// A large library has millions of relocations. Storing them as a `Vec` and
+/// then copying the relevant ones into a map holds every entry twice; this keeps
+/// one sorted vector and answers lookups by binary search, which is what keeps
+/// the resolver's own cost off the peak-resident figure.
+struct RelocationIndex {
+    entries: Vec<(u64, u64)>,
+}
+
+impl RelocationIndex {
+    /// Builds the index from a flat relocation list.
+    ///
+    /// Two relocation kinds matter. `R_AARCH64_RELATIVE` means "store the
+    /// address the linker computed for this slot", which is the addend; the
+    /// loader adds the image base when it maps the library. `R_AARCH64_ABS64`
+    /// stores an absolute address, which the addend already carries. Either way
+    /// the addend is the virtual address the slot will hold. Every other kind is
+    /// dropped rather than guessed at.
+    fn build(relocations: &[Relocation]) -> Self {
+        let mut entries: Vec<(u64, u64)> = relocations
+            .iter()
+            .filter(|relocation| {
+                relocation.kind == R_AARCH64_RELATIVE || relocation.kind == R_AARCH64_ABS64
+            })
+            .map(|relocation| (relocation.offset, relocation.addend))
+            .collect();
+        entries.sort_unstable();
+        entries.dedup();
+        Self { entries }
+    }
+
+    /// Returns the address the slot at `slot_address` resolves to.
+    ///
+    /// # Returns
+    ///
+    /// The target, or `None` when the slot is not relocated by a supported kind.
+    fn target_of(&self, slot_address: u64) -> Option<u64> {
+        let index = self
+            .entries
+            .binary_search_by_key(&slot_address, |(offset, _)| *offset)
+            .ok()?;
+        Some(self.entries[index].1)
+    }
+
+    /// Number of relocations the index kept.
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the index holds nothing, which is the signal to direct-scan.
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// Reads `.rela.dyn` into a flat list.
@@ -385,6 +454,7 @@ fn read_relocations(image: &[u8]) -> CoreResult<Vec<Relocation>> {
 
         const ENTRY_BYTES: usize = 24;
         let count = body.len() / ENTRY_BYTES;
+        relocations.reserve(count);
         for index in 0..count {
             let base = index * ENTRY_BYTES;
             let offset = read_u64(body, base);
@@ -399,24 +469,6 @@ fn read_relocations(image: &[u8]) -> CoreResult<Vec<Relocation>> {
     }
 
     Ok(relocations)
-}
-
-/// Maps relocation target addresses to the address they resolve to.
-///
-/// Two relocation kinds matter here. `R_AARCH64_RELATIVE` means "store the
-/// address the linker computed for this slot", which is the addend; the loader
-/// adds the image base when it maps the library. `R_AARCH64_ABS64` stores an
-/// absolute address, which the addend already carries. Either way the addend is
-/// the virtual address the slot will hold, so both kinds are recorded the same
-/// way. Every other kind is ignored rather than guessed at.
-fn relocation_targets(relocations: &[Relocation]) -> BTreeMap<u64, u64> {
-    relocations
-        .iter()
-        .filter(|relocation| {
-            relocation.kind == R_AARCH64_RELATIVE || relocation.kind == R_AARCH64_ABS64
-        })
-        .map(|relocation| (relocation.offset, relocation.addend))
-        .collect()
 }
 
 /// Reads a little-endian `u64` at `offset`, or zero when it runs off the end.
@@ -487,10 +539,13 @@ mod tests {
             },
         ];
 
-        let targets = relocation_targets(&relocations);
-        assert_eq!(targets.get(&0x1000), Some(&0x2000));
-        assert_eq!(targets.get(&0x1008), Some(&0x3000));
-        assert_eq!(targets.get(&0x1010), None);
+        let index = RelocationIndex::build(&relocations);
+        assert_eq!(index.target_of(0x1000), Some(0x2000));
+        assert_eq!(index.target_of(0x1008), Some(0x3000));
+        // An unsupported kind is dropped, and so is an unknown slot.
+        assert_eq!(index.target_of(0x1010), None);
+        assert_eq!(index.target_of(0x9999), None);
+        assert_eq!(index.len(), 2);
     }
 
     #[test]

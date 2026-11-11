@@ -19,7 +19,7 @@ use crate::progress::JniProgressSink;
 use crate::prologue::PrologueVerifier;
 use crate::rtti::resolve_vtables;
 use crate::scanner::{
-    scan_section_with_progress, verify_prologues_with_progress, ProgressSink, ScanControl,
+    scan_section_releasing_pages, verify_prologues_with_progress, ProgressSink, ScanControl,
     ScanOutcome,
 };
 use crate::sections::build_section_map;
@@ -420,13 +420,18 @@ pub fn scan_text_json_with_progress(
     let set = PatternSet::new(&specs)?;
 
     let control = ScanControl::new();
-    let outcome = scan_section_with_progress(&map, library.bytes(), &set, &control, sink)?;
+    // The mapping is offered wave by wave so the pages behind the scan can be
+    // reclaimed; without it a 342 MB `.text` stays resident for the whole pass.
+    let outcome =
+        scan_section_releasing_pages(&map, library.bytes(), &set, &control, sink, Some(&library))?;
 
     // A byte signature only says "these bytes occur here"; decoding the bytes
     // at each match is what separates a function start from a coincidence.
     let verifier = PrologueVerifier::new()?;
     let mut outcome =
         verify_prologues_with_progress(outcome, &map, library.bytes(), &verifier, &control, sink)?;
+    // Verification walked `.text` again; those pages are dead weight now too.
+    library.advise_pages_droppable();
 
     // The library's own symbol table is an independent witness: when a
     // signature's name is also an exported symbol the two addresses can be
