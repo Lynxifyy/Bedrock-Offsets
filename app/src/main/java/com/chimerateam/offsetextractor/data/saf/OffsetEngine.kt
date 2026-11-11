@@ -143,6 +143,15 @@ enum class EngineErrorKind {
     /** A signature pattern could not be compiled. */
     InvalidPattern,
 
+    /**
+     * The engine's JSON payload could not be turned into a model.
+     *
+     * This is an app defect rather than a bad APK: a release build that shrinks
+     * the payload classes away fails here, and the cause is not something the
+     * user can act on.
+     */
+    Payload,
+
     /** The user cancelled the operation. */
     Cancelled,
 

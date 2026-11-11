@@ -175,7 +175,11 @@ read, `2` for a bad argument. The release workflow runs it before assembling.
 
 Checks the built release APK against the shipping budget: the size cap, the
 packaged arm64-v8a engine, the absence of `Log.d`/`Log.v` call sites in the
-bytecode, and the absence of an `INTERNET` permission. CI runs it after
+bytecode, that every Gson model survived shrinking with a constructor, and the
+absence of an `INTERNET` permission. The Gson check catches the release-only
+failure where R8 strips a model's constructor and Gson then throws
+"Abstract classes can't be instantiated!"; see
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). CI runs it after
 `assembleRelease`.
 
 ```bash

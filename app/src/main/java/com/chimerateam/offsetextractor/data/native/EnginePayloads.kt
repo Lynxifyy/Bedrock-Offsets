@@ -4,6 +4,7 @@ import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
 import com.google.gson.Gson
+import com.google.gson.JsonParseException
 import com.google.gson.JsonSyntaxException
 import com.google.gson.annotations.SerializedName
 
@@ -267,9 +268,20 @@ object EnginePayloads {
                     kind = EngineErrorKind.Unknown,
                     message = "the engine returned an empty $what payload"
                 )
-        } catch (malformed: JsonSyntaxException) {
+        } catch (malformed: JsonParseException) {
+            // JsonSyntaxException means the bytes are not JSON, which points at
+            // the engine. Any other JsonParseException -- most often Gson's
+            // "Abstract classes can't be instantiated!" -- means the model class
+            // did not survive shrinking, which is an app defect. The raw message
+            // names an obfuscated class, so it is kept as the cause and not
+            // shown to the user.
+            val kind = if (malformed is JsonSyntaxException) {
+                EngineErrorKind.Unknown
+            } else {
+                EngineErrorKind.Payload
+            }
             throw EngineException(
-                kind = EngineErrorKind.Unknown,
+                kind = kind,
                 message = "the engine returned a malformed $what payload",
                 cause = malformed
             )

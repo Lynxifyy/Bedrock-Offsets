@@ -158,3 +158,58 @@ See `.openhands/memory/<date>.md` daily logs for detail. Key traps:
 Compose test manifest); goblin's `Elf::lazy_parse` leaves `section_headers` empty
 (use `parse_section_headers`); JNI symbols are
 `Java_com_chimerateam_offsetextractor_data_native_NativeLib_<method>`.
+
+## Bedrock-Offsets (Lynxifyy/Bedrock-Offsets) — Android + Rust offset extractor
+- **Layout**: Kotlin/Compose UI in `app/src/main/java/com/chimerateam/offsetextractor/`,
+  Rust engine crate `offset_core` in `app/src/main/rust/offset_core/`, Python build
+  automation in `scripts/` (`build_rust.py`, `generate_patterns.py`, `verify_offsets.py`,
+  `verify_release.py`, `verify_version.py`, `changelog.py`).
+- **CI (`android.yml`)** has three jobs: `test` (runs `./gradlew test`, ktlintCheck,
+  lintDebug, assembleRelease, verify_release.py), `tooling` (python unittest), `rust`
+  (fmt/clippy/test/doc/audit). **The `test` job needs the FULL Rust cross toolchain**:
+  Gradle `preBuild` depends on the `buildRustEngine` Exec task, so `./gradlew test` alone
+  fails with `error: no such command: ndk` unless cargo-ndk + NDK are installed. Fixed in
+  73c8522 by (a) making `build_rust.py` treat a missing cargo-ndk as `ToolchainMissing`
+  (warn + exit 0, not a build failure) and (b) installing the toolchain in the test job.
+- **Release**: tag `v*` triggers `release.yml` (cross-compile, `verify_version.py` guard,
+  assembleRelease, verify_release.py, changelog.py, `gh release create`). Version pinned in
+  `app/build.gradle.kts` (`versionCode = 1`, `versionName = "1.0.0"`); the tag must match or
+  `verify_version.py` fails. Release signing is optional: with no keystore secrets the
+  release variant now reuses the **debug** signing config (commit d4fb36b) — without that
+  explicit assignment Gradle emits `app-release-unsigned.apk` which will not install.
+- **Verify release locally**: `python3 scripts/verify_release.py <apk>` checks size < 20 MiB,
+  `lib/arm64-v8a/liboffset_core.so` present, no `Log.d/Log.v`, no `INTERNET` permission.
+- **Build/test**: `source /workspace/tools/env.sh` then `./gradlew testDebugUnitTest
+  ktlintCheck lintDebug` (~161 Kotlin tests). Rust: `cd app/src/main/rust/offset_core &&
+  cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test
+  --all-targets` (133 tests). Python: `python3 -m unittest discover -s scripts/tests -t .`
+  (73 tests).
+- **ktlint** `12.1.1` + `.editorconfig` (`ktlint_code_style = android_studio`). ktlintCheck is
+  a CI gate.
+- **Env quirk**: this container's `$ANDROID_HOME` and tools live under `/workspace`
+  (`/workspace/tools/jdk-21.0.13+9`, `/workspace/tools/cargo/bin`, `/workspace/android-sdk`);
+  `source /workspace/tools/env.sh` sets them. jniLibs is gitignored, so the `.so` is built
+  fresh on every checkout.
+
+### Gson + R8 release shrink trap (fixed)
+- **Symptom**: release-only failure `JsonIOException: Abstract classes can't be
+  instantiated! ... Class name: com.chimerateam.offsetextractor.data.native.e`.
+  The one-letter name is the obfuscated `ExtractionPayload`.
+- **Cause**: `app/proguard-rules.pro` kept `...offsetextractor.model.**` and
+  `...data.model.**` — **neither package exists**. The real Gson models live in
+  `data/native`, `data/export`, `data/cache`, `data/patterns`, `ui/state`, so R8
+  stripped their constructors and marked them abstract.
+- **Fix**: keep rules for those five packages (`<init>(...); <fields>;`) plus
+  `-keepattributes Signature` (else `List<PatternHit>` arrives as raw `List`).
+- **Guard**: `scripts/verify_release.py` `check_gson_models` parses every
+  `classes*.dex` with the pure-Python reader `scripts/dex.py` and fails if any
+  class in `GSON_MODEL_CLASSES` is missing, abstract, or constructor-less. A
+  `ProguardRuleTests` in `scripts/tests/test_verify_release.py` fails if the
+  rules and that list drift apart, or if the dead package names return.
+- **Error path**: `EnginePayloads.decode` maps a non-syntax `JsonParseException`
+  to `EngineErrorKind.Payload`; `ErrorMapper` renders a clean message instead of
+  leaking the obfuscated class name. `ResultCache.load` catches `JsonParseException`.
+- **Verify locally**: build `assembleRelease` then `python3
+  scripts/verify_release.py` should print `Gson models: 31 models instantiable`.
+  CI uploads `app/build/outputs/mapping/release/` as the `r8-mapping` artefact.
+

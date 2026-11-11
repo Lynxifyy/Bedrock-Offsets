@@ -121,6 +121,11 @@ object ErrorMapper {
                 hint = "Check patterns.json for malformed wildcard syntax."
             )
 
+            EngineErrorKind.Payload -> UserFacingError(
+                message = "The engine's response could not be read.",
+                hint = "This is a release-build configuration problem; please report it."
+            )
+
             EngineErrorKind.Cancelled -> UserFacingError(
                 message = "The scan was cancelled.",
                 hint = null

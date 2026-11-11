@@ -20,6 +20,7 @@ text you see already names the cause:
 | "A required section is missing" | `MissingSection` | `.text` (or a section RTTI needs) is absent, which usually means a corrupted or heavily stripped file. |
 | "A signature pattern could not be compiled" | `InvalidPattern` | `patterns.json` has malformed wildcard syntax. |
 | "The scan was cancelled." | `Cancelled` | The user cancelled. Not an error. |
+| "The engine's response could not be read." | `Payload` | A JSON payload could not be turned into a model. Almost always a release build that shrank a model class away; see below. |
 
 If a message is not in that table, the failure came from somewhere else and the
 generic branch produced it; the original `Throwable` message is included.
@@ -150,6 +151,63 @@ deleted on clear, which can take a moment for a large library because the
 overwrite is streamed. That is the cost of not leaving a copy of the APK
 readable in free space. Turn on "Force rescan" only if you need to bypass the
 cached result, not to free space.
+
+## A release build fails with "Abstract classes can't be instantiated!"
+
+This only happens in a **release** build, never in debug, and it is the app's
+own defect rather than a problem with the APK.
+
+Gson builds the engine's payload models by reflection: it calls a constructor
+and assigns fields by name. R8 cannot see those reflective calls, so unless a
+keep rule names the model it strips the constructor and marks the class
+abstract. The first payload the app then parses fails with Gson's
+
+```
+JsonIOException: Abstract classes can't be instantiated! Adjust the R8 profile
+Class name: com.chimerateam.offsetextractor.data.native.e
+```
+
+The single-letter class name is the giveaway: `e` is what
+`ExtractionPayload` was renamed to. The UI shows the message from the
+`Payload` row above and keeps the raw text out of sight, because the obfuscated
+name is meaningless to a user.
+
+### Confirm it
+
+```bash
+python3 scripts/verify_release.py app/build/outputs/apk/release/app-release.apk
+```
+
+The `Gson models` line lists any model that was shrunk away, marked abstract, or
+left without a constructor. When it passes it reads
+`Gson models: N models instantiable`.
+
+### Fix it
+
+The models live in five packages, and `app/proguard-rules.pro` keeps all of
+them:
+
+```proguard
+-keep class com.chimerateam.offsetextractor.data.native.**   { <init>(...); <fields>; }
+-keep class com.chimerateam.offsetextractor.data.export.**   { <init>(...); <fields>; }
+-keep class com.chimerateam.offsetextractor.data.cache.**    { <init>(...); <fields>; }
+-keep class com.chimerateam.offsetextractor.data.patterns.** { <init>(...); <fields>; }
+-keep class com.chimerateam.offsetextractor.ui.state.**      { <init>(...); <fields>; }
+```
+
+If a **new** package gains a Gson model, add its keep rule **and** the class to
+`GSON_MODEL_CLASSES` in `scripts/verify_release.py`. A test in
+`scripts/tests/test_verify_release.py` fails if the two drift apart, so the
+guard cannot silently lose coverage.
+
+`-keepattributes Signature` matters just as much: without it `List<PatternHit>`
+arrives as a raw `List` and Gson mis-types the result instead of throwing.
+
+### The blunt fallback
+
+`-dontshrink` disables shrinking entirely and would hide the problem, at the
+cost of the whole point of R8. It is not used here. If the models ever need it,
+prefer widening the keep rules, which the verifier can still check.
 
 ## Still stuck
 
