@@ -90,6 +90,28 @@ impl MappedLibrary {
         &self.map
     }
 
+    /// Advises the kernel that the mapped file's pages may be reclaimed.
+    ///
+    /// Scanning touches every page of `.text`, so the resident set climbs to the
+    /// size of that section even though nothing is copied. Between phases the
+    /// pages are no longer needed: the file is on disk, so dropping them costs
+    /// only a re-read if a later phase touches them again. This is what keeps a
+    /// 342 MB library from holding hundreds of megabytes resident for the whole
+    /// scan.
+    ///
+    /// The advice is best-effort; a kernel that refuses it leaves the mapping
+    /// intact, so a failure is ignored rather than propagated.
+    pub fn advise_pages_droppable(&self) {
+        // SAFETY: `self.map` is a live, page-aligned mapping for its whole
+        // length, and `MADV_DONTNEED` on a read-only mapping only tells the
+        // kernel it may discard clean pages. It never changes the file and never
+        // invalidates the mapping.
+        unsafe {
+            let address = self.map.as_ptr() as *mut libc::c_void;
+            libc::madvise(address, self.map.len(), libc::MADV_DONTNEED);
+        }
+    }
+
     /// Returns the path the library was mapped from.
     pub fn path(&self) -> &Path {
         &self.path
@@ -131,6 +153,49 @@ impl MappedLibrary {
             &self.sha256,
             self.size,
         )
+    }
+}
+
+impl crate::scanner::PageReleaser for MappedLibrary {
+    /// Offers the byte range `start..end` of the file for reclamation.
+    ///
+    /// The range is expanded to page boundaries, because `madvise` requires a
+    /// page-aligned address and length. Expanding is safe: the extra bytes are
+    /// clean file-backed pages that will simply be re-read if they are touched
+    /// again.
+    fn release(&self, start: usize, end: usize) {
+        let page = page_size();
+        if page == 0 || end <= start {
+            return;
+        }
+        let length = self.map.len();
+        if start >= length {
+            return;
+        }
+        let aligned_start = start - (start % page);
+        let aligned_end = end.min(length).div_ceil(page) * page;
+        let span = aligned_end.saturating_sub(aligned_start);
+        if span == 0 {
+            return;
+        }
+        // SAFETY: the range lies inside the live mapping, is page-aligned, and
+        // `MADV_DONTNEED` on a read-only mapping only allows the kernel to drop
+        // clean pages. The file is unchanged and the mapping stays valid.
+        unsafe {
+            let address = self.map.as_ptr().add(aligned_start) as *mut libc::c_void;
+            libc::madvise(address, span, libc::MADV_DONTNEED);
+        }
+    }
+}
+
+/// The system page size, or 0 when it cannot be determined.
+fn page_size() -> usize {
+    // SAFETY: `sysconf` is always safe to call and returns a `long`.
+    let value = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if value <= 0 {
+        0
+    } else {
+        value as usize
     }
 }
 

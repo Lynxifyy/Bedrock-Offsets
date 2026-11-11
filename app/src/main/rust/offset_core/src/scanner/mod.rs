@@ -27,7 +27,7 @@ use crate::prologue::PrologueKind;
 use crate::verify::VerificationStatus;
 
 pub use chunk::{chunk_ranges, worker_count, CHUNK_BYTES, CHUNK_OVERLAP_BYTES};
-pub use matcher::{scan_section, scan_section_with_progress};
+pub use matcher::{scan_section, scan_section_releasing_pages, scan_section_with_progress};
 pub use verifier::{verify_prologues, verify_prologues_with_progress};
 
 /// Fixtures shared by the module tests.
@@ -70,6 +70,34 @@ pub(crate) mod test_support {
                 .lock()
                 .expect("sink lock")
                 .push((percent, message.to_string()));
+        }
+    }
+
+    /// Records every range offered for reclamation.
+    pub(crate) struct RecordingReleaser {
+        ranges: std::sync::Mutex<Vec<(usize, usize)>>,
+    }
+
+    impl RecordingReleaser {
+        /// An empty recorder.
+        pub(crate) fn new() -> Self {
+            Self {
+                ranges: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        /// Everything recorded so far, in order.
+        pub(crate) fn ranges(&self) -> Vec<(usize, usize)> {
+            self.ranges.lock().expect("releaser lock").clone()
+        }
+    }
+
+    impl crate::scanner::PageReleaser for RecordingReleaser {
+        fn release(&self, start: usize, end: usize) {
+            self.ranges
+                .lock()
+                .expect("releaser lock")
+                .push((start, end));
         }
     }
 }
@@ -163,6 +191,22 @@ pub trait ProgressSink {
     /// @param percent completion between 0 and 100.
     /// @param message short description of the current step.
     fn report(&self, percent: u32, message: &str);
+}
+
+/// Tells the kernel that a byte range of the mapping is no longer needed.
+///
+/// Scanning faults in every page it reads, so the resident set climbs to the
+/// size of `.text` even though nothing is copied. Once a wave of chunks has been
+/// scanned its pages are dead weight: the file is still on disk, so dropping
+/// them only costs a re-read if a later phase touches the range again. Releasing
+/// them wave by wave keeps the peak close to one wave rather than the whole
+/// section.
+///
+/// The hook is passed in rather than reaching for the mapping so the scanner
+/// stays independent of how the image was obtained.
+pub trait PageReleaser {
+    /// Offers the range `start..end` for reclamation. Best-effort.
+    fn release(&self, start: usize, end: usize);
 }
 
 /// Percent of the scan budget spent matching patterns; the rest is verification.

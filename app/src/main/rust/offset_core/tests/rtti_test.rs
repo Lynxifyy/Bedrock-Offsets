@@ -293,6 +293,93 @@ fn image_with_zeroed_relocated_slots() -> Vec<u8> {
     build_image(&sections)
 }
 
+/// Builds a library whose `.data.rel.ro` is full of relocated function
+/// pointers, the way a real polymorphic library looks.
+///
+/// Only the first slot pair is a real vtable. Every other relocated slot points
+/// into executable code, which is what a vtable's function pointers do. A
+/// resolver that treats any relocated slot as a `type_info` candidate will
+/// collect one candidate per function pointer, which is millions on a real
+/// library.
+fn image_with_many_function_pointers(slots: usize) -> Vec<u8> {
+    let mut rodata = Vec::new();
+    let name_offset = rodata.len();
+    rodata.extend_from_slice(b"14ClientInstance\0");
+    let name_address = RODATA_ADDRESS + name_offset as u64;
+
+    // `.data.rel.ro`: slot 0 is offset-to-top, slot 1 is the real type_info
+    // pointer, and the remaining slots are relocated function pointers.
+    let mut data = vec![0u8; (slots + 2) * 8 + 0x100];
+    data[8..16].copy_from_slice(&TYPE_INFO_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET..TYPE_INFO_OFFSET + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET + 8..TYPE_INFO_OFFSET + 16].copy_from_slice(&name_address.to_le_bytes());
+
+    let mut rela = Vec::new();
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 8, 257, TYPE_INFO_ADDRESS));
+    rela.extend_from_slice(&relocation(TYPE_INFO_ADDRESS + 8, 257, name_address));
+    // Every other slot points into `.text`, like a virtual function pointer. The
+    // two slots that make up the `type_info` object are left alone.
+    for index in 2..slots + 2 {
+        let slot_offset = index * 8;
+        if slot_offset == TYPE_INFO_OFFSET || slot_offset == TYPE_INFO_OFFSET + 8 {
+            continue;
+        }
+        let slot = DATA_REL_RO_ADDRESS + slot_offset as u64;
+        rela.extend_from_slice(&relocation(slot, 257, TEXT_ADDRESS + 0x40));
+    }
+
+    // `.text` is dense non-zero code, so a "name" read from it is never zero.
+    // It stays below `.rodata` so the address ranges do not overlap.
+    let sections = vec![
+        SectionPlan {
+            name: ".text",
+            kind: SHT_PROGBITS,
+            address: TEXT_ADDRESS,
+            flags: SHF_ALLOC | SHF_EXECINSTR,
+            body: vec![0x90u8; 0x100],
+        },
+        SectionPlan {
+            name: ".rodata",
+            kind: SHT_PROGBITS,
+            address: RODATA_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rodata,
+        },
+        SectionPlan {
+            name: ".data.rel.ro",
+            kind: SHT_PROGBITS,
+            address: DATA_REL_RO_ADDRESS,
+            flags: SHF_ALLOC | SHF_WRITE,
+            body: data,
+        },
+        SectionPlan {
+            name: ".rela.dyn",
+            kind: SHT_RELA,
+            address: RELA_DYN_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rela,
+        },
+    ];
+    build_image(&sections)
+}
+
+#[test]
+fn function_pointers_are_not_mistaken_for_type_info_candidates() {
+    // A vtable's function pointers are relocated, and they point into `.text`.
+    // A `type_info` object never does: it lives in `.data.rel.ro`. Collecting a
+    // candidate per relocated slot is what makes a real library exhaust memory.
+    let image = image_with_many_function_pointers(4096);
+    let map = resolve_vtables(&image).expect("resolve vtables");
+
+    assert!(
+        map.type_info_candidates <= 8,
+        "only the real vtable should be a candidate, got {}",
+        map.type_info_candidates
+    );
+    assert_eq!(map.len(), 1, "{map:#?}");
+    assert!(map.get("ClientInstance").is_some());
+}
+
 #[test]
 fn resolves_the_vtable_of_a_polymorphic_class() {
     let image = image_with_client_instance();

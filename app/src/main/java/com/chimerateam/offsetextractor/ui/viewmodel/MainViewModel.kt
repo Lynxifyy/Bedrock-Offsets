@@ -640,6 +640,9 @@ class MainViewModel(
     private suspend fun resolveVtables(
         extracted: com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
     ): VtableMap = try {
+        // Logged before the call so a process death is pinned to this phase in
+        // the live log rather than inferred from where the log stops.
+        emit(Logs.info(TAG_RUST, "Resolving RTTI vtables..."))
         val map = engine.resolveVtables(extracted)
         if (map.isEmpty) {
             emit(Logs.info(TAG_RUST, "No RTTI vtables present in this library."))

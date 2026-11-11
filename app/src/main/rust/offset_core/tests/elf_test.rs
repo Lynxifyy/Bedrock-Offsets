@@ -159,6 +159,54 @@ fn maps_the_cross_compiled_engine_when_it_is_present() {
     );
 }
 
+/// Reads this process's resident set size in bytes from `/proc/self/status`.
+fn resident_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            let value: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(value * 1024);
+        }
+    }
+    None
+}
+
+#[test]
+fn releasing_pages_drops_the_resident_set_for_a_mapped_file() {
+    // Scanning faults in every page of the mapping. The engine promises the
+    // resident set does not track the file size, and that promise rests on the
+    // releaser actually working, so it is measured here rather than assumed.
+    let size = 64 * 1024 * 1024;
+    let payload = vec![0x5au8; size];
+    let path = temp_file("resident", &payload);
+    let library = MappedLibrary::open(&path, "resident".to_string()).expect("map");
+
+    // Touch every page so the whole file is resident.
+    let mut sum = 0u64;
+    for page in library.bytes().chunks(4096) {
+        sum = sum.wrapping_add(u64::from(page[0]));
+    }
+    assert_eq!(sum, 0x5a * (size as u64 / 4096));
+
+    let before = resident_bytes().expect("VmRSS");
+    assert!(
+        before >= size as u64,
+        "the mapping should be resident after touching it: {before} bytes"
+    );
+
+    library.advise_pages_droppable();
+
+    let after = resident_bytes().expect("VmRSS");
+    assert!(
+        after + size as u64 / 2 < before,
+        "the releaser must drop the touched pages: {before} -> {after} bytes"
+    );
+
+    // The mapping stays readable; a re-read just faults the page back in.
+    assert_eq!(library.bytes()[0], 0x5a);
+    std::fs::remove_file(&path).ok();
+}
+
 #[test]
 fn metadata_helper_matches_the_mapped_result() {
     let bytes = aarch64_header(0x2000);

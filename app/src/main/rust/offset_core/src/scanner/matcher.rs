@@ -13,7 +13,7 @@ use crate::verify::VerificationStatus;
 
 use super::chunk::{chunk_ranges, worker_count};
 use super::{
-    report, PatternHit, ProgressSink, ScanControl, ScanOutcome, MATCH_PERCENT,
+    report, PageReleaser, PatternHit, ProgressSink, ScanControl, ScanOutcome, MATCH_PERCENT,
     MAX_HITS_PER_PATTERN, MAX_HITS_TOTAL, PROGRESS_STEPS,
 };
 
@@ -47,6 +47,27 @@ pub fn scan_section_with_progress(
     set: &PatternSet,
     control: &ScanControl,
     sink: Option<&dyn ProgressSink>,
+) -> CoreResult<ScanOutcome> {
+    scan_section_releasing_pages(map, image, set, control, sink, None)
+}
+
+/// Scans the `.text` section, offering each scanned wave for reclamation.
+///
+/// Identical to [`scan_section_with_progress`], but each wave of chunks is
+/// offered to `releaser` once it has been scanned. A caller that mapped the
+/// image from a file can use this to drop the pages behind the wave, which keeps
+/// the resident set near one wave instead of the whole section.
+///
+/// # Errors
+///
+/// Same as [`scan_section`].
+pub fn scan_section_releasing_pages(
+    map: &SectionMap,
+    image: &[u8],
+    set: &PatternSet,
+    control: &ScanControl,
+    sink: Option<&dyn ProgressSink>,
+    releaser: Option<&dyn PageReleaser>,
 ) -> CoreResult<ScanOutcome> {
     let section = &map.text;
     let bytes = map.bytes_of(&section.name, image);
@@ -92,6 +113,17 @@ pub fn scan_section_with_progress(
             })
             .collect();
         per_chunk.append(&mut scanned);
+
+        // The wave has been read into `per_chunk`; its pages are no longer
+        // needed, so offer them for reclamation before the next wave faults in
+        // more. The section body starts at `section.offset` inside the image.
+        if let Some(releaser) = releaser {
+            if let (Some(first), Some(last)) = (batch.first(), batch.last()) {
+                let start = section.offset as usize + first.start;
+                let end = section.offset as usize + last.end.min(bytes.len());
+                releaser.release(start, end);
+            }
+        }
 
         done += batch.len();
         let percent = ((done as u64 * u64::from(MATCH_PERCENT)) / ranges.len() as u64) as u32;
@@ -165,7 +197,7 @@ pub fn scan_section_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::test_support::{set_of, RecordingSink};
+    use crate::scanner::test_support::{set_of, RecordingReleaser, RecordingSink};
     use crate::scanner::{verify_prologues_with_progress, CHUNK_BYTES};
 
     #[test]
@@ -360,6 +392,62 @@ mod tests {
 
         assert_eq!(outcome.hits.len(), MAX_HITS_PER_PATTERN);
         assert!(outcome.truncated, "a capped scan must say so");
+    }
+
+    #[test]
+    fn scanning_offers_each_wave_for_reclamation() {
+        // The scan must tell the caller which pages it no longer needs, or a
+        // 342 MB `.text` stays resident for the whole pass. The ranges have to
+        // ascend and cover the section, or a page would never be released.
+        let size = CHUNK_BYTES * 4;
+        let image = vec![0u8; size];
+        let section = crate::sections::SectionInfo {
+            name: ".text".to_string(),
+            kind: crate::sections::SectionKind::Text,
+            address: 0x1000,
+            size: size as u64,
+            offset: 0,
+            align: 16,
+            delta: 0x1000,
+            allocated: true,
+            executable: true,
+            writable: false,
+            occupies_file: true,
+        };
+        let map = crate::sections::SectionMap {
+            image_base: 0x1000,
+            text: section,
+            sections: Vec::new(),
+        };
+
+        let set = set_of(&[("never", "AA BB CC DD EE")]);
+        let releaser = RecordingReleaser::new();
+        let outcome = scan_section_releasing_pages(
+            &map,
+            &image,
+            &set,
+            &ScanControl::new(),
+            None,
+            Some(&releaser),
+        )
+        .expect("scan");
+
+        assert_eq!(outcome.scanned_bytes, size as u64);
+        let ranges = releaser.ranges();
+        assert!(!ranges.is_empty(), "no range was offered for reclamation");
+        assert_eq!(ranges.first().expect("first").0, 0);
+        assert_eq!(ranges.last().expect("last").1, size);
+        // Consecutive ranges may overlap by the chunk overlap, which is
+        // harmless: releasing a page twice is idempotent. They must not go
+        // backwards, and every range must be non-empty.
+        assert!(
+            ranges.iter().all(|(start, end)| end > start),
+            "a released range was empty: {ranges:?}"
+        );
+        assert!(
+            ranges.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "ranges must ascend: {ranges:?}"
+        );
     }
 
     #[test]
