@@ -51,6 +51,7 @@ data class PatternHit(
  * @property peakResidentBytes peak resident set after the scan, when reported.
  * @property discarded candidates the prologue check threw away.
  * @property verified whether the prologue check was applied.
+ * @property truncated whether the hit list was capped by the engine.
  * @property verification symbol cross-check totals, when the check has run.
  */
 data class ScanOutcome(
@@ -62,6 +63,7 @@ data class ScanOutcome(
     @SerializedName("peak_resident_bytes") val peakResidentBytes: Long? = null,
     val discarded: Int = 0,
     val verified: Boolean = false,
+    val truncated: Boolean = false,
     val verification: VerificationSummary? = null
 ) {
     /** Number of hits that came from [name]. */
@@ -78,5 +80,6 @@ internal data class ScanOutcomePayload(
     @SerializedName("peak_resident_bytes") val peakResidentBytes: Long?,
     val discarded: Int?,
     val verified: Boolean?,
+    val truncated: Boolean?,
     val verification: VerificationSummary?
 )

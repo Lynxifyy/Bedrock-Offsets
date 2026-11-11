@@ -195,6 +195,7 @@ object EnginePayloads {
             peakResidentBytes = payload.peakResidentBytes,
             discarded = payload.discarded ?: 0,
             verified = payload.verified ?: false,
+            truncated = payload.truncated ?: false,
             verification = payload.verification
         )
     }

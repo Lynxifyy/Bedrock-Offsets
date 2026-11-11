@@ -104,6 +104,44 @@ class EnginePayloadsWireTest {
     }
 
     @Test
+    fun aNonLoadedSectionDeltaArrivesAsANegativeLong() {
+        // `.shstrtab`-style sections have address 0 but a body inside the file,
+        // so their load delta is negative. The engine serialises it as a signed
+        // value; an unsigned one above `Long.MAX_VALUE` would make Gson reject
+        // the whole section map with "malformed section map payload".
+        val json = """
+            {
+              "image_base": 4096,
+              "text": {
+                "name": ".text", "kind": "text", "address": 4096, "size": 2048,
+                "offset": 4096, "align": 16, "delta": 0, "allocated": true,
+                "executable": true, "writable": false, "occupies_file": true
+              },
+              "sections": [
+                {
+                  "name": ".text", "kind": "text", "address": 4096, "size": 2048,
+                  "offset": 4096, "align": 16, "delta": 0, "allocated": true,
+                  "executable": true, "writable": false, "occupies_file": true
+                },
+                {
+                  "name": ".shstrtab", "kind": "other", "address": 0, "size": 64,
+                  "offset": 20971520, "align": 1, "delta": -20971520,
+                  "allocated": false, "executable": false, "writable": false,
+                  "occupies_file": true
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val map = EnginePayloads.parseSectionMap(json)
+
+        val shstrtab = map.find(".shstrtab")
+        assertNotNull(shstrtab)
+        assertEquals(-20971520L, shstrtab!!.delta)
+        assertNull(shstrtab.addressOf(64))
+    }
+
+    @Test
     fun theScanPayloadFlattensTheOutcomeAndKeepsItsSnakeCaseNames() {
         val json = """
             {
@@ -113,6 +151,7 @@ class EnginePayloadsWireTest {
               "workers": 4,
               "discarded": 2,
               "verified": true,
+              "truncated": true,
               "hits": [
                 {
                   "name": "client_instance",
@@ -140,6 +179,7 @@ class EnginePayloadsWireTest {
         assertEquals(4, outcome.workers)
         assertEquals(2, outcome.discarded)
         assertTrue(outcome.verified)
+        assertTrue(outcome.truncated)
         assertEquals(104857600L, outcome.peakResidentBytes)
 
         val hit = outcome.hits.single()

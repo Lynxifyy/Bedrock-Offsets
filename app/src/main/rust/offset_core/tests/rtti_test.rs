@@ -238,6 +238,61 @@ fn image_with_client_instance() -> Vec<u8> {
     build_image(&sections)
 }
 
+/// Builds the same library, but with the relocated slots left at zero.
+///
+/// A RELA build stores the addend in `.rela.dyn` and leaves the slot itself
+/// zero until the loader runs, so this is what a real `.so` looks like on disk.
+/// The vtable pointers must still be found, from the relocation table alone.
+fn image_with_zeroed_relocated_slots() -> Vec<u8> {
+    let mut rodata = Vec::new();
+    let name_offset = rodata.len();
+    rodata.extend_from_slice(b"14ClientInstance\0");
+    let name_address = RODATA_ADDRESS + name_offset as u64;
+
+    let mut data = vec![0u8; TYPE_INFO_OFFSET + 16];
+    // Only the first slot (the type_info vtable pointer) keeps a value; the
+    // relocated slots -- vtable[-1], vtable[0] and type_info[1] -- stay zero.
+    data[TYPE_INFO_OFFSET..TYPE_INFO_OFFSET + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+
+    let mut rela = Vec::new();
+    // R_AARCH64_ABS64 = 257
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 8, 257, TYPE_INFO_ADDRESS));
+    rela.extend_from_slice(&relocation(TYPE_INFO_ADDRESS + 8, 257, name_address));
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 16, 257, TEXT_ADDRESS));
+
+    let sections = vec![
+        SectionPlan {
+            name: ".text",
+            kind: SHT_PROGBITS,
+            address: TEXT_ADDRESS,
+            flags: SHF_ALLOC | SHF_EXECINSTR,
+            body: vec![0u8; 64],
+        },
+        SectionPlan {
+            name: ".rodata",
+            kind: SHT_PROGBITS,
+            address: RODATA_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rodata,
+        },
+        SectionPlan {
+            name: ".data.rel.ro",
+            kind: SHT_PROGBITS,
+            address: DATA_REL_RO_ADDRESS,
+            flags: SHF_ALLOC | SHF_WRITE,
+            body: data,
+        },
+        SectionPlan {
+            name: ".rela.dyn",
+            kind: SHT_RELA,
+            address: RELA_DYN_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rela,
+        },
+    ];
+    build_image(&sections)
+}
+
 #[test]
 fn resolves_the_vtable_of_a_polymorphic_class() {
     let image = image_with_client_instance();
@@ -278,6 +333,21 @@ fn the_relocation_table_is_used_when_present() {
 
     assert_eq!(map.source, VtableSource::Relocations);
     assert!(map.relocations_examined >= 2, "{map:#?}");
+}
+
+#[test]
+fn a_rela_build_with_zeroed_slots_still_resolves_the_vtable() {
+    // The slot that holds the type_info pointer is zero on disk on a RELA
+    // build; only the relocation knows its target. Skipping zero slots before
+    // consulting the table would lose every vtable in such a library.
+    let image = image_with_zeroed_relocated_slots();
+    let map = resolve_vtables(&image).expect("resolve vtables");
+
+    assert_eq!(map.source, VtableSource::Relocations);
+    assert_eq!(map.len(), 1, "{map:#?}");
+    let entry = map.get("ClientInstance").expect("ClientInstance");
+    assert_eq!(entry.type_info_address, TYPE_INFO_ADDRESS);
+    assert_eq!(entry.vtable_address, VTABLE_ADDRESS);
 }
 
 #[test]
