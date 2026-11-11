@@ -23,6 +23,11 @@
 //! library is loaded, which is what makes the vtable address meaningful.
 //!
 //! Nothing here executes the library: the pointers are read as data.
+//!
+//! Peak memory is a first-class concern. A large Bedrock library carries
+//! millions of relocations, so the index is built straight from the mapping and
+//! keeps only the slots that land inside `.data.rel.ro`; no list of every
+//! relocation is ever materialised, and no candidate list is buffered.
 
 use std::collections::BTreeMap;
 
@@ -30,7 +35,7 @@ use goblin::elf::reloc::{R_AARCH64_ABS64, R_AARCH64_RELATIVE};
 use goblin::elf::section_header::SHT_RELA;
 use serde::Serialize;
 
-use crate::elf::parse_elf_bytes;
+use crate::elf::{parse_elf_bytes, parse_section_headers};
 use crate::error::CoreResult;
 use crate::sections::{build_section_map, DATA_REL_RO_SECTION, RELA_DYN_SECTION, RODATA_SECTION};
 
@@ -56,19 +61,34 @@ pub struct TypeVTable {
     pub name: String,
     /// The mangled name as it appears in `.rodata`.
     pub mangled: String,
-    /// Virtual address of the vtable itself.
+    /// Virtual address of the vtable base, which holds the offset-to-top value.
     ///
-    /// This is the slot *before* the `type_info` pointer, which holds the
-    /// offset-to-top value. The first virtual function pointer sits
-    /// `VTABLE_PREFIX_SLOTS` slots further in. The address is kept at the vtable
-    /// base because that is the value a loader uses to identify the class.
+    /// This is the address the ABI points at when a class is used as a primary
+    /// base: `vtable[-2]` is the offset-to-top and `vtable[-1]` the `type_info`
+    /// pointer, so the first virtual function pointer is
+    /// [`VTABLE_PREFIX_SLOTS`] slots further in.
+    ///
+    /// The address an *object* stores is [`Self::object_vtable_address`], one
+    /// slot later; that is the value a reader of an object should use.
     pub vtable_address: u64,
     /// `vtable_address` rendered as `0x`-prefixed hex.
     pub vtable_hex: String,
-    /// Offset of the vtable from the image base, which survives rebasing.
+    /// Offset of the vtable base from the image base, which survives rebasing.
     pub vtable_offset: u64,
     /// Virtual address of the `type_info` object.
     pub type_info_address: u64,
+    /// Virtual address of the first virtual function pointer.
+    pub first_virtual_address: u64,
+}
+
+impl TypeVTable {
+    /// The address an object of this class stores in its vptr field.
+    ///
+    /// That is the vtable base plus one slot: the `type_info` pointer is
+    /// skipped, because a vptr must not be mistaken for the `type_info` slot.
+    pub fn object_vtable_address(&self) -> u64 {
+        self.vtable_address.saturating_add(SLOT_BYTES)
+    }
 }
 
 /// Every vtable the engine could resolve.
@@ -76,7 +96,10 @@ pub struct TypeVTable {
 pub struct VtableMap {
     /// How the vtables were found.
     pub source: VtableSource,
-    /// Number of `type_info` name pointers discovered.
+    /// Number of vtables accepted.
+    ///
+    /// Named for the payload field it fills; it counts accepted vtables now, not
+    /// a buffered candidate list, because no candidate list exists any more.
     pub type_info_candidates: usize,
     /// Number of relocations examined.
     pub relocations_examined: usize,
@@ -112,6 +135,26 @@ pub enum VtableSource {
     DirectScan,
 }
 
+/// Largest number of vtables reported.
+///
+/// A hostile or unusual library must not be able to make the result grow
+/// without bound. 100,000 is far above any real Bedrock class count.
+pub const MAX_VTABLES: usize = 100_000;
+
+// The cap only exists to stop a crafted library growing the result without
+// bound, so it must stay far above any real class count.
+const _: () = assert!(MAX_VTABLES >= 10_000);
+
+/// Largest `|offset-to-top|` accepted for `vtable[-2]`.
+///
+/// A primary vtable stores 0 and a secondary (multiple-inheritance) vtable
+/// stores a small negative adjustment. Anything larger is ordinary data that
+/// happens to precede a `type_info`-like pointer, not a vtable.
+const MAX_OFFSET_TO_TOP: u64 = 1 << 20;
+
+/// Slots between progress notes while walking `.data.rel.ro`.
+const NOTE_EVERY_SLOTS: usize = 1 << 20;
+
 /// Resolves every RTTI vtable it can find in a library.
 ///
 /// # Errors
@@ -120,127 +163,193 @@ pub enum VtableSource {
 /// parsed, and [`crate::error::CoreError::MissingSection`] when neither
 /// `.data.rel.ro` nor `.rodata` is usable.
 pub fn resolve_vtables(image: &[u8]) -> CoreResult<VtableMap> {
+    resolve_vtables_with_progress(image, &mut |_| {})
+}
+
+/// Resolves vtables, reporting each phase to `note` as it starts.
+///
+/// The callback lets the caller persist a breadcrumb. A process killed mid
+/// resolve cannot log, but the last phase written survives it and can be
+/// reported on the next launch, which an in-process log cannot do.
+///
+/// # Errors
+///
+/// Same as [`resolve_vtables`].
+pub fn resolve_vtables_with_progress(
+    image: &[u8],
+    note: &mut dyn FnMut(&str),
+) -> CoreResult<VtableMap> {
     // Parsing validates the header and the machine type before any pointer is
     // followed.
+    note("rtti: parsing ELF header");
     parse_elf_bytes(image)?;
+    note("rtti: building section map");
     let map = build_section_map(image)?;
 
-    let relocations = read_relocations(image)?;
-    let reloc_pointer = RelocationIndex::build(&relocations);
-    // The flat list is no longer needed; dropping it before the scan keeps only
-    // the sorted index resident.
-    let relocations_examined = reloc_pointer.len();
-    let source = if reloc_pointer.is_empty() {
+    // Only relocations that land inside `.data.rel.ro` can describe a vtable
+    // slot, so only those are kept, sixteen bytes each. Building the index
+    // straight from the mapping means no list of every relocation ever exists,
+    // which is what keeps the transient peak off the resident set.
+    let windows: Vec<(u64, u64)> = map
+        .sections
+        .iter()
+        .filter(|section| section.name == DATA_REL_RO_SECTION)
+        .map(|section| {
+            (
+                section.address,
+                section.address.saturating_add(section.size),
+            )
+        })
+        .collect();
+    note("rtti: indexing relocations");
+    let (relocations, examined) = RelocationIndex::from_image(image, &windows)?;
+    note(&format!(
+        "rtti: {examined} relocation records read, {} kept",
+        relocations.entries.len()
+    ));
+
+    let source = if examined == 0 {
         VtableSource::DirectScan
     } else {
         VtableSource::Relocations
     };
-    drop(relocations);
 
-    let candidates = find_type_info_pointers(&map, image, &reloc_pointer);
-
-    let mut entries = BTreeMap::new();
-    for candidate in &candidates {
-        let Some((class_name, mangled)) = read_type_name(&map, image, candidate.name_address)
-        else {
-            continue;
-        };
-        // The type_info pointer occupies `vtable[-1]`, so the vtable starts one
-        // slot before the slot that holds it.
-        let Some(vtable_address) = candidate.slot_address.checked_sub(SLOT_BYTES) else {
-            continue;
-        };
-        entries.entry(class_name.clone()).or_insert(TypeVTable {
-            name: class_name,
-            mangled,
-            vtable_address,
-            vtable_hex: format!("0x{vtable_address:x}"),
-            vtable_offset: vtable_address.saturating_sub(map.image_base),
-            type_info_address: candidate.type_info_address,
-        });
-    }
+    let (entries, accepted) = collect_vtables(&map, image, &relocations, note);
+    note(&format!("rtti: done, {accepted} vtables accepted"));
 
     Ok(VtableMap {
         source,
-        type_info_candidates: candidates.len(),
-        relocations_examined,
+        type_info_candidates: accepted,
+        relocations_examined: examined,
         entries,
     })
 }
 
-/// A resolved `type_info` pointer, kept only long enough to read its name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TypeInfoCandidate {
-    /// Virtual address of the slot holding the `type_info` pointer.
-    ///
-    /// This is `vtable[-1]`, so the vtable itself begins one slot earlier.
-    slot_address: u64,
-    /// Virtual address of the `type_info` object.
-    type_info_address: u64,
-    /// Virtual address of the name string the `type_info` points at.
-    name_address: u64,
-}
-
-/// Finds every pointer in `.data.rel.ro` that could be a `type_info` pointer.
+/// Walks `.data.rel.ro` and resolves every slot that looks like `vtable[-1]`.
 ///
-/// A `type_info` pointer is an eight-byte value that relocation information
-/// places inside a non-executable, allocated section, and whose target is a
-/// second pointer into read-only data. That pairing is the signature of a
-/// vtable prefix: `typeinfo` pointer followed by the start of the function
-/// pointer table.
+/// A slot is accepted only when all of the following hold:
 ///
-/// Function pointers are relocated too, but they point into executable code, so
-/// requiring the target to be non-executable is what keeps a library with
-/// millions of virtual functions from producing millions of candidates.
-fn find_type_info_pointers(
+/// * it points at a `type_info` object inside `.data.rel.ro`;
+/// * the slot before it (`vtable[-2]`) is a plausible offset-to-top;
+/// * the slot after it (`vtable[0]`) points into executable code;
+/// * the object's name pointer lands on a valid mangled name.
+///
+/// The cheap tests run first, and accepted vtables are inserted as they are
+/// found, so nothing is buffered and the resolver's own footprint is the result
+/// plus the index.
+///
+/// # Returns
+///
+/// The vtables keyed by class name, and how many slots were accepted.
+fn collect_vtables(
     map: &crate::sections::SectionMap,
     image: &[u8],
-    relocation_targets: &RelocationIndex,
-) -> Vec<TypeInfoCandidate> {
-    let mut candidates = Vec::new();
-    let sections: Vec<_> = map
+    relocations: &RelocationIndex,
+    note: &mut dyn FnMut(&str),
+) -> (BTreeMap<String, TypeVTable>, usize) {
+    let mut entries: BTreeMap<String, TypeVTable> = BTreeMap::new();
+    let mut accepted = 0usize;
+    let slot = SLOT_BYTES as usize;
+
+    for section in map
         .sections
         .iter()
         .filter(|section| section.name == DATA_REL_RO_SECTION)
-        .collect();
-    if sections.is_empty() {
-        return candidates;
-    }
-
-    for section in sections {
+    {
         let bytes = map.bytes_of(&section.name, image);
-        let slot = SLOT_BYTES as usize;
-        if bytes.len() < slot {
-            continue;
-        }
-        for offset in (0..=bytes.len() - slot).step_by(slot) {
-            let raw = read_u64(bytes, offset);
-            let slot_address = section.address.saturating_add(offset as u64);
-            // The relocation table wins when it knows the slot. With RELA the
-            // in-place value is usually zero, so a zero slot must not be skipped
-            // before the table has been consulted.
-            let relocated = relocation_targets.target_of(slot_address);
-            let type_info_address = relocated.unwrap_or(raw);
-            if type_info_address == 0 {
+        let slots = bytes.len() / slot;
+        // Slot 0 has no predecessor and the last slot has no successor.
+        for index in 1..slots.saturating_sub(1) {
+            if index % NOTE_EVERY_SLOTS == 0 {
+                note(&format!("rtti: scanning slot {index} of {slots}"));
+            }
+            let offset = index * slot;
+            let type_info_address = pointer_at(relocations, bytes, section.address, offset);
+            if type_info_address == 0 || !in_data_rel_ro(map, type_info_address) {
+                continue;
+            }
+
+            // `vtable[-2]` is the offset-to-top: 0 for a primary vtable, a small
+            // negative adjustment for a secondary one.
+            let offset_to_top = (read_u64(bytes, offset - slot) as i64).unsigned_abs();
+            if offset_to_top > MAX_OFFSET_TO_TOP {
+                continue;
+            }
+
+            let first_virtual = pointer_at(relocations, bytes, section.address, offset + slot);
+            if !in_executable(map, first_virtual) {
                 continue;
             }
 
             let Some(name_address) =
-                type_info_name_address(map, image, type_info_address, relocation_targets)
+                type_info_name_address(map, image, type_info_address, relocations)
             else {
                 continue;
             };
-            candidates.push(TypeInfoCandidate {
-                slot_address,
+            let Some((class_name, mangled)) = read_type_name(map, image, name_address) else {
+                continue;
+            };
+
+            accepted += 1;
+            // The type_info pointer sits in `vtable[-1]`, so the vtable base is
+            // one slot before the slot that holds it.
+            let slot_address = section.address.saturating_add(offset as u64);
+            let Some(vtable_address) = slot_address.checked_sub(SLOT_BYTES) else {
+                continue;
+            };
+            if entries.len() >= MAX_VTABLES && !entries.contains_key(&class_name) {
+                continue;
+            }
+            entries.entry(class_name.clone()).or_insert(TypeVTable {
+                name: class_name,
+                mangled,
+                vtable_address,
+                vtable_hex: format!("0x{vtable_address:x}"),
+                vtable_offset: vtable_address.saturating_sub(map.image_base),
                 type_info_address,
-                name_address,
+                first_virtual_address: first_virtual,
             });
         }
     }
 
-    candidates.sort_by_key(|candidate| candidate.type_info_address);
-    candidates.dedup();
-    candidates
+    (entries, accepted)
+}
+
+/// Reads the pointer stored at `offset` of a section, preferring the relocation.
+///
+/// With RELA the in-place value is usually zero and the real target lives only
+/// in the relocation table, so the table is consulted first.
+fn pointer_at(
+    relocations: &RelocationIndex,
+    bytes: &[u8],
+    section_address: u64,
+    offset: usize,
+) -> u64 {
+    let address = section_address.saturating_add(offset as u64);
+    relocations
+        .target_of(address)
+        .unwrap_or_else(|| read_u64(bytes, offset))
+}
+
+/// Whether `address` plus a 16-byte `type_info` lies inside `.data.rel.ro`.
+fn in_data_rel_ro(map: &crate::sections::SectionMap, address: u64) -> bool {
+    map.sections.iter().any(|section| {
+        section.name == DATA_REL_RO_SECTION
+            && section.occupies_file
+            && address >= section.address
+            && address.saturating_add(16) <= section.address.saturating_add(section.size)
+    })
+}
+
+/// Whether `address` lies inside an executable, loaded section.
+fn in_executable(map: &crate::sections::SectionMap, address: u64) -> bool {
+    address != 0
+        && map.sections.iter().any(|section| {
+            section.allocated
+                && section.executable
+                && address >= section.address
+                && address < section.address.saturating_add(section.size)
+        })
 }
 
 /// Reads the name pointer out of a `type_info` object.
@@ -257,7 +366,7 @@ fn type_info_name_address(
     map: &crate::sections::SectionMap,
     image: &[u8],
     type_info_address: u64,
-    relocation_targets: &RelocationIndex,
+    relocations: &RelocationIndex,
 ) -> Option<u64> {
     let section = map.sections.iter().find(|section| {
         if !section.occupies_file || !section.allocated || section.executable {
@@ -273,7 +382,7 @@ fn type_info_name_address(
         return None;
     }
     let name_slot = type_info_address.saturating_add(8);
-    let name = relocation_targets
+    let name = relocations
         .target_of(name_slot)
         .unwrap_or_else(|| read_u64(bytes, offset + 8));
     if name == 0 {
@@ -363,9 +472,8 @@ fn is_name_byte(byte: u8) -> bool {
 
 /// One `.rela.dyn` entry, reduced to what vtable resolution needs.
 ///
-/// Only the slot address and its target are kept: the relocation kind is
-/// filtered as the entry is read, so the list holds exactly the entries the
-/// resolver will look up.
+/// Only used by the unit tests, which build an index from a hand-written list.
+#[cfg(test)]
 struct Relocation {
     /// Virtual address the relocation writes to.
     offset: u64,
@@ -375,25 +483,74 @@ struct Relocation {
     kind: u32,
 }
 
-/// A sorted slot-address-to-target index over `.rela.dyn`.
+/// Size of one `Elf64_Rela` record.
+const RELA_ENTRY_BYTES: usize = 24;
+
+/// A sorted slot-address-to-target index over the relocation sections.
 ///
-/// A large library has millions of relocations. Storing them as a `Vec` and
-/// then copying the relevant ones into a map holds every entry twice; this keeps
-/// one sorted vector and answers lookups by binary search, which is what keeps
-/// the resolver's own cost off the peak-resident figure.
+/// Sixteen bytes per kept entry and one binary search per lookup. It is built
+/// straight from the mapping, so no list of every relocation ever exists, which
+/// is what keeps a large library's resolver footprint bounded.
 struct RelocationIndex {
     entries: Vec<(u64, u64)>,
 }
 
 impl RelocationIndex {
-    /// Builds the index from a flat relocation list.
+    /// Reads every `SHT_RELA` section into an index of the slots in `windows`.
     ///
-    /// Two relocation kinds matter. `R_AARCH64_RELATIVE` means "store the
-    /// address the linker computed for this slot", which is the addend; the
-    /// loader adds the image base when it maps the library. `R_AARCH64_ABS64`
-    /// stores an absolute address, which the addend already carries. Either way
-    /// the addend is the virtual address the slot will hold. Every other kind is
-    /// dropped rather than guessed at.
+    /// `R_AARCH64_RELATIVE` means "store the address the linker computed for
+    /// this slot", which is the addend; `R_AARCH64_ABS64` stores an absolute
+    /// address carried by the addend. Every other kind is ignored. Records whose
+    /// slot is outside `windows` are counted but not kept, so the index holds
+    /// only slots that can describe a vtable.
+    ///
+    /// # Returns
+    ///
+    /// The index and the number of records examined; zero examined means the
+    /// library has no relocation table and the caller direct-scans.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::CoreError::InvalidElf`] when the section header
+    /// table is malformed.
+    fn from_image(image: &[u8], windows: &[(u64, u64)]) -> CoreResult<(Self, usize)> {
+        let headers = parse_section_headers(image)?;
+        let mut entries: Vec<(u64, u64)> = Vec::new();
+        let mut examined = 0usize;
+
+        for header in &headers {
+            if header.sh_type != SHT_RELA {
+                continue;
+            }
+            let start = header.sh_offset as usize;
+            let end = start.saturating_add(header.sh_size as usize);
+            let Some(body) = image.get(start..end) else {
+                continue;
+            };
+
+            for record in body.as_chunks::<RELA_ENTRY_BYTES>().0 {
+                examined += 1;
+                let kind = (read_u64(record, 8) & 0xffff_ffff) as u32;
+                if kind != R_AARCH64_RELATIVE && kind != R_AARCH64_ABS64 {
+                    continue;
+                }
+                let slot = read_u64(record, 0);
+                if windows
+                    .iter()
+                    .any(|(low, high)| slot >= *low && slot < *high)
+                {
+                    entries.push((slot, read_u64(record, 16)));
+                }
+            }
+        }
+
+        entries.sort_unstable();
+        entries.dedup_by_key(|entry| entry.0);
+        Ok((Self { entries }, examined))
+    }
+
+    /// Builds the index from a flat relocation list (unit tests only).
+    #[cfg(test)]
     fn build(relocations: &[Relocation]) -> Self {
         let mut entries: Vec<(u64, u64)> = relocations
             .iter()
@@ -407,11 +564,7 @@ impl RelocationIndex {
         Self { entries }
     }
 
-    /// Returns the address the slot at `slot_address` resolves to.
-    ///
-    /// # Returns
-    ///
-    /// The target, or `None` when the slot is not relocated by a supported kind.
+    /// Returns the address the slot at `slot_address` resolves to, if any.
     fn target_of(&self, slot_address: u64) -> Option<u64> {
         let index = self
             .entries
@@ -420,55 +573,11 @@ impl RelocationIndex {
         Some(self.entries[index].1)
     }
 
-    /// Number of relocations the index kept.
+    /// Number of relocations the index kept (unit tests only).
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.entries.len()
     }
-
-    /// Whether the index holds nothing, which is the signal to direct-scan.
-    fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
-
-/// Reads `.rela.dyn` into a flat list.
-///
-/// # Errors
-///
-/// Returns [`CoreError::InvalidElf`] when the section is malformed. A library
-/// with no `.rela.dyn` at all yields an empty list, which is the signal for the
-/// caller to fall back to a direct scan.
-fn read_relocations(image: &[u8]) -> CoreResult<Vec<Relocation>> {
-    let headers = crate::elf::parse_section_headers(image)?;
-    let mut relocations = Vec::new();
-
-    for header in &headers {
-        if header.sh_type != SHT_RELA {
-            continue;
-        }
-        let start = header.sh_offset as usize;
-        let end = start.saturating_add(header.sh_size as usize);
-        let Some(body) = image.get(start..end) else {
-            continue;
-        };
-
-        const ENTRY_BYTES: usize = 24;
-        let count = body.len() / ENTRY_BYTES;
-        relocations.reserve(count);
-        for index in 0..count {
-            let base = index * ENTRY_BYTES;
-            let offset = read_u64(body, base);
-            let info = read_u64(body, base + 8);
-            let addend = read_u64(body, base + 16);
-            relocations.push(Relocation {
-                offset,
-                addend,
-                kind: (info & 0xffff_ffff) as u32,
-            });
-        }
-    }
-
-    Ok(relocations)
 }
 
 /// Reads a little-endian `u64` at `offset`, or zero when it runs off the end.
@@ -556,4 +665,161 @@ mod tests {
 
     #[test]
     fn relocation_sections_are_recognised() {}
+
+    /// Builds a minimal AArch64 image with the sections the resolver needs.
+    ///
+    /// `rela` becomes the whole `.rela.dyn` body, so a test can control exactly
+    /// which records the index sees.
+    fn image_with_relocations(rela: &[u8]) -> Vec<u8> {
+        const TEXT: u64 = 0x1000;
+        const RODATA: u64 = 0x2000;
+        const DATA: u64 = 0x3000;
+        const RELA: u64 = 0x4000;
+
+        struct Plan {
+            name: &'static str,
+            kind: u32,
+            flags: u64,
+            address: u64,
+            body: Vec<u8>,
+        }
+
+        let sections = vec![
+            Plan {
+                name: ".text",
+                kind: 1,
+                flags: 0x6,
+                address: TEXT,
+                body: vec![0x90u8; 0x40],
+            },
+            Plan {
+                name: ".rodata",
+                kind: 1,
+                flags: 0x2,
+                address: RODATA,
+                body: b"14ClientInstance\0".to_vec(),
+            },
+            Plan {
+                name: ".data.rel.ro",
+                kind: 1,
+                flags: 0x3,
+                address: DATA,
+                body: vec![0u8; 0x20],
+            },
+            Plan {
+                name: ".rela.dyn",
+                kind: 4,
+                flags: 0x2,
+                address: RELA,
+                body: rela.to_vec(),
+            },
+        ];
+
+        let mut names = vec![0u8];
+        let mut name_offsets = Vec::new();
+        for section in &sections {
+            name_offsets.push(names.len() as u32);
+            names.extend_from_slice(section.name.as_bytes());
+            names.push(0);
+        }
+        let shstrtab_name = names.len() as u32;
+        names.extend_from_slice(b".shstrtab\0");
+
+        let mut cursor = 0x100usize;
+        let mut body_offsets = Vec::new();
+        for section in &sections {
+            body_offsets.push(cursor);
+            cursor += section.body.len();
+            cursor = (cursor + 7) & !7;
+        }
+        let shstrtab_offset = cursor;
+        cursor += names.len();
+        let shdr_offset = (cursor + 7) & !7;
+        let count = sections.len() + 2;
+        let total = shdr_offset + count * 64;
+
+        let mut image = vec![0u8; total];
+        image[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        image[4] = 2;
+        image[5] = 1;
+        image[6] = 1;
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&183u16.to_le_bytes());
+        image[20..24].copy_from_slice(&1u32.to_le_bytes());
+        image[40..48].copy_from_slice(&(shdr_offset as u64).to_le_bytes());
+        image[52..54].copy_from_slice(&64u16.to_le_bytes());
+        image[58..60].copy_from_slice(&64u16.to_le_bytes());
+        image[60..62].copy_from_slice(&(count as u16).to_le_bytes());
+        image[62..64].copy_from_slice(&((count - 1) as u16).to_le_bytes());
+
+        for (index, section) in sections.iter().enumerate() {
+            let start = body_offsets[index];
+            image[start..start + section.body.len()].copy_from_slice(&section.body);
+        }
+        image[shstrtab_offset..shstrtab_offset + names.len()].copy_from_slice(&names);
+
+        for (index, section) in sections.iter().enumerate() {
+            let base = shdr_offset + (index + 1) * 64;
+            image[base..base + 4].copy_from_slice(&name_offsets[index].to_le_bytes());
+            image[base + 4..base + 8].copy_from_slice(&section.kind.to_le_bytes());
+            image[base + 8..base + 16].copy_from_slice(&section.flags.to_le_bytes());
+            image[base + 16..base + 24].copy_from_slice(&section.address.to_le_bytes());
+            image[base + 24..base + 32]
+                .copy_from_slice(&(body_offsets[index] as u64).to_le_bytes());
+            image[base + 32..base + 40].copy_from_slice(&(section.body.len() as u64).to_le_bytes());
+            image[base + 48..base + 56].copy_from_slice(&8u64.to_le_bytes());
+        }
+        let base = shdr_offset + (count - 1) * 64;
+        image[base..base + 4].copy_from_slice(&shstrtab_name.to_le_bytes());
+        image[base + 4..base + 8].copy_from_slice(&3u32.to_le_bytes());
+        image[base + 24..base + 32].copy_from_slice(&(shstrtab_offset as u64).to_le_bytes());
+        image[base + 32..base + 40].copy_from_slice(&(names.len() as u64).to_le_bytes());
+        image[base + 48..base + 56].copy_from_slice(&1u64.to_le_bytes());
+        image
+    }
+
+    /// Appends one `R_AARCH64_RELATIVE` record for `slot`.
+    fn relative_record(body: &mut Vec<u8>, slot: u64, addend: u64) {
+        body.extend_from_slice(&slot.to_le_bytes());
+        body.extend_from_slice(&u64::from(R_AARCH64_RELATIVE).to_le_bytes());
+        body.extend_from_slice(&addend.to_le_bytes());
+    }
+
+    #[test]
+    fn the_index_keeps_only_slots_inside_data_rel_ro() {
+        // A real library's relocations are almost all outside `.data.rel.ro`.
+        // Retaining them is what made the resolver's transient peak hundreds of
+        // megabytes, so the index must drop them as it reads, not later.
+        let mut body = Vec::new();
+        for index in 0..50_000u64 {
+            // 0x100000 is far outside every section in the fixture.
+            relative_record(&mut body, 0x100000 + index * 8, 0x2000);
+        }
+        relative_record(&mut body, 0x3008, 0x3000);
+        relative_record(&mut body, 0x3010, 0x1000);
+
+        let image = image_with_relocations(&body);
+        let windows = vec![(0x3000u64, 0x3020u64)];
+        let (index, examined) = RelocationIndex::from_image(&image, &windows).expect("index");
+
+        assert_eq!(examined, 50_002, "every record must be counted");
+        assert_eq!(index.len(), 2, "only the in-window slots may be kept");
+    }
+
+    #[test]
+    fn unsupported_relocation_kinds_are_not_kept() {
+        let mut body = Vec::new();
+        // R_AARCH64_ABS64 is kept; a made-up kind is not.
+        relative_record(&mut body, 0x3008, 0x3000);
+        body.extend_from_slice(&0x3010u64.to_le_bytes());
+        body.extend_from_slice(&u64::from(999u32).to_le_bytes());
+        body.extend_from_slice(&0x1000u64.to_le_bytes());
+
+        let image = image_with_relocations(&body);
+        let windows = vec![(0x3000u64, 0x3020u64)];
+        let (index, examined) = RelocationIndex::from_image(&image, &windows).expect("index");
+
+        assert_eq!(examined, 2);
+        assert_eq!(index.len(), 1);
+    }
 }

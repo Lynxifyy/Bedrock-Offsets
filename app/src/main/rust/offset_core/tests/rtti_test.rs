@@ -580,7 +580,276 @@ fn every_reported_vtable_address_is_aligned_and_nonzero() {
         assert_eq!(entry.vtable_address % 8, 0, "{entry:#?}");
         assert!(entry.vtable_address < entry.type_info_address);
         assert!(entry.mangled.ends_with(&entry.name));
+        // The first virtual function pointer is a `.text` address, and the
+        // address an object stores is one slot past the vtable base.
+        assert_eq!(entry.first_virtual_address, TEXT_ADDRESS);
+        assert_eq!(entry.object_vtable_address(), entry.vtable_address + 8);
     }
+}
+
+/// Builds an image whose `.data.rel.ro` holds one slot pointing into `.text`.
+///
+/// The slot is relocated, so it is indistinguishable from a vtable prefix by
+/// relocation alone; only the "must land in `.data.rel.ro`" rule rejects it.
+fn image_with_a_text_pointing_slot() -> Vec<u8> {
+    let mut data = vec![0u8; 0x40];
+    data[8..16].copy_from_slice(&(TEXT_ADDRESS + 0x10).to_le_bytes());
+
+    let mut rela = Vec::new();
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 8, 257, TEXT_ADDRESS + 0x10));
+
+    let sections = vec![
+        SectionPlan {
+            name: ".text",
+            kind: SHT_PROGBITS,
+            address: TEXT_ADDRESS,
+            flags: SHF_ALLOC | SHF_EXECINSTR,
+            body: vec![0x90u8; 0x100],
+        },
+        SectionPlan {
+            name: ".rodata",
+            kind: SHT_PROGBITS,
+            address: RODATA_ADDRESS,
+            flags: SHF_ALLOC,
+            body: b"14ClientInstance\0".to_vec(),
+        },
+        SectionPlan {
+            name: ".data.rel.ro",
+            kind: SHT_PROGBITS,
+            address: DATA_REL_RO_ADDRESS,
+            flags: SHF_ALLOC | SHF_WRITE,
+            body: data,
+        },
+        SectionPlan {
+            name: ".rela.dyn",
+            kind: SHT_RELA,
+            address: RELA_DYN_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rela,
+        },
+    ];
+    build_image(&sections)
+}
+
+#[test]
+fn a_slot_pointing_into_text_is_not_a_type_info_pointer() {
+    // A `type_info` object lives in `.data.rel.ro`. Accepting a `.text` target
+    // is what made a real library report a candidate per virtual function.
+    let map = resolve_vtables(&image_with_a_text_pointing_slot()).expect("resolve vtables");
+
+    assert!(map.is_empty(), "{map:#?}");
+    assert_eq!(map.relocations_examined, 1);
+}
+
+#[test]
+fn an_implausible_offset_to_top_is_rejected() {
+    // `vtable[-2]` is 0 or a small negative adjustment. A large value means the
+    // slot is ordinary data that happens to precede a type_info-like pointer.
+    let mut data = vec![0u8; TYPE_INFO_OFFSET + 16];
+    data[0..8].copy_from_slice(&(1u64 << 40).to_le_bytes());
+    data[8..16].copy_from_slice(&TYPE_INFO_ADDRESS.to_le_bytes());
+    data[16..24].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET..TYPE_INFO_OFFSET + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET + 8..TYPE_INFO_OFFSET + 16]
+        .copy_from_slice(&RODATA_ADDRESS.to_le_bytes());
+
+    let sections = vec![
+        SectionPlan {
+            name: ".text",
+            kind: SHT_PROGBITS,
+            address: TEXT_ADDRESS,
+            flags: SHF_ALLOC | SHF_EXECINSTR,
+            body: vec![0x90u8; 0x100],
+        },
+        SectionPlan {
+            name: ".rodata",
+            kind: SHT_PROGBITS,
+            address: RODATA_ADDRESS,
+            flags: SHF_ALLOC,
+            body: b"14ClientInstance\0".to_vec(),
+        },
+        SectionPlan {
+            name: ".data.rel.ro",
+            kind: SHT_PROGBITS,
+            address: DATA_REL_RO_ADDRESS,
+            flags: SHF_ALLOC | SHF_WRITE,
+            body: data,
+        },
+    ];
+
+    let map = resolve_vtables(&build_image(&sections)).expect("resolve vtables");
+
+    assert!(map.is_empty(), "{map:#?}");
+}
+
+#[test]
+fn a_negative_offset_to_top_is_accepted() {
+    // A secondary vtable stores a small negative offset-to-top; it is a real
+    // vtable and must not be rejected with the implausible values.
+    let mut data = vec![0u8; TYPE_INFO_OFFSET + 16];
+    data[0..8].copy_from_slice(&(-16i64).to_le_bytes());
+    data[8..16].copy_from_slice(&TYPE_INFO_ADDRESS.to_le_bytes());
+    data[16..24].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET..TYPE_INFO_OFFSET + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET + 8..TYPE_INFO_OFFSET + 16]
+        .copy_from_slice(&RODATA_ADDRESS.to_le_bytes());
+
+    let sections = vec![
+        SectionPlan {
+            name: ".text",
+            kind: SHT_PROGBITS,
+            address: TEXT_ADDRESS,
+            flags: SHF_ALLOC | SHF_EXECINSTR,
+            body: vec![0x90u8; 0x100],
+        },
+        SectionPlan {
+            name: ".rodata",
+            kind: SHT_PROGBITS,
+            address: RODATA_ADDRESS,
+            flags: SHF_ALLOC,
+            body: b"14ClientInstance\0".to_vec(),
+        },
+        SectionPlan {
+            name: ".data.rel.ro",
+            kind: SHT_PROGBITS,
+            address: DATA_REL_RO_ADDRESS,
+            flags: SHF_ALLOC | SHF_WRITE,
+            body: data,
+        },
+    ];
+
+    let map = resolve_vtables(&build_image(&sections)).expect("resolve vtables");
+
+    assert_eq!(map.len(), 1, "{map:#?}");
+}
+
+#[test]
+fn a_vtable_whose_first_slot_is_not_code_is_rejected() {
+    // `vtable[0]` is a virtual function pointer and therefore executable. A
+    // value pointing into `.rodata` means the "vtable" is really a data pair.
+    let mut data = vec![0u8; TYPE_INFO_OFFSET + 16];
+    data[8..16].copy_from_slice(&TYPE_INFO_ADDRESS.to_le_bytes());
+    data[16..24].copy_from_slice(&RODATA_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET..TYPE_INFO_OFFSET + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET + 8..TYPE_INFO_OFFSET + 16]
+        .copy_from_slice(&RODATA_ADDRESS.to_le_bytes());
+
+    let sections = vec![
+        SectionPlan {
+            name: ".text",
+            kind: SHT_PROGBITS,
+            address: TEXT_ADDRESS,
+            flags: SHF_ALLOC | SHF_EXECINSTR,
+            body: vec![0x90u8; 0x100],
+        },
+        SectionPlan {
+            name: ".rodata",
+            kind: SHT_PROGBITS,
+            address: RODATA_ADDRESS,
+            flags: SHF_ALLOC,
+            body: b"14ClientInstance\0".to_vec(),
+        },
+        SectionPlan {
+            name: ".data.rel.ro",
+            kind: SHT_PROGBITS,
+            address: DATA_REL_RO_ADDRESS,
+            flags: SHF_ALLOC | SHF_WRITE,
+            body: data,
+        },
+    ];
+
+    let map = resolve_vtables(&build_image(&sections)).expect("resolve vtables");
+
+    assert!(map.is_empty(), "{map:#?}");
+}
+
+#[test]
+fn relocations_outside_data_rel_ro_are_counted_but_not_indexed() {
+    // A real library has millions of relocations, almost all outside
+    // `.data.rel.ro`. They must be counted so the source is reported correctly,
+    // but the resolver must not retain them.
+    let image = image_with_many_function_pointers(20_000);
+    let map = resolve_vtables(&image).expect("resolve vtables");
+
+    assert!(
+        map.relocations_examined >= 20_000,
+        "every record must be counted: {}",
+        map.relocations_examined
+    );
+    assert_eq!(
+        map.type_info_candidates, 1,
+        "only the real vtable is a candidate: {map:#?}"
+    );
+    assert_eq!(map.source, VtableSource::Relocations);
+}
+
+#[test]
+fn duplicate_class_names_yield_one_entry() {
+    // Two vtables for the same class (primary and secondary) must not double
+    // the result.
+    let mut rodata = Vec::new();
+    rodata.extend_from_slice(b"14ClientInstance\0");
+    let name_address = RODATA_ADDRESS;
+
+    let mut data = vec![0u8; 0x100];
+    // Slot 1: a real vtable prefix.
+    data[8..16].copy_from_slice(&TYPE_INFO_ADDRESS.to_le_bytes());
+    // Slot 5: a second vtable prefix for the same class.
+    data[40..48].copy_from_slice(&(TYPE_INFO_ADDRESS + 0x40).to_le_bytes());
+    data[16..24].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[48..56].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET..TYPE_INFO_OFFSET + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET + 8..TYPE_INFO_OFFSET + 16].copy_from_slice(&name_address.to_le_bytes());
+    let second = TYPE_INFO_OFFSET + 0x40;
+    data[second..second + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[second + 8..second + 16].copy_from_slice(&name_address.to_le_bytes());
+
+    let mut rela = Vec::new();
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 8, 257, TYPE_INFO_ADDRESS));
+    rela.extend_from_slice(&relocation(
+        VTABLE_ADDRESS + 40,
+        257,
+        TYPE_INFO_ADDRESS + 0x40,
+    ));
+    rela.extend_from_slice(&relocation(TYPE_INFO_ADDRESS + 8, 257, name_address));
+    rela.extend_from_slice(&relocation(TYPE_INFO_ADDRESS + 0x48, 257, name_address));
+
+    let sections = vec![
+        SectionPlan {
+            name: ".text",
+            kind: SHT_PROGBITS,
+            address: TEXT_ADDRESS,
+            flags: SHF_ALLOC | SHF_EXECINSTR,
+            body: vec![0x90u8; 0x100],
+        },
+        SectionPlan {
+            name: ".rodata",
+            kind: SHT_PROGBITS,
+            address: RODATA_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rodata,
+        },
+        SectionPlan {
+            name: ".data.rel.ro",
+            kind: SHT_PROGBITS,
+            address: DATA_REL_RO_ADDRESS,
+            flags: SHF_ALLOC | SHF_WRITE,
+            body: data,
+        },
+        SectionPlan {
+            name: ".rela.dyn",
+            kind: SHT_RELA,
+            address: RELA_DYN_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rela,
+        },
+    ];
+
+    let map = resolve_vtables(&build_image(&sections)).expect("resolve vtables");
+
+    assert_eq!(map.entries.len(), 1, "{map:#?}");
+    assert_eq!(map.type_info_candidates, 2, "{map:#?}");
+    assert!(map.get("ClientInstance").is_some());
 }
 
 /// Pins the fixture geometry so a future edit cannot silently invalidate the

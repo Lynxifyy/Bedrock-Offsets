@@ -141,6 +141,9 @@ mod tests {
         assert!(verified.verified);
         assert_eq!(verified.hits.len(), 1);
         assert_eq!(verified.discarded, 0);
+        // The raw count is the byte scan's total, not the surviving count, so
+        // the two numbers the live log prints cannot contradict each other.
+        assert_eq!(verified.raw_matches, 1);
         assert_eq!(
             verified.hits[0].prologue_kind,
             Some(crate::prologue::PrologueKind::FramePush)
@@ -194,6 +197,14 @@ mod tests {
         // point of the test is that verification ran and annotated them.
         assert!(verified.verified);
         assert!(verified.hits.iter().all(|hit| hit.prologue_kind.is_some()));
+        // The raw count is the byte scan's total, not the surviving count, so
+        // the two numbers the live log prints cannot contradict each other.
+        assert_eq!(verified.raw_matches, 2);
+        assert_eq!(verified.discarded, 0);
+        assert_eq!(
+            verified.raw_matches - verified.discarded,
+            verified.hits.len()
+        );
     }
 
     #[test]

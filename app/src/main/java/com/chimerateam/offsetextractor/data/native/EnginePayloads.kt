@@ -192,6 +192,7 @@ object EnginePayloads {
             chunks = payload.chunks ?: 0,
             workers = payload.workers ?: 1,
             hits = hits,
+            rawMatches = payload.rawMatches ?: hits.size,
             peakResidentBytes = payload.peakResidentBytes,
             discarded = payload.discarded ?: 0,
             verified = payload.verified ?: false,

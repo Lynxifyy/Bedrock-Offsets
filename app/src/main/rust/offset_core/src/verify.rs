@@ -141,6 +141,7 @@ mod tests {
             scanned_bytes: 0,
             chunks: 0,
             workers: 0,
+            raw_matches: hits.len(),
             hits,
             discarded: 0,
             verified: true,

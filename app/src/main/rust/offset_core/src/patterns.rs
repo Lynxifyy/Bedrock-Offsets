@@ -21,6 +21,7 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use serde::Serialize;
 
 use crate::error::{CoreError, CoreResult};
+use crate::scanner::MAX_HITS_PER_PATTERN;
 
 /// Longest accepted pattern, in bytes.
 ///
@@ -242,18 +243,39 @@ impl PatternSet {
     /// verified by hand. Exact patterns are emitted directly, because the
     /// automaton already proved them.
     ///
+    /// At most [`MAX_HITS_PER_PATTERN`] positions are returned per pattern. A
+    /// short or loose pattern can match at most positions of the input, and
+    /// collecting all of them before the caller applies its own cap would let a
+    /// single 4 MB chunk allocate hundreds of megabytes. The limit is applied
+    /// as the matches are found, so the vector never grows past it.
+    ///
     /// # Returns
     ///
     /// `(pattern index, offset)` pairs, sorted by offset then pattern index.
     pub fn find_all(&self, data: &[u8]) -> Vec<(usize, usize)> {
+        self.find_all_with_truncation(data).0
+    }
+
+    /// Finds matches, reporting whether the per-pattern cap was reached.
+    ///
+    /// The caller needs to know a cap was hit, or a truncated scan would be
+    /// indistinguishable from a complete one.
+    ///
+    /// # Returns
+    ///
+    /// The same pairs as [`Self::find_all`], and whether any were dropped.
+    pub fn find_all_with_truncation(&self, data: &[u8]) -> (Vec<(usize, usize)>, bool) {
         let Some(automaton) = self.automaton.as_ref() else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         if data.is_empty() {
-            return Vec::new();
+            return (Vec::new(), false);
         }
 
+        let mut capped = false;
         let mut hits = Vec::new();
+        // Per-pattern counts, so one loose pattern cannot crowd out the others.
+        let mut per_pattern = vec![0usize; self.patterns.len()];
         for found in automaton.find_overlapping_iter(data) {
             let Some(run) = self.runs.get(found.pattern().as_usize()) else {
                 continue;
@@ -261,6 +283,10 @@ impl PatternSet {
             let Some(pattern) = self.patterns.get(run.pattern_index) else {
                 continue;
             };
+            if per_pattern[run.pattern_index] >= MAX_HITS_PER_PATTERN {
+                capped = true;
+                continue;
+            }
 
             // The run starts `pattern_offset` bytes into the pattern, so the
             // candidate pattern begins that many bytes before the match.
@@ -269,12 +295,13 @@ impl PatternSet {
             };
             if pattern.matches_at(data, start) {
                 hits.push((run.pattern_index, start));
+                per_pattern[run.pattern_index] += 1;
             }
         }
 
         hits.sort_unstable();
         hits.dedup();
-        hits
+        (hits, capped)
     }
 }
 
@@ -416,6 +443,52 @@ mod tests {
 
         let hits = set.find_all(&data);
         assert_eq!(hits, vec![(0, 4)]);
+    }
+
+    #[test]
+    fn a_loose_pattern_cannot_grow_the_hit_list_without_bound() {
+        // A pattern that matches at every position must not produce one hit per
+        // byte. Collecting them all before the caller applies its own cap is
+        // what let a single 4 MB chunk allocate hundreds of megabytes.
+        let set = PatternSet::new(&[("loose".to_string(), "90".to_string())]).expect("pattern set");
+        let data = vec![0x90u8; 4 * 1024 * 1024];
+
+        let hits = set.find_all(&data);
+
+        assert_eq!(
+            hits.len(),
+            MAX_HITS_PER_PATTERN,
+            "the per-chunk list must stop at the cap"
+        );
+        // The lowest offsets are kept, so a capped scan is still useful.
+        assert_eq!(hits.first().map(|(_, offset)| *offset), Some(0));
+    }
+
+    #[test]
+    fn one_loose_pattern_does_not_crowd_out_another() {
+        // The cap is per pattern, so a pattern that matches everywhere must not
+        // hide the hits of a pattern that matches rarely.
+        let set = PatternSet::new(&[
+            ("loose".to_string(), "90".to_string()),
+            ("rare".to_string(), "DE AD BE EF".to_string()),
+        ])
+        .expect("pattern set");
+
+        let mut data = vec![0x90u8; 64 * 1024];
+        data[1000..1004].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+
+        let hits = set.find_all(&data);
+        let rare: Vec<usize> = hits
+            .iter()
+            .filter(|(pattern, _)| *pattern == 1)
+            .map(|(_, offset)| *offset)
+            .collect();
+
+        assert_eq!(rare, vec![1000]);
+        assert_eq!(
+            hits.iter().filter(|(pattern, _)| *pattern == 0).count(),
+            MAX_HITS_PER_PATTERN
+        );
     }
 
     #[test]

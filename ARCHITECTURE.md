@@ -20,7 +20,7 @@ that. Any design that reads the library into a `ByteArray` fails on the exact
 device the app is for.
 
 So the rule is absolute: **no component ever holds the whole APK or the whole
-library in memory**. It is enforced in three places:
+library in memory**. It is enforced in four places:
 
 1. **Extraction** streams the archive through a fixed 64 KB buffer
    (`zip_extract.rs`).
@@ -28,7 +28,13 @@ library in memory**. It is enforced in three places:
    resident memory; only the pages actually touched are faulted in
    (`elf.rs`).
 3. **Scanning** splits the mapped bytes into 4 MB chunks and hands each worker a
-   borrowed slice (`scanner.rs`).
+   borrowed slice (`scanner.rs`). Each chunk's match list stops at
+   `MAX_HITS_PER_PATTERN`, so a loose signature cannot make one chunk allocate
+   without bound.
+4. **RTTI resolution** builds its relocation index straight from the mapping and
+   keeps only the slots that land inside `.data.rel.ro` (`rtti.rs`). A real
+   library has millions of relocations; materialising them all is what pushed
+   the transient peak into the hundreds of megabytes.
 
 Peak resident memory is measured, not assumed: the engine reads `VmHWM` from
 `/proc/self/status` and reports it with the result. The integration test
@@ -170,13 +176,15 @@ activity. Rotating the device mid-scan changes nothing.
 | Extraction | 64 KB buffer | no |
 | Mapping | the mapping (address space) | address space only |
 | Section map | one struct per section | no |
-| Scan | 4 MB chunk + result vector | results only |
+| Scan | 4 MB chunk + a capped result vector | results, capped |
 | Prologue check | 16 bytes per match | no |
+| RTTI | the `.data.rel.ro` relocation index | with vtable count |
 | Symbol check | `.dynsym` entries | with symbol count |
 | Kotlin | the JSON result | results only |
 
-The only term that grows with the input is the result list, and a signature pack
-is small by construction.
+Two terms can grow with the input: the RTTI index (only `.data.rel.ro` slots,
+sixteen bytes each) and the result list. Both are capped, so neither can make a
+crafted library exhaust memory. A signature pack is small by construction.
 
 ## Further reading
 

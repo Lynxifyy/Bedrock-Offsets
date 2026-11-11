@@ -17,7 +17,7 @@ use crate::memory::peak_resident_bytes;
 use crate::patterns::PatternSet;
 use crate::progress::JniProgressSink;
 use crate::prologue::PrologueVerifier;
-use crate::rtti::resolve_vtables;
+use crate::rtti::resolve_vtables_with_progress;
 use crate::scanner::{
     scan_section_releasing_pages, verify_prologues_with_progress, ProgressSink, ScanControl,
     ScanOutcome,
@@ -479,8 +479,21 @@ fn parse_pattern_specs(patterns_json: &str) -> CoreResult<Vec<(String, String)>>
 /// Propagates any mapping or vtable-resolution failure.
 pub fn resolve_vtables_json(path: &str, sha256: &str) -> CoreResult<String> {
     let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
-    let map = resolve_vtables(library.bytes())?;
-    Ok(serde_json::to_string(&map).unwrap_or_default())
+
+    // A breadcrumb beside the library records the phase in progress. A process
+    // killed mid-resolve cannot log, but the file outlives it and the app reads
+    // it on the next launch, which is the only way a native death becomes
+    // visible on the device. It is removed again on a clean finish.
+    let breadcrumb = format!("{path}.breadcrumb");
+    let mut note = |phase: &str| {
+        let _ = std::fs::write(&breadcrumb, phase);
+    };
+    note("rtti: library mapped");
+    let map = resolve_vtables_with_progress(library.bytes(), &mut note)?;
+    note("rtti: serialising result");
+    let json = serde_json::to_string(&map).unwrap_or_default();
+    let _ = std::fs::remove_file(&breadcrumb);
+    Ok(json)
 }
 
 /// Maps `path` and serialises its symbols, exposed for host tests.

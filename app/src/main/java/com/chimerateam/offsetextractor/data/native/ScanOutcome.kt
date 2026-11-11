@@ -47,7 +47,8 @@ data class PatternHit(
  * @property scannedBytes number of bytes scanned.
  * @property chunks number of chunks the section was split into.
  * @property workers number of workers the pool actually used.
- * @property hits every hit, sorted by address.
+ * @property hits every hit that survived the prologue check, sorted by address.
+ * @property rawMatches every match the byte scan produced, before the check ran.
  * @property peakResidentBytes peak resident set after the scan, when reported.
  * @property discarded candidates the prologue check threw away.
  * @property verified whether the prologue check was applied.
@@ -60,6 +61,7 @@ data class ScanOutcome(
     val chunks: Int,
     val workers: Int,
     val hits: List<PatternHit>,
+    @SerializedName("raw_matches") val rawMatches: Int = 0,
     @SerializedName("peak_resident_bytes") val peakResidentBytes: Long? = null,
     val discarded: Int = 0,
     val verified: Boolean = false,
@@ -77,6 +79,7 @@ internal data class ScanOutcomePayload(
     val chunks: Int?,
     val workers: Int?,
     val hits: List<PatternHit>?,
+    @SerializedName("raw_matches") val rawMatches: Int?,
     @SerializedName("peak_resident_bytes") val peakResidentBytes: Long?,
     val discarded: Int?,
     val verified: Boolean?,
