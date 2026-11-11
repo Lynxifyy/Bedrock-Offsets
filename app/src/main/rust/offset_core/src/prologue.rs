@@ -17,7 +17,7 @@
 //! whose bytes decode to something else is discarded, which removes the false
 //! positives that a byte pattern alone always produces.
 
-use capstone::arch::arm64::{ArchMode, Arm64Insn, Arm64OperandType};
+use capstone::arch::arm64::{ArchMode, Arm64Insn, Arm64OperandType, Arm64Reg};
 use capstone::arch::{BuildsCapstone, BuildsCapstoneEndian};
 use capstone::{Capstone, Endian, Insn};
 use serde::Serialize;
@@ -31,13 +31,21 @@ use crate::error::{CoreError, CoreResult};
 pub const PROLOGUE_WINDOW_BYTES: usize = 16;
 
 /// AArch64 `x29`, the frame pointer.
-const REG_FRAME_POINTER: u32 = 2;
+const REG_FRAME_POINTER: u32 = Arm64Reg::ARM64_REG_FP;
 
 /// AArch64 `x30`, the link register.
-const REG_LINK_REGISTER: u32 = 3;
+const REG_LINK_REGISTER: u32 = Arm64Reg::ARM64_REG_LR;
 
 /// AArch64 `sp`, the stack pointer.
-const REG_STACK_POINTER: u32 = 5;
+const REG_STACK_POINTER: u32 = Arm64Reg::ARM64_REG_SP;
+
+// Capstone's register numbers are part of the disassembler's ABI: `stp x29, x30`
+// decodes with `reg == ARM64_REG_FP`/`ARM64_REG_LR`. Pinning the numbers here
+// turns a Capstone upgrade that renumbers them into a build failure instead of
+// a silently wrong prologue check.
+const _: () = assert!(REG_FRAME_POINTER == 2);
+const _: () = assert!(REG_LINK_REGISTER == 3);
+const _: () = assert!(REG_STACK_POINTER == 5);
 
 /// Why a candidate was accepted or rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

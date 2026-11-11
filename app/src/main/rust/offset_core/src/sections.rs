@@ -85,7 +85,14 @@ pub struct SectionInfo {
     pub offset: u64,
     /// Required alignment.
     pub align: u64,
-    /// `address - offset` for this section.
+    /// `address - offset` for this section, as a signed value.
+    ///
+    /// Sections that are not loaded (`.shstrtab`, `.comment`, debug data) have
+    /// address 0 but a file offset inside the image, so the difference is
+    /// negative. It is serialised as `i64`: a wrapped `u64` above `i64::MAX`
+    /// overflows Kotlin's `Long` and makes Gson reject the whole section-map
+    /// payload.
+    #[serde(serialize_with = "serialize_delta")]
     pub delta: u64,
     /// Whether the section is mapped into memory at run time.
     pub allocated: bool,
@@ -95,6 +102,14 @@ pub struct SectionInfo {
     pub writable: bool,
     /// Whether the section occupies file space; `.bss` does not.
     pub occupies_file: bool,
+}
+
+/// Serialises a wrapping load delta as a signed 64-bit integer.
+///
+/// The value is a difference, not an address, so reinterpreting the wrapped
+/// `u64` as `i64` is exact: it keeps the magnitude and restores the sign.
+fn serialize_delta<S: serde::Serializer>(delta: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_i64(*delta as i64)
 }
 
 impl SectionInfo {
@@ -348,6 +363,36 @@ mod tests {
         };
 
         assert_eq!(section.address_of(64), None);
+    }
+
+    #[test]
+    fn a_non_loaded_section_serialises_a_delta_the_jvm_can_hold() {
+        // A section that is not loaded (`.shstrtab`, `.comment`, debug data) has
+        // address 0 but a file offset deep in the image, so `address - offset`
+        // wraps to a `u64` above `i64::MAX`. Kotlin reads `delta` as a `Long`,
+        // and a value that large makes Gson reject the whole section-map payload
+        // with "malformed section map payload". The delta must be signed.
+        let offset = 0x1_400_000u64;
+        let section = SectionInfo {
+            name: ".shstrtab".to_string(),
+            kind: SectionKind::Other,
+            address: 0,
+            size: 64,
+            offset,
+            align: 1,
+            delta: 0u64.wrapping_sub(offset),
+            allocated: false,
+            executable: false,
+            writable: false,
+            occupies_file: true,
+        };
+
+        let json = serde_json::to_value(&section).expect("serialise");
+        assert!(
+            json["delta"].is_i64(),
+            "delta must fit a Kotlin Long, found {json}"
+        );
+        assert_eq!(json["delta"].as_i64(), Some(-(offset as i64)));
     }
 
     #[test]

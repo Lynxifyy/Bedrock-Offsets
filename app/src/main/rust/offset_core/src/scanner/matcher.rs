@@ -13,7 +13,8 @@ use crate::verify::VerificationStatus;
 
 use super::chunk::{chunk_ranges, worker_count};
 use super::{
-    report, PatternHit, ProgressSink, ScanControl, ScanOutcome, MATCH_PERCENT, PROGRESS_STEPS,
+    report, PatternHit, ProgressSink, ScanControl, ScanOutcome, MATCH_PERCENT,
+    MAX_HITS_PER_PATTERN, MAX_HITS_TOTAL, PROGRESS_STEPS,
 };
 
 /// Scans the `.text` section of `map` for every pattern in `set`.
@@ -101,15 +102,30 @@ pub fn scan_section_with_progress(
         return Err(CoreError::Cancelled);
     }
 
-    // Overlapping chunks can report the same position twice.
-    per_chunk.sort_unstable();
-    per_chunk.dedup();
+    // Overlapping chunks can report the same position twice. The hits must be
+    // flattened before deduplicating: sorting and deduplicating the per-chunk
+    // vectors only removes identical chunks, not duplicated positions.
+    let mut positions: Vec<(usize, usize)> = per_chunk.into_iter().flatten().collect();
+    positions.sort_unstable();
+    positions.dedup();
 
+    // Candidates arrive sorted by (pattern, offset), so the first
+    // `MAX_HITS_PER_PATTERN` of each pattern are its lowest offsets. The caps
+    // keep a loose signature from exhausting memory; the count that was dropped
+    // is surfaced through `truncated` rather than silently ignored.
     let mut hits: Vec<PatternHit> = Vec::new();
-    for (pattern_index, offset) in per_chunk.into_iter().flatten() {
+    let mut per_pattern: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut truncated = false;
+    for (pattern_index, offset) in positions {
         let Some(pattern) = set.patterns().get(pattern_index) else {
             continue;
         };
+        let seen = per_pattern.entry(pattern_index).or_insert(0);
+        if *seen >= MAX_HITS_PER_PATTERN || hits.len() >= MAX_HITS_TOTAL {
+            truncated = true;
+            continue;
+        }
+        *seen += 1;
         let section_offset = offset as u64;
         let file_offset = section.offset + section_offset;
         let Some(address) = section.address_of(file_offset) else {
@@ -141,6 +157,7 @@ pub fn scan_section_with_progress(
         hits,
         discarded: 0,
         verified: false,
+        truncated,
         verification: None,
     })
 }
@@ -257,6 +274,92 @@ mod tests {
 
         assert_eq!(outcome.hits.len(), 1);
         assert_eq!(outcome.hits[0].section_offset, (boundary - 1) as u64);
+    }
+
+    #[test]
+    fn a_match_inside_the_chunk_overlap_is_reported_once() {
+        // A match that starts after the boundary but inside the first chunk's
+        // 32-byte overlap is seen by chunk 0 (via the overlap) and by chunk 1
+        // (as its own start), so two chunks report the same position. A second
+        // match, past the overlap, belongs to chunk 1 alone and makes the two
+        // per-chunk vectors differ, which is when deduplicating the vectors
+        // instead of the flattened hits stops working.
+        let mut image = vec![0u8; CHUNK_BYTES + 256];
+        let shared = CHUNK_BYTES + 8;
+        let later = CHUNK_BYTES + 128;
+        for at in [shared, later] {
+            image[at] = 0x41;
+            image[at + 1] = 0x42;
+            image[at + 2] = 0x43;
+        }
+
+        let section = crate::sections::SectionInfo {
+            name: ".text".to_string(),
+            kind: crate::sections::SectionKind::Text,
+            address: 0x1000,
+            size: image.len() as u64,
+            offset: 0,
+            align: 16,
+            delta: 0x1000,
+            allocated: true,
+            executable: true,
+            writable: false,
+            occupies_file: true,
+        };
+        let map = crate::sections::SectionMap {
+            image_base: 0x1000,
+            text: section,
+            sections: Vec::new(),
+        };
+
+        let set = set_of(&[("overlap", "41 42 43")]);
+        let outcome = scan_section(&map, &image, &set, &ScanControl::new()).expect("scan");
+
+        let offsets: Vec<u64> = outcome.hits.iter().map(|hit| hit.section_offset).collect();
+        assert_eq!(
+            offsets,
+            vec![shared as u64, later as u64],
+            "{:?}",
+            outcome.hits
+        );
+    }
+
+    #[test]
+    fn a_loose_pattern_is_capped_instead_of_growing_without_bound() {
+        // A single fixed byte matches one position in 256. On a large section
+        // that is over a million candidates, so the cap must bound the result
+        // and the scan must say it truncated rather than drop silently.
+        let size = MAX_HITS_PER_PATTERN * 300;
+        let mut image = vec![0u8; size];
+        // Place one match every 256 bytes so the count exceeds the cap.
+        for at in (0..size).step_by(256) {
+            image[at] = 0x91;
+        }
+
+        let section = crate::sections::SectionInfo {
+            name: ".text".to_string(),
+            kind: crate::sections::SectionKind::Text,
+            address: 0x1000,
+            size: size as u64,
+            offset: 0,
+            align: 16,
+            delta: 0x1000,
+            allocated: true,
+            executable: true,
+            writable: false,
+            occupies_file: true,
+        };
+        let map = crate::sections::SectionMap {
+            image_base: 0x1000,
+            text: section,
+            sections: Vec::new(),
+        };
+
+        let set = set_of(&[("loose", "91")]);
+        let outcome = scan_section(&map, &image, &set, &ScanControl::new()).expect("scan");
+
+        assert_eq!(outcome.hits.len(), MAX_HITS_PER_PATTERN);
+        assert!(outcome.truncated, "a capped scan must say so");
     }
 
     #[test]

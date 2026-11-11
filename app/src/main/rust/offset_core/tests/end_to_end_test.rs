@@ -490,6 +490,19 @@ fn the_whole_pipeline_agrees_on_one_offset() {
     assert_eq!(metadata.bits, 64);
     assert_eq!(metadata.elf_type, "DYN");
 
+    // `Elf::lazy_parse` leaves the section table empty, so the counts must be
+    // read from the image. A zero here is what made the app log "0 sections".
+    let map_for_count = build_section_map(library.bytes()).expect("section map");
+    assert_eq!(
+        metadata.section_count,
+        map_for_count.sections.len(),
+        "section_count must reflect the real table"
+    );
+    assert!(
+        metadata.section_count > 0,
+        "a loaded library always has sections"
+    );
+
     // 4. The section map carries the sections the scan needs.
     let map = build_section_map(library.bytes()).expect("section map");
     assert_eq!(map.text.name, TEXT_SECTION);
@@ -499,6 +512,25 @@ fn the_whole_pipeline_agrees_on_one_offset() {
     assert!(map.find(DATA_REL_RO_SECTION).is_some());
     assert!(map.find(RELA_DYN_SECTION).is_some());
     assert!(map.find(BUILD_ID_SECTION).is_some());
+
+    // The map is handed to Kotlin as JSON and read into `Long` fields, so every
+    // delta must fit a signed 64-bit integer. `.shstrtab` is not loaded, which
+    // makes its delta negative -- the case that used to overflow the payload.
+    let serialised = serde_json::to_value(&map).expect("serialise the section map");
+    let sections = serialised["sections"].as_array().expect("sections");
+    assert!(
+        sections
+            .iter()
+            .any(|section| section["delta"].as_i64().is_some_and(|d| d < 0)),
+        "the fixture has a non-loaded section, so a negative delta must appear"
+    );
+    for section in sections {
+        assert!(
+            section["delta"].is_i64(),
+            "{} has a delta Kotlin cannot read: {section}",
+            section["name"]
+        );
+    }
 
     // 5. The build identity comes from the note, not from a hash of `.text`.
     let report = build_symbol_report(library.bytes()).expect("symbol report");

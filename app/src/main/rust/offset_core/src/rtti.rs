@@ -56,7 +56,12 @@ pub struct TypeVTable {
     pub name: String,
     /// The mangled name as it appears in `.rodata`.
     pub mangled: String,
-    /// Virtual address of the vtable's first function pointer.
+    /// Virtual address of the vtable itself.
+    ///
+    /// This is the slot *before* the `type_info` pointer, which holds the
+    /// offset-to-top value. The first virtual function pointer sits
+    /// `VTABLE_PREFIX_SLOTS` slots further in. The address is kept at the vtable
+    /// base because that is the value a loader uses to identify the class.
     pub vtable_address: u64,
     /// `vtable_address` rendered as `0x`-prefixed hex.
     pub vtable_hex: String,
@@ -203,20 +208,19 @@ fn find_type_info_pointers(
         }
         for offset in (0..=bytes.len() - slot).step_by(slot) {
             let raw = read_u64(bytes, offset);
-            if raw == 0 {
-                continue;
-            }
             let slot_address = section.address.saturating_add(offset as u64);
-            // The relocation table wins when it knows the slot.
-            let type_info_address = relocation_targets
-                .get(&slot_address)
-                .copied()
-                .unwrap_or(raw);
+            // The relocation table wins when it knows the slot. With RELA the
+            // in-place value is usually zero, so a zero slot must not be skipped
+            // before the table has been consulted.
+            let relocated = relocation_targets.get(&slot_address).copied();
+            let type_info_address = relocated.unwrap_or(raw);
             if type_info_address == 0 {
                 continue;
             }
 
-            let Some(name_address) = type_info_name_address(map, image, type_info_address) else {
+            let Some(name_address) =
+                type_info_name_address(map, image, type_info_address, relocation_targets)
+            else {
                 continue;
             };
             candidates.push(TypeInfoCandidate {
@@ -235,11 +239,14 @@ fn find_type_info_pointers(
 /// Reads the name pointer out of a `type_info` object.
 ///
 /// A `type_info` starts with its own vtable pointer, so the name pointer is the
-/// second slot. The object is located by its virtual address.
+/// second slot. The object is located by its virtual address. The name slot is
+/// relocated too, so its in-place value may be zero on a RELA build; the
+/// relocation table is consulted first for that reason.
 fn type_info_name_address(
     map: &crate::sections::SectionMap,
     image: &[u8],
     type_info_address: u64,
+    relocation_targets: &BTreeMap<u64, u64>,
 ) -> Option<u64> {
     let section = map.sections.iter().find(|section| {
         if !section.occupies_file {
@@ -254,7 +261,11 @@ fn type_info_name_address(
     if offset.saturating_add(16) > bytes.len() {
         return None;
     }
-    let name = read_u64(bytes, offset + 8);
+    let name_slot = type_info_address.saturating_add(8);
+    let name = relocation_targets
+        .get(&name_slot)
+        .copied()
+        .unwrap_or_else(|| read_u64(bytes, offset + 8));
     if name == 0 {
         return None;
     }

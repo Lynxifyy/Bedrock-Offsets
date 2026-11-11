@@ -343,7 +343,9 @@ class MainViewModel(
             return
         }
 
-        extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
+        // Deliberately not assigned to `extractionJob`: the export is a side
+        // action, so cancelling the scan must not cancel it, and vice versa.
+        viewModelScope.launch(supervisor + ioDispatcher) {
             val json = OffsetExporter.toJson(result)
             when (val outcome = writer.writeText(uri, json)) {
                 is WriteResult.Success -> {
@@ -418,7 +420,11 @@ class MainViewModel(
      * Deletes every cached library and document.
      *
      * The cache is only a convenience: a failure to clear it is logged and the
-     * app carries on with whatever remains.
+     * app carries on with whatever remains. Clearing rewrites and `fsync`s the
+     * extracted libraries, so it runs on the I/O dispatcher; a 300 MB library
+     * would otherwise block the main thread long enough to trip an ANR. It is
+     * also refused while a scan is active, because the scan reads the very file
+     * being shredded.
      */
     fun clearCache() {
         val store = cache
@@ -426,15 +432,19 @@ class MainViewModel(
             emit(Logs.warn(TAG_CACHE, "No cache is configured."))
             return
         }
-        val cleared = store.clear()
-        refreshCacheSize()
-        if (cleared) {
-            emit(Logs.info(TAG_CACHE, "Cache cleared."))
-            _uiState.update { it.copy(exportMessage = "Cache cleared.") }
-        } else {
-            emit(Logs.warn(TAG_CACHE, "Some cached files could not be deleted."))
+        if (extractionJob?.isActive == true) {
+            emit(Logs.warn(TAG_CACHE, "A scan is running; clear the cache afterwards."))
+            return
         }
         viewModelScope.launch(supervisor + ioDispatcher) {
+            val cleared = store.clear()
+            refreshCacheSize()
+            if (cleared) {
+                emit(Logs.info(TAG_CACHE, "Cache cleared."))
+                _uiState.update { it.copy(exportMessage = "Cache cleared.") }
+            } else {
+                emit(Logs.warn(TAG_CACHE, "Some cached files could not be deleted."))
+            }
             preferences?.setLastBuildId("")
         }
     }
@@ -687,6 +697,15 @@ class MainViewModel(
                 "Parallel scan complete. Found ${outcome.hits.size} pattern matches."
             )
         )
+        if (outcome.truncated) {
+            emit(
+                Logs.warn(
+                    TAG_RUST,
+                    "Some signatures matched far more often than expected; " +
+                        "the hit list was capped. Tighten the loose signatures."
+                )
+            )
+        }
         emit(
             Logs.info(
                 TAG_RUST,

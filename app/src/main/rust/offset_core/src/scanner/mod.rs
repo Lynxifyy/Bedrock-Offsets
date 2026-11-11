@@ -115,6 +115,10 @@ pub struct ScanOutcome {
     pub discarded: usize,
     /// Whether the prologue check was applied.
     pub verified: bool,
+    /// Whether the hit list was capped at [`MAX_HITS_PER_PATTERN`] /
+    /// [`MAX_HITS_TOTAL`]. A capped scan still reports the lowest offsets.
+    #[serde(default)]
+    pub truncated: bool,
     /// Symbol cross-check totals, present once the check has run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<crate::verify::VerificationSummary>,
@@ -166,6 +170,18 @@ const MATCH_PERCENT: u32 = 55;
 
 /// Number of progress updates a scan emits, so the cost is independent of size.
 const PROGRESS_STEPS: usize = 16;
+
+/// Most hits kept for any one pattern.
+///
+/// A loose signature -- one fixed byte out of eight, say -- matches roughly one
+/// position in 256, which on a 300 MB `.text` is over a million candidates. Each
+/// candidate costs a `PatternHit`, so without a bound a single bad signature
+/// would exhaust the memory the engine promises to stay under. The lowest
+/// offsets are kept, which is deterministic because the candidates are sorted.
+pub const MAX_HITS_PER_PATTERN: usize = 4096;
+
+/// Most hits kept across every pattern in one scan.
+pub const MAX_HITS_TOTAL: usize = 32768;
 
 /// Reports progress to an optional sink, ignoring the sink when absent.
 fn report(sink: Option<&dyn ProgressSink>, percent: u32, message: &str) {

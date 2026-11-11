@@ -165,8 +165,10 @@ pub fn build_id_from_note(elf: &Elf<'_>, image: &[u8]) -> CoreResult<Option<Vec<
         }
     }
 
-    // Some builds place the note only in a PT_NOTE segment.
-    for program in &elf.program_headers {
+    // Some builds place the note only in a PT_NOTE segment. `lazy_parse` leaves
+    // the program header table empty, so it is read from the image.
+    let programs = crate::elf::parse_program_headers(image).unwrap_or_default();
+    for program in &programs {
         if program.p_type != goblin::elf::program_header::PT_NOTE {
             continue;
         }

@@ -1,6 +1,7 @@
 package com.chimerateam.offsetextractor
 
 import android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW
+import android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -33,12 +34,15 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels {
         viewModelFactory {
             initializer {
+                // The extracted library must live inside the managed cache, or
+                // "Clear cache" never frees the largest file the app creates.
+                val scanCache = ScanCache(File(cacheDir, "scan-cache").apply { mkdirs() })
                 MainViewModel.create(
                     safAccess = AndroidSafApkAccess(applicationContext),
                     engine = JniOffsetEngine(),
-                    cacheDir = File(cacheDir, "engine").apply { mkdirs() },
+                    cacheDir = scanCache.libraryDir.apply { mkdirs() },
                     writer = AndroidDocumentWriter(applicationContext),
-                    cache = ScanCache(File(cacheDir, "scan-cache").apply { mkdirs() }),
+                    cache = scanCache,
                     preferences = scanPreferences(this@MainActivity),
                     patterns = SignaturePack.load(applicationContext)
                 )
@@ -60,10 +64,14 @@ class MainActivity : ComponentActivity() {
      * Android calls this before it starts killing processes. The scan itself
      * never allocates with the file size, so the useful response is to tell the
      * user and let them free the cache rather than to abort the scan.
+     *
+     * `TRIM_MEMORY_UI_HIDDEN` is excluded: it fires whenever the app leaves the
+     * foreground -- opening the file picker, for example -- and is not memory
+     * pressure.
      */
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+        if (level >= TRIM_MEMORY_RUNNING_LOW && level < TRIM_MEMORY_UI_HIDDEN) {
             viewModel.onMemoryPressure()
         }
     }

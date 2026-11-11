@@ -15,8 +15,10 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use goblin::container::{Container, Ctx, Endian};
-use goblin::elf::header::{EM_386, EM_AARCH64, EM_ARM, ET_DYN, ET_EXEC};
-use goblin::elf::section_header::SectionHeader;
+use goblin::elf::dynamic::{DT_NULL, DT_SONAME};
+use goblin::elf::header::{Header, EM_386, EM_AARCH64, EM_ARM, ET_DYN, ET_EXEC};
+use goblin::elf::program_header::ProgramHeader;
+use goblin::elf::section_header::{SectionHeader, SHT_DYNAMIC};
 use goblin::elf::Elf;
 use memmap2::Mmap;
 use serde::Serialize;
@@ -184,6 +186,40 @@ pub fn parse_section_headers(image: &[u8]) -> CoreResult<Vec<SectionHeader>> {
     let header = Elf::parse_header(image)
         .map_err(|error| CoreError::InvalidElf(format!("cannot parse ELF header: {error}")))?;
 
+    SectionHeader::parse(
+        image,
+        header.e_shoff as usize,
+        header.e_shnum as usize,
+        header_ctx(&header),
+    )
+    .map_err(|error| CoreError::InvalidElf(format!("cannot read section headers: {error}")))
+}
+
+/// Parses the program header table of an ELF image.
+///
+/// `Elf::lazy_parse` leaves `program_headers` empty as well, so anything that
+/// needs a `PT_NOTE` segment -- the build-id fallback, for example -- has to
+/// read the table through this function.
+///
+/// # Errors
+///
+/// Returns [`CoreError::InvalidElf`] when the table lies outside the file or
+/// cannot be decoded.
+pub fn parse_program_headers(image: &[u8]) -> CoreResult<Vec<ProgramHeader>> {
+    let header = Elf::parse_header(image)
+        .map_err(|error| CoreError::InvalidElf(format!("cannot parse ELF header: {error}")))?;
+
+    ProgramHeader::parse(
+        image,
+        header.e_phoff as usize,
+        header.e_phnum as usize,
+        header_ctx(&header),
+    )
+    .map_err(|error| CoreError::InvalidElf(format!("cannot read program headers: {error}")))
+}
+
+/// Builds the parse context (word size and byte order) from an ELF header.
+fn header_ctx(header: &Header) -> Ctx {
     let container = if header.e_ident[4] == ELFCLASS64 {
         Container::Big
     } else {
@@ -194,10 +230,7 @@ pub fn parse_section_headers(image: &[u8]) -> CoreResult<Vec<SectionHeader>> {
     } else {
         Endian::Little
     };
-    let ctx = Ctx::new(container, endian);
-
-    SectionHeader::parse(image, header.e_shoff as usize, header.e_shnum as usize, ctx)
-        .map_err(|error| CoreError::InvalidElf(format!("cannot read section headers: {error}")))
+    Ctx::new(container, endian)
 }
 
 /// Builds the metadata payload from an ELF image.
@@ -212,6 +245,11 @@ pub fn describe_library(
     size: u64,
 ) -> CoreResult<ElfMetadata> {
     let elf = parse_elf_bytes(bytes)?;
+    // `lazy_parse` leaves the tables and the dynamic table empty, so the counts
+    // and the soname are read from the image instead. A failure here is not
+    // fatal: the metadata is still useful without them.
+    let section_count = parse_section_headers(bytes).map_or(0, |headers| headers.len());
+    let program_header_count = parse_program_headers(bytes).map_or(0, |headers| headers.len());
     Ok(ElfMetadata {
         path: path.to_string(),
         sha256: sha256.to_string(),
@@ -223,10 +261,51 @@ pub fn describe_library(
         elf_type: describe_type(elf.header.e_type).to_string(),
         entry_point: format!("0x{:x}", elf.entry),
         entry_point_value: elf.entry,
-        section_count: elf.section_headers.len(),
-        program_header_count: elf.program_headers.len(),
-        soname: elf.soname.map(str::to_string),
+        section_count,
+        program_header_count,
+        soname: parse_soname(bytes),
     })
+}
+
+/// Reads `DT_SONAME` from the dynamic table, if the library declares one.
+///
+/// Only the `.dynamic` and its linked string table are touched, and neither is
+/// copied: the string is borrowed from the mapping. Returns `None` for a library
+/// without a dynamic table, which is normal for a relocatable object.
+fn parse_soname(image: &[u8]) -> Option<String> {
+    let headers = parse_section_headers(image).ok()?;
+    // `sh_link` of `.dynamic` names the string table that holds the soname.
+    let dynamic = headers
+        .iter()
+        .find(|header| header.sh_type == SHT_DYNAMIC)?;
+    let dynstr = headers.get(dynamic.sh_link as usize)?;
+
+    let entries = image.get(
+        dynamic.sh_offset as usize
+            ..(dynamic.sh_offset as usize).saturating_add(dynamic.sh_size as usize),
+    )?;
+    let dynstr_bytes = image.get(
+        dynstr.sh_offset as usize
+            ..(dynstr.sh_offset as usize).saturating_add(dynstr.sh_size as usize),
+    )?;
+
+    let mut soname_offset = None;
+    for entry in entries.as_chunks::<16>().0 {
+        let tag = u64::from_le_bytes(entry[0..8].try_into().ok()?);
+        let value = u64::from_le_bytes(entry[8..16].try_into().ok()?);
+        if tag == DT_SONAME {
+            soname_offset = Some(value as usize);
+            break;
+        }
+        if tag == DT_NULL {
+            break;
+        }
+    }
+
+    let offset = soname_offset?;
+    let tail = dynstr_bytes.get(offset..)?;
+    let end = tail.iter().position(|byte| *byte == 0)?;
+    String::from_utf8(tail[..end].to_vec()).ok()
 }
 
 /// JSON description of a mapped native library.

@@ -144,6 +144,7 @@ mod tests {
             hits,
             discarded: 0,
             verified: true,
+            truncated: false,
             verification: None,
         }
     }
