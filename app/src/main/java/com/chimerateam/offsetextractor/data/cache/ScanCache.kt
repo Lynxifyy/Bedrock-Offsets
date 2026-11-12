@@ -51,7 +51,11 @@ class ScanCache(private val root: File) {
      *
      * The write is atomic: the text lands in a temporary file that is then
      * renamed over the target, so a scan interrupted mid-write cannot leave a
-     * half-written document that a later run would treat as a cache hit.
+     * half-written document that a later run would treat as a cache hit. The
+     * rename replaces the target in one step, so there is no window in which
+     * the old document has been deleted but the new one has not yet arrived,
+     * and a failed attempt removes its temporary file rather than leaving it
+     * to be counted as cache size.
      *
      * @param buildId build identifier of the library.
      * @param json the document text.
@@ -64,11 +68,18 @@ class ScanCache(private val root: File) {
         val temporary = File(target.parentFile, "${target.name}.tmp")
         return runCatching {
             temporary.writeText(json)
-            if (target.exists()) {
-                target.delete()
+            if (!temporary.renameTo(target)) {
+                // The rename failed, so the payload never became the document.
+                // Drop the temporary file rather than leaving a stray copy.
+                temporary.delete()
+                false
+            } else {
+                true
             }
-            temporary.renameTo(target)
-        }.getOrDefault(false)
+        }.getOrElse {
+            temporary.delete()
+            false
+        }
     }
 
     /**
