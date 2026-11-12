@@ -224,6 +224,10 @@ class MainViewModel(
                 // belt-and-braces case where something escaped it.
                 val mapped = ErrorMapper.fromThrowable(throwable)
                 fail(mapped.message, mapped.hint, tag = TAG_UI)
+            },
+            describe = { uri ->
+                val metadata = safAccess.queryMetadata(uri)
+                "${metadata.displayName} (${formatBytes(metadata.sizeBytes)})"
             }
         )
 

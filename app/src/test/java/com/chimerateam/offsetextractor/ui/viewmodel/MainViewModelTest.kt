@@ -886,6 +886,28 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aBatchNamesTheApkItIsScanning() = runTest(dispatcher) {
+        val engine = FakeEngine(delayMillis = 50)
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApksSelected(
+            listOf(
+                Uri.parse("content://test.provider/first.apk"),
+                Uri.parse("content://test.provider/second.apk")
+            )
+        )
+        // Stop mid-run, while the first APK is still being scanned, so the
+        // dialog state is observable rather than already cleared.
+        runCurrent()
+
+        val name = viewModel.uiState.value.batch?.currentName
+        assertNotNull("the dialog must name the APK being scanned", name)
+        assertTrue("unexpected name: $name", name.orEmpty().contains("minecraft.apk"))
+
+        advanceUntilIdle()
+    }
+
+    @Test
     fun aBatchReportsOneFailureWithoutSinkingTheRun() = runTest(dispatcher) {
         val access = FakeSafAccess(
             failFor = setOf("content://test.provider/broken.apk")
