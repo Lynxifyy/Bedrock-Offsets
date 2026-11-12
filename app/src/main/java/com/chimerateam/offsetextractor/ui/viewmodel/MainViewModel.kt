@@ -127,6 +127,11 @@ class MainViewModel(
     /** Total size of everything held in the on-disk cache. */
     val cacheSizeBytes: StateFlow<Long> = _cacheSizeBytes.asStateFlow()
 
+    private val _lastBuildId = MutableStateFlow("")
+
+    /** Build identifier recorded by the most recent successful scan. */
+    val lastBuildId: StateFlow<String> = _lastBuildId.asStateFlow()
+
     private var activeApk: ApkSource? = null
     private var extractionJob: Job? = null
 
@@ -136,6 +141,9 @@ class MainViewModel(
         preferences?.let { store ->
             viewModelScope.launch(supervisor + ioDispatcher) {
                 store.forceRescan.collect { force -> _forceRescan.value = force }
+            }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.lastBuildId.collect { buildId -> _lastBuildId.value = buildId }
             }
         }
     }
@@ -461,6 +469,7 @@ class MainViewModel(
         if (stored) {
             refreshCacheSize()
         }
+        _lastBuildId.value = buildId
         viewModelScope.launch(supervisor + ioDispatcher) {
             preferences?.setLastBuildId(buildId)
         }

@@ -596,6 +596,19 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aSuccessfulScanRecordsTheBuildId() = runTest(dispatcher) {
+        // The id is what the Settings screen shows, and what the next launch
+        // uses to recognise a cached scan, so it must be published.
+        val preferences = FakeScanPreferences()
+        val viewModel = newViewModel(preferences = preferences)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals("abcdef0123456789", viewModel.lastBuildId.value)
+    }
+
+    @Test
     fun theLogIsCappedAndDropsTheOldestEntries() = runTest(dispatcher) {
         val viewModel = newViewModel()
         repeat(MAX_LOG_ENTRIES + 25) { index ->
@@ -1213,6 +1226,24 @@ private class FakeEngine(
             programHeaderCount = 9,
             soname = "libminecraftpe.so"
         )
+    }
+}
+
+/** In-memory [ScanPreferences] with observable writes. */
+private class FakeScanPreferences : ScanPreferences {
+
+    private val buildIds = kotlinx.coroutines.flow.MutableStateFlow("")
+    private val rescan = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    override val lastBuildId: kotlinx.coroutines.flow.Flow<String> = buildIds
+    override val forceRescan: kotlinx.coroutines.flow.Flow<Boolean> = rescan
+
+    override suspend fun setLastBuildId(buildId: String) {
+        buildIds.value = buildId
+    }
+
+    override suspend fun setForceRescan(force: Boolean) {
+        rescan.value = force
     }
 }
 
