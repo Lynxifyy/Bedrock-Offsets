@@ -1,44 +1,368 @@
 {
   "patterns": [
     {
-      "name": "adrp_add_page_off",
-      "pattern": "?? ?? ?? ?? ?? ?? ?? 91"
+      "name": "Java_com_google_androidgamesdk_ChoreographerCallback_nOnChoreographer",
+      "pattern": "48 00 40 F9 E0 03 02 AA E1 03 1F AA"
     },
     {
-      "name": "bti_c_landing_pad",
-      "pattern": "5F 24 03 D5"
+      "name": "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode",
+      "pattern": "FD 7B BB A9 FA 67 01 A9 F8 5F 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 03 00 91 F3 03 07 AA F4 03 06 AA"
     },
     {
-      "name": "callee_saved_save_x19_x20",
-      "pattern": "F3 53 BF A9"
+      "name": "Java_com_google_androidgamesdk_SwappyDisplayManager_nOnRefreshPeriodChanged",
+      "pattern": "FF 03 01 D1 FD 7B 02 A9 F3 1B 00 F9 FD 83 00 91 53 D0 3B D5 68 16 40 F9 A8 83 1F F8 E3 13 00 A9"
     },
     {
-      "name": "callee_saved_save_x21_x22",
-      "pattern": "F5 5B BF A9"
+      "name": "Java_com_google_androidgamesdk_SwappyDisplayManager_nSetSupportedRefreshPeriods",
+      "pattern": "FF 83 02 D1 FD 7B 04 A9 FC 6F 05 A9 FA 67 06 A9 F8 5F 07 A9 F6 57 08 A9 F4 4F 09 A9 FD 03 01 91 08 00 40 F9 E1 03 03 AA"
     },
     {
-      "name": "frame_pointer_setup",
-      "pattern": "FD 03 00 91"
+      "name": "Java_com_microsoft_xal_androidjava_PresenceManager_pausePresence",
+      "pattern": "FF 03 01 D1 FD 7B 02 A9 F4 4F 03 A9 FD 83 00 91 54 D0 3B D5 88 16 40 F9 A8 83 1F F8 E8 03 00 91 A4 82 85 95"
     },
     {
-      "name": "frame_push_with_pac",
-      "pattern": "FD 7B BF A9 7F 23 03 D5"
+      "name": "Java_com_microsoft_xal_androidjava_PresenceManager_resumePresence",
+      "pattern": "FF C3 00 D1 FD 7B 01 A9 F4 4F 02 A9 FD 43 00 91 54 D0 3B D5 88 16 40 F9 E8 07 00 F9 E8 03 00 91 06 83 85 95"
     },
     {
-      "name": "frame_push_x29_x30",
-      "pattern": "FD 7B BF A9"
+      "name": "Java_com_microsoft_xal_browser_BrowserLaunchActivity_checkIsLoaded",
+      "pattern": "C0 CC 05 F0 02 F5 FC B0"
     },
     {
-      "name": "pacibsp_prologue",
-      "pattern": "7F 23 03 D5 FD 7B BF A9"
+      "name": "Java_com_microsoft_xal_browser_BrowserLaunchActivity_urlOperationCanceled",
+      "pattern": "E6 03 04 AA E5 03 03 2A E1 03 00 AA 40 00 80 52"
     },
     {
-      "name": "stack_alloc_0x20",
-      "pattern": "FF 83 00 D1"
+      "name": "Java_com_microsoft_xal_browser_BrowserLaunchActivity_urlOperationFailed",
+      "pattern": "E6 03 04 AA E5 03 03 2A E1 03 00 AA 20 00 80 52"
     },
     {
-      "name": "stp_q0_q1_frame",
-      "pattern": "FD 7B 01 A9"
+      "name": "Java_com_microsoft_xal_browser_BrowserLaunchActivity_urlOperationSucceeded",
+      "pattern": "E6 03 05 AA E5 03 04 2A"
+    },
+    {
+      "name": "Java_com_microsoft_xal_logging_XalLogger_nativeLogBatch",
+      "pattern": "FF 03 02 D1 FD 7B 02 A9 FC 6F 03 A9 FA 67 04 A9 F8 5F 05 A9 F6 57 06 A9 F4 4F 07 A9 FD 83 00 91 5B D0 3B D5 F4 03 03 AA F6 03 02 2A"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_create",
+      "pattern": "FD 7B BE A9 F4 4F 01 A9 FD 03 00 91 00 02 80 52 7B D0 88 95"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getEnvironment",
+      "pattern": "E0 03 1F AA C0 03 5F D6 FD 7B BE A9 F3 0B 00 F9 FD 03 00 91 48 00 40 F9"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getOverrideTitleId",
+      "pattern": "FF 83 01 D1 FD 7B 02 A9 F7 1B 00 F9 F6 57 04 A9 F4 4F 05 A9 FD 83 00 91 57 D0 3B D5 E8 16 40 F9 A8 83 1F F8 40 00 40 F9"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getSandbox",
+      "pattern": "FD 7B BE A9 F3 0B 00 F9 FD 03 00 91 48 00 40 F9 F3 03 00 AA E0 03 08 AA"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getScid",
+      "pattern": "FF 83 01 D1 FD 7B 02 A9 F8 5F 03 A9 F6 57 04 A9 F4 4F 05 A9 FD 83 00 91 58 D0 3B D5 08 17 40 F9 F3 03 00 AA"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getTitleId",
+      "pattern": "40 00 40 F9 78 67 89 15"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_util_HttpCall_create",
+      "pattern": "FD 7B BB A9 FC 67 01 A9 F8 5F 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 03 00 91 FF C3 0B D1 57 D0 3B D5"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_util_HttpCall_getResponseAsync__Lcom_microsoft_xbox_idp_util_HttpCall_Callback_2",
+      "pattern": "FF 83 07 D1 FD 7B 1A A9 FC 5F 1B A9 F6 57 1C A9 F4 4F 1D A9 FD 83 06 91 57 D0 3B D5 E8 16 40 F9 F4 03 01 AA"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_util_HttpCall_setContentTypeHeaderValue",
+      "pattern": "FF C3 01 D1 FD 7B 03 A9 F8 5F 04 A9 F6 57 05 A9 F4 4F 06 A9 FD C3 00 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 62 09 00 B4 F4 03 00 AA F3 03 01 AA E0 63 00 91 E1 03 14 AA 65 84 89 95"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_util_HttpCall_setCustomHeader",
+      "pattern": "FF 83 02 D1 FD 7B 06 A9 F8 5F 07 A9 F6 57 08 A9 F4 4F 09 A9 FD 83 01 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 82 10 00 B4"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_util_HttpCall_setRequestBody__Ljava_lang_String_2",
+      "pattern": "FF C3 01 D1 FD 7B 03 A9 F8 5F 04 A9 F6 57 05 A9 F4 4F 06 A9 FD C3 00 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 62 09 00 B4 F4 03 00 AA F3 03 01 AA E0 63 00 91 E1 03 14 AA 79 86 89 95"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_util_HttpCall_setRequestBody___3B",
+      "pattern": "FF C3 01 D1 FD 7B 02 A9 F9 1B 00 F9 F8 5F 04 A9 F6 57 05 A9 F4 4F 06 A9 FD 83 00 91 58 D0 3B D5 08 17 40 F9 F3 03 02 AA"
+    },
+    {
+      "name": "Java_com_microsoft_xbox_idp_util_HttpCall_setXboxContractVersionHeaderValue",
+      "pattern": "FF C3 01 D1 FD 7B 03 A9 F8 5F 04 A9 F6 57 05 A9 F4 4F 06 A9 FD C3 00 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 62 09 00 B4 F4 03 00 AA F3 03 01 AA E0 63 00 91 E1 03 14 AA EC 83 89 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_AppExitInfoHelper_nativeSendApplicationExitInfo",
+      "pattern": "FF 43 03 D1 FD 7B 07 A9 FC 6F 08 A9 FA 67 09 A9 F8 5F 0A A9 F6 57 0B A9 F4 4F 0C A9 FD C3 01 91 5A D0 3B D5 F9 03 02 AA"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_BatteryMonitor_nativeUpdateBatteryStatus",
+      "pattern": "E2 03 22 1E 40 00 22 1E"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_BatteryMonitor_nativeUpdateBatteryThermalStatus",
+      "pattern": "A2 00 F8 37 5F EC 05 71"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_CrashManager_nativeNotifyUncaughtException",
+      "pattern": "FF 03 02 D1 FD 7B 04 A9 F8 5F 05 A9 F6 57 06 A9 F4 4F 07 A9 FD 03 01 91 56 D0 3B D5 55 23 01 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_FilePickerManager_nativeDirectoryPickResult",
+      "pattern": "FF 43 05 D1 FD 7B 10 A9 FC 8B 00 F9 F8 5F 12 A9 F6 57 13 A9 F4 4F 14 A9 FD 03 04 91 57 D0 3B D5 F4 03 00 AA E0 63 00 91"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_isAndroidAmazon",
+      "pattern": "E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 FF 83 04 D1"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_isAndroidChromebook",
+      "pattern": "E0 03 1F 2A C0 03 5F D6 FF 83 04 D1 FD 7B 0E A9"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_isAndroidTrial",
+      "pattern": "E0 03 1F 2A C0 03 5F D6 5C C3 4F 14"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_isBrazeEnabled",
+      "pattern": "5C C3 4F 14 20 00 80 52"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_isEduMode",
+      "pattern": "E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 20 00 80 52 C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 FF 83 04 D1"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_isPreview",
+      "pattern": "E0 03 1F 2A C0 03 5F D6 20 00 80 52 C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 FF 83 04 D1"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_isPublishBuild",
+      "pattern": "20 00 80 52 C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 20 00 80 52 C0 03 5F D6 E0 03 1F 2A"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_isTestInfrastructureDisabled",
+      "pattern": "20 00 80 52 C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 FF 83 04 D1"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeBackPressed",
+      "pattern": "FF 83 04 D1 FD 7B 0E A9 FC 7B 00 F9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 08 BF 05 90 00 01 45 F9 80 0D 00 B4 3B CB 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeBackSpacePressed",
+      "pattern": "FF 83 04 D1 FD 7B 0E A9 FC 7B 00 F9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 08 BF 05 90 00 01 45 F9 80 0D 00 B4 A1 CA 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeClearAButtonState",
+      "pattern": "E0 BE 05 F0 00 60 2A 91"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeDeviceCorrelation",
+      "pattern": "FF 83 02 D1 FD 7B 06 A9 F7 3B 00 F9 F6 57 08 A9 F4 4F 09 A9 FD 83 01 91 57 D0 3B D5 F6 03 00 AA F4 03 02 AA"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeGetDeviceId",
+      "pattern": "FF 43 01 D1 FD 7B 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 83 00 91 55 D0 3B D5 A8 16 40 F9 A8 83 1F F8 E8 BE 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeKeyHandler",
+      "pattern": "FF 83 04 D1 FD 7B 0E A9 FC 5F 0F A9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 57 D0 3B D5 F4 03 02 2A"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeLoginData",
+      "pattern": "C0 03 5F D6 FF 43 02 D1 FD 7B 05 A9 F8 5F 06 A9 F6 57 07 A9 F4 4F 08 A9 FD 43 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 BE 05 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeOnDestroy",
+      "pattern": "C0 03 5F D6 C0 03 5F D6 C0 03 5F D6 FF 83 04 D1 FD 7B 0E A9"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeOnPickFileCanceled",
+      "pattern": "FF 43 01 D1 FD 7B 02 A9 F5 1B 00 F9 F4 4F 04 A9 FD 83 00 91 55 D0 3B D5 A8 16 40 F9 A8 83 1F F8 E8 BE 05 B0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeOnPickFileSuccess",
+      "pattern": "FF 03 07 D1 FD 7B 16 A9 FC 6F 17 A9 FA 67 18 A9 F8 5F 19 A9 F6 57 1A A9 F4 4F 1B A9 FD 83 05 91 58 D0 3B D5 F9 BE 05 D0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeOnPickImageCanceled",
+      "pattern": "FF C3 04 D1 FD 7B 0F A9 FC 83 00 F9 F6 57 11 A9 F4 4F 12 A9 FD C3 03 91 56 D0 3B D5 F3 03 02 AA C8 16 40 F9"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeOnPickImageSuccess",
+      "pattern": "FF 43 06 D1 FD 7B 15 A9 FC 5F 16 A9 F6 57 17 A9 F4 4F 18 A9 FD 43 05 91 57 D0 3B D5 F3 03 03 AA"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeProcessIntentUriQuery",
+      "pattern": "FD 7B BB A9 FC 0B 00 F9 F8 5F 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 03 00 91 FF C3 17 D1 57 D0 3B D5"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeResize",
+      "pattern": "FF 83 04 D1 FD 7B 0E A9 FC 5F 0F A9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 57 D0 3B D5 13 BF 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeReturnKeyPressed",
+      "pattern": "FF C3 04 D1 FD 7B 0E A9 FC 7B 00 F9 F8 5F 10 A9 F6 57 11 A9 F4 4F 12 A9 FD 83 03 91 58 D0 3B D5 14 BF 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeRunNativeCallbackOnUiThread",
+      "pattern": "41 00 40 A9 20 00 1F D6"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeSetHeadphonesConnected",
+      "pattern": "C0 03 5F D6 FF 43 03 D1 EE 23 00 FD ED 33 05 6D"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeSetIntegrityToken",
+      "pattern": "FF 03 02 D1 FD 7B 04 A9 F7 2B 00 F9 F6 57 06 A9 F4 4F 07 A9 FD 03 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 C8 BE 05 F0 08 01 45 F9 68 06 00 B4 F5 03 00 AA E0 03 08 AA F4 03 02 AA 25 B8 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeSetIntegrityTokenErrorMessage",
+      "pattern": "FF 03 02 D1 FD 7B 04 A9 F7 2B 00 F9 F6 57 06 A9 F4 4F 07 A9 FD 03 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 C8 BE 05 F0 08 01 45 F9 68 06 00 B4 F5 03 00 AA E0 03 08 AA F4 03 02 AA C8 B7 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeSetTextboxText",
+      "pattern": "FF C3 05 D1 FD 7B 11 A9 FC 93 00 F9 FA 67 13 A9 F8 5F 14 A9 F6 57 15 A9 F4 4F 16 A9 FD 43 04 91 59 D0 3B D5 28 17 40 F9 A8 83 1F F8"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeShiftKeyPressed",
+      "pattern": "FF 83 04 D1 FD 7B 0E A9 FC 7B 00 F9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 BE 05 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeShutdown",
+      "pattern": "FF 43 02 D1 FD 7B 05 A9 F8 5F 06 A9 F6 57 07 A9 F4 4F 08 A9 FD 43 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 BE 05 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeStopThis",
+      "pattern": "C0 03 5F D6 C0 03 5F D6 FF 83 04 D1 FD 7B 0E A9 FC 5F 0F A9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 57 D0 3B D5 13 BF 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeStoragePermissionRequestResult",
+      "pattern": "FF 83 02 D1 FD 7B 07 A9 F6 57 08 A9 F4 4F 09 A9 FD C3 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 BE 05 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeSuspend",
+      "pattern": "C0 03 5F D6 FF 83 04 D1 FD 7B 0E A9 FC 5F 0F A9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 57 D0 3B D5 13 BF 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeSuspendGameplayUpdates",
+      "pattern": "5F 1C 00 72 08 BF 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_nativeWaitCrashManagementSetupComplete",
+      "pattern": "FF 43 01 D1 FD 7B 02 A9 F5 1B 00 F9 F4 4F 04 A9 FD 83 00 91 54 D0 3B D5 D5 BE 05 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_MainActivity_onSoftKeyboardClosed",
+      "pattern": "FF 83 04 D1 FD 7B 0E A9 FC 7B 00 F9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 C8 BE 05 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_NetworkMonitor_nativeUpdateNetworkStatus",
+      "pattern": "FF 03 02 D1 FD 7B 03 A9 FA 67 04 A9 F8 5F 05 A9 F6 57 06 A9 F4 4F 07 A9 FD C3 00 91 58 D0 3B D5 37 BE 05 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_NotificationListenerService_nativePushNotificationReceived",
+      "pattern": "FF 43 05 D1 FD 7B 0F A9 FC 83 00 F9 FA 67 11 A9 F8 5F 12 A9 F6 57 13 A9 F4 4F 14 A9 FD C3 03 91 59 D0 3B D5 28 17 40 F9 A8 83 1F F8 E8 BE 05 B0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_ThermalMonitor_nativeUpdateLowPowerModeStatus",
+      "pattern": "5F 1C 00 72 A8 08 04 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_Webview_MinecraftWebview_nativeOnWebError",
+      "pattern": "FF 03 03 D1 FD 7B 08 A9 F7 4B 00 F9 F6 57 0A A9 F4 4F 0B A9 FD 03 02 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 08 04 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_Webview_MinecraftWebview_nativeSendToHost",
+      "pattern": "FF 83 02 D1 FD 7B 06 A9 F8 5F 07 A9 F6 57 08 A9 F4 4F 09 A9 FD 83 01 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 E8 08 04 B0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_WorldRecovery_nativeComplete",
+      "pattern": "FF 03 03 D1 FD 7B 0A A9 F4 4F 0B A9 FD 83 02 91 54 D0 3B D5 E0 23 01 91"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_WorldRecovery_nativeError",
+      "pattern": "FF 43 05 D1 FD 7B 10 A9 FC 8B 00 F9 F8 5F 12 A9 F6 57 13 A9 F4 4F 14 A9 FD 03 04 91 58 D0 3B D5 F7 03 00 AA A0 83 01 D1"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_WorldRecovery_nativeUpdate",
+      "pattern": "FD 7B BA A9 FC 6F 01 A9 FA 67 02 A9 F8 5F 03 A9 F6 57 04 A9 F4 4F 05 A9 FD 03 00 91 FF 43 0B D1 59 D0 3B D5 F8 03 00 AA"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_onInputDeviceAddedNative",
+      "pattern": "FD 7B BE A9 F4 4F 01 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 00 03 00 B4 F4 03 02 2A 44 BB 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_onInputDeviceChangedNative",
+      "pattern": "C0 03 5F D6 FD 7B BE A9 F4 4F 01 A9 FD 03 00 91 E8 BE 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_onInputDeviceRemovedNative",
+      "pattern": "FD 7B BE A9 F4 4F 01 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 00 03 00 B4 F4 03 02 2A 16 BB 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setControllerDetailsNative",
+      "pattern": "FD 7B BC A9 F7 0B 00 F9 F6 57 02 A9 F4 4F 03 A9 FD 03 00 91 E8 BE 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setDoubleTriggersSupportedNative",
+      "pattern": "FD 7B BE A9 F3 0B 00 F9 FD 03 00 91 E8 BE 05 90"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setFoundDualsenseControllerNative",
+      "pattern": "FD 7B BD A9 F5 0B 00 F9 F4 4F 02 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 80 04 00 B4 F4 03 02 2A 11 BA 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setFoundPlaystationControllerNative",
+      "pattern": "FD 7B BD A9 F5 0B 00 F9 F4 4F 02 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 80 04 00 B4 F4 03 02 2A 4D BA 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setFoundXboxControllerNative",
+      "pattern": "FD 7B BD A9 F5 0B 00 F9 F4 4F 02 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 80 04 00 B4 F4 03 02 2A 89 BA 7D 95"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchaseCanceled",
+      "pattern": "FF 03 03 D1 FD 7B 09 A9 F6 57 0A A9 F4 4F 0B A9 FD 43 02 91 55 D0 3B D5 F3 03 02 AA E1 03 00 AA A8 16 40 F9 E0 63 00 91 E2 03 03 AA A8 83 1F F8 55 29 B0 97"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchaseFailed",
+      "pattern": "FF 03 03 D1 FD 7B 09 A9 F6 57 0A A9 F4 4F 0B A9 FD 43 02 91 55 D0 3B D5 F3 03 02 AA E1 03 00 AA A8 16 40 F9 E0 63 00 91 E2 03 03 AA A8 83 1F F8 C6 28 B0 97"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchasePending",
+      "pattern": "FF 03 03 D1 FD 7B 09 A9 F6 57 0A A9 F4 4F 0B A9 FD 43 02 91 55 D0 3B D5 F3 03 02 AA E1 03 00 AA A8 16 40 F9 E0 63 00 91 E2 03 03 AA A8 83 1F F8 6C 27 B0 97"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchasePlatformStoreFailed",
+      "pattern": "FF 03 04 D1 FD 7B 0D A9 F6 57 0E A9 F4 4F 0F A9 FD 43 03 91 56 D0 3B D5 F5 03 00 AA"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchaseSuccessful",
+      "pattern": "FD 7B BC A9 FC 5F 01 A9 F6 57 02 A9 F4 4F 03 A9 FD 03 00 91 FF 43 08 D1 57 D0 3B D5 F5 03 00 AA"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onQueryProductsFail",
+      "pattern": "FF C3 01 D1 FD 7B 05 A9 F4 4F 06 A9 FD 43 01 91 54 D0 3B D5 E0 03 02 AA F3 43 00 91 88 16 40 F9 A8 83 1F F8 68 E0 04 B0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onQueryProductsSuccess",
+      "pattern": "FF 43 06 D1 FD 7B 13 A9 FC 6F 14 A9 FA 67 15 A9 F8 5F 16 A9 F6 57 17 A9 F4 4F 18 A9 FD C3 04 91 48 D0 3B D5 F3 03 03 AA"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onQueryPurchasesFail",
+      "pattern": "FF C3 01 D1 FD 7B 05 A9 F4 4F 06 A9 FD 43 01 91 54 D0 3B D5 E0 03 02 AA F3 43 00 91 88 16 40 F9 A8 83 1F F8 48 E0 04 F0"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onQueryPurchasesSuccess",
+      "pattern": "FD 7B BA A9 FC 6F 01 A9 FA 67 02 A9 F8 5F 03 A9 F6 57 04 A9 F4 4F 05 A9 FD 03 00 91 FF 03 07 D1 48 D0 3B D5 F4 03 03 AA"
+    },
+    {
+      "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onStoreInitialized",
+      "pattern": "FF C3 01 D1 FD 7B 05 A9 F4 4F 06 A9 FD 43 01 91 54 D0 3B D5 E0 03 02 AA 69 E0 04 B0"
     }
   ]
 }

@@ -16,7 +16,7 @@ The app has no `INTERNET` permission. Nothing you scan leaves the device.
 
 The latest release APK is on the
 [releases page](https://github.com/Lynxifyy/Bedrock-Offsets/releases/latest):
-`bedrock-offset-extractor-v1.0.3.apk`, signed and built for `arm64-v8a`.
+`bedrock-offset-extractor-v1.0.4.apk`, signed and built for `arm64-v8a`.
 
 Install it on the device with `adb install`, or open the file on the device and
 allow installation from that source. The APK is signed with the debug key until
@@ -86,12 +86,13 @@ build. Treat it as a failure, not as address zero.
 
 ## Adding a signature
 
-Signatures live in `patterns.txt`, one per line, as `name = bytes`. `??` matches
-any byte:
+Signatures live in `patterns.txt`, one per line, as `name = bytes`. The name is
+the exported JNI symbol the signature belongs to, and the bytes are the shortest
+byte string at that symbol that occurs exactly once in `.text`:
 
 ```
-frame_push_x29_x30 = FD 7B BF A9
-pacibsp_prologue = 7F 23 03 D5 FD 7B BF A9
+Java_com_mojang_minecraftpe_MainActivity_nativeResize = 6D 10 00 94 A8 1A 40 F9
+Java_com_mojang_minecraftpe_MainActivity_isEduMode = E0 03 1F 2A C0 03 5F D6
 ```
 
 Edit that file, then regenerate the pack the app loads:
@@ -104,15 +105,42 @@ Entries are sorted by name, so a regeneration produces a stable diff. CI runs
 the same command with `--check` and fails if the committed pack is stale, which
 is what stops `patterns.txt` and `patterns.json` from drifting apart.
 
-A signature is a candidate, not an answer. Each match is disassembled with
-Capstone and kept only if it decodes to a real AArch64 function prologue, so a
-loose signature costs accuracy rather than correctness. If a signature matches
-in many places, tighten it; the `stats.discardedMatches` count in the output
-tells you how many candidates were rejected.
+### Why the names matter
+
+A signature's name is not a label, it is a claim. The engine looks the name up
+in the library's own `.dynsym` and compares the two addresses:
+
+* they agree — the offset is `VERIFIED` and counts towards the confidence score;
+* they disagree — the offset is `CONFLICT` and is logged as a warning;
+* the name is not exported — the offset is `UNVERIFIED`, because nothing
+  independent confirms it.
+
+A pack of instruction-shape names (`frame_push_x29_x30`) matches thousands of
+places, none of which can be checked, so every offset reads `UNVERIFIED` and the
+confidence score is `0`. That is why the pack is derived from exported symbols
+rather than written by hand.
+
+## Deriving a signature pack
+
+`scripts/derive_patterns.py` builds `patterns.txt` from a real
+`libminecraftpe.so`, so the pack tracks the build instead of a guess:
+
+```bash
+python3 scripts/derive_patterns.py libminecraftpe.so patterns.txt
+python3 scripts/derive_patterns.py libminecraftpe.so patterns.txt --check
+```
+
+It parses `.dynsym` for defined `Java_*` symbols and grows each signature from
+the symbol's bytes until it is unique in `.text`. The result is a pack whose
+every entry resolves to one address, which the engine then confirms against the
+symbol table. `--check` verifies the committed `patterns.txt` is up to date.
+
+Exit codes: `0` on success, `1` for a library that yields no signatures (or a
+stale pack under `--check`), `2` for an unusable path.
 
 ## Build automation scripts
 
-All four scripts are runnable on their own and are exercised by CI.
+All five scripts are runnable on their own and are exercised by CI.
 
 ### `scripts/build_rust.py`
 

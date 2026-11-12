@@ -150,16 +150,33 @@ installed from the repo root (`-e .`).
   `OnBackPressedCallback` on `getOnBackPressedDispatcher()` instead. Full unit suite is
   **3844 tests, 0 failures, 1 skipped** (~25s warm).
 
-## Bedrock-Offsets (Lynxifyy/Bedrock-Offsets)
-Android (Kotlin/Compose) + Rust (JNI/NDK) Minecraft-Bedrock offset harvester. 30-phase
-plan, one commit per phase, branch `feat/offset-extractor-engine`. Phases 0-8 done.
-See `.openhands/memory/<date>.md` daily logs for detail. Key traps:
-`createComposeRule` tests belong in `app/src/testDebug/` (release variant has no
-Compose test manifest); goblin's `Elf::lazy_parse` leaves `section_headers` empty
-(use `parse_section_headers`); JNI symbols are
-`Java_com_chimerateam_offsetextractor_data_native_NativeLib_<method>`.
-
 ## Bedrock-Offsets (Lynxifyy/Bedrock-Offsets) — Android + Rust offset extractor
+- **Traps**: `createComposeRule` tests belong in `app/src/testDebug/` (the release
+  variant has no Compose test manifest); goblin's `Elf::lazy_parse` leaves
+  `section_headers` empty (use `parse_section_headers`); JNI symbols are
+  `Java_com_chimerateam_offsetextractor_data_native_NativeLib_<method>`.
+- **Branch targeting**: `feat/offset-extractor-engine` drifted **32 behind / 10
+  ahead** of `main`, so a fix committed there cannot merge cleanly. Branch new work
+  off current `main` instead.
+- **Signature pack (fixed in PR #9)**: `patterns.txt` used to hold 10
+  *instruction-shape* patterns (`frame_push_x29_x30`). Those match thousands of
+  places and are named after nothing, so the symbol cross-check found no symbol →
+  every offset `UNVERIFIED` → confidence permanently 0 (measured: 12,374 matches,
+  8,191 discarded, 0 verified). The pack is now **derived** by
+  `scripts/derive_patterns.py` from a real `libminecraftpe.so`: keep defined
+  `Java_*` dynsyms and grow each signature from the symbol's bytes until unique in
+  `.text`. Real library: 91 signatures → 91/91 verified, 0 discarded, 100%.
+  Two traps that cost debug cycles: the in-`.text` index is `st_value -
+  text.sh_addr`, **not** `st_value - delta` (`delta = sh_addr - sh_offset` is the
+  *file-offset → VA* direction); and `bytes.count` skips overlaps, so uniqueness
+  needs a `find` loop. The library is **unstripped** (90,670 symbols, 95 `Java_*`)
+  but its internal classes (`ClientInstance`, `LocalPlayer`, …) **are** stripped,
+  so JNI entry points are the only verifiable Bedrock-specific anchors.
+- **Prologue check is a filter, not a veto**: it runs *after* the symbol
+  cross-check and keeps a `Verified` hit whose shape is not a stack frame — a leaf
+  (`isEduMode` = `mov w0, wzr; ret`) has no frame, and 27 of 91 correct offsets
+  were being discarded before this. `MCPE_SO=<path> cargo test` runs the live
+  `signature_pack_test.rs` measurement.
 - **Layout**: Kotlin/Compose UI in `app/src/main/java/com/chimerateam/offsetextractor/`,
   Rust engine crate `offset_core` in `app/src/main/rust/offset_core/`, Python build
   automation in `scripts/` (`build_rust.py`, `generate_patterns.py`, `verify_offsets.py`,
