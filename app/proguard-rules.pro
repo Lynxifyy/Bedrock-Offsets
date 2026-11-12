@@ -13,6 +13,14 @@
     <init>(java.lang.String, java.lang.String);
 }
 
+# The engine invokes this method by name from native code, so R8 must not rename
+# it. The callback is a fun interface, and the method is the SAM method; without
+# this rule a shrunk build can rename it, the call fails with NoSuchMethodError,
+# and progress silently stops updating.
+-keepclassmembers class com.chimerateam.offsetextractor.data.native.ProgressCallback {
+    void onProgress(int, java.lang.String);
+}
+
 # Gson builds these models by reflection: it calls a constructor and assigns
 # fields by name. R8 can see neither the call nor the assignment, so without
 # these rules it removes the constructor and marks the class abstract -- which
