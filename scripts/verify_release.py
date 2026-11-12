@@ -94,7 +94,6 @@ GSON_MODEL_CLASSES = (
     "Lcom/chimerateam/offsetextractor/ui/state/ScannerUiState;",
     "Lcom/chimerateam/offsetextractor/ui/state/BatchProgress;",
     "Lcom/chimerateam/offsetextractor/ui/state/BatchSummary;",
-    "Lcom/chimerateam/offsetextractor/ui/state/ProgressTracker;",
 )
 
 

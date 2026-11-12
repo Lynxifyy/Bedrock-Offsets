@@ -33,7 +33,6 @@ import com.chimerateam.offsetextractor.data.saf.SafFailure
 import com.chimerateam.offsetextractor.data.saf.WriteResult
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogLevel
-import com.chimerateam.offsetextractor.ui.state.ProgressTracker
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -996,12 +995,6 @@ class MainViewModelTest {
         viewModel.onBatchSummaryShown()
 
         assertNull(viewModel.uiState.value.batchSummary)
-    }
-
-    @Test
-    fun progressTrackerClampsOutOfRangeValues() {
-        assertEquals(0, ProgressTracker.of(-5, "x").percent)
-        assertEquals(100, ProgressTracker.of(250, "x").percent)
     }
 
     private fun startCollector(
