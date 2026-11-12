@@ -75,6 +75,18 @@ class MainActivity : ComponentActivity() {
             viewModel.onMemoryPressure()
         }
     }
+
+    /**
+     * Reports a whole-system memory shortage to the ViewModel.
+     *
+     * `onLowMemory` is the older, coarser sibling of [onTrimMemory] and is
+     * still delivered on some devices; both paths raise the same notice.
+     */
+    @Suppress("DEPRECATION")
+    override fun onLowMemory() {
+        super.onLowMemory()
+        viewModel.onMemoryPressure()
+    }
 }
 
 @Preview(showBackground = true)

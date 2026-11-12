@@ -29,6 +29,16 @@ class MainActivityTest {
     }
 
     @Test
+    fun theLowMemoryCallbackRaisesTheNotice() {
+        // onTrimMemory(TRIM_MEMORY_RUNNING_LOW) is not the only callback the
+        // system sends; onLowMemory is delivered on the same pressure and must
+        // reach the same notice.
+        composeTestRule.activity.onLowMemory()
+
+        composeTestRule.onNodeWithText("Low on memory").assertIsDisplayed()
+    }
+
+    @Test
     fun bottomNavigationSwitchesToSettings() {
         composeTestRule.onNodeWithText("Settings").performClick()
         composeTestRule.onNodeWithText("Appearance").assertIsDisplayed()

@@ -45,8 +45,8 @@ fun SettingsScreen(
     forceRescan: Boolean,
     onForceRescanChange: (Boolean) -> Unit,
     onClearCache: () -> Unit,
-    lastBuildId: String = "",
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    lastBuildId: String = ""
 ) {
     Column(
         modifier = modifier

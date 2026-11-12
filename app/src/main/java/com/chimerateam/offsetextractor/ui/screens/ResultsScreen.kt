@@ -52,23 +52,23 @@ internal const val SEARCH_FIELD_TAG = "results-search"
  * that is what an out-of-date signature pack looks like.
  *
  * @param result the completed scan summary.
- * @param fillHeight whether the screen should fill the height it is given and
- *   let its list scroll, rather than sizing to its content.
  * @param onCopyJson copies the exported JSON to the clipboard.
  * @param onShareJson shares the exported JSON.
  * @param onSaveJson writes the exported JSON to a user-chosen location.
  * @param onStartNewScan resets the scanner.
  * @param modifier layout modifier for the screen.
+ * @param fillHeight whether the screen should fill the height it is given and
+ *   let its list scroll, rather than sizing to its content.
  */
 @Composable
 fun ResultsScreen(
     result: ScanResultSummary,
-    fillHeight: Boolean = false,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
     onStartNewScan: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    fillHeight: Boolean = false
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val rows = remember(result) { OffsetRows.from(result) }
