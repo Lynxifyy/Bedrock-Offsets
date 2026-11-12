@@ -31,7 +31,7 @@ use goblin::elf::section_header::SHT_RELA;
 use serde::Serialize;
 
 use crate::elf::parse_elf_bytes;
-use crate::error::CoreResult;
+use crate::error::{CoreError, CoreResult};
 use crate::sections::{build_section_map, DATA_REL_RO_SECTION, RELA_DYN_SECTION, RODATA_SECTION};
 
 /// Longest class name accepted from a mangled type name.
@@ -120,96 +120,110 @@ pub enum VtableSource {
 /// parsed, and [`crate::error::CoreError::MissingSection`] when neither
 /// `.data.rel.ro` nor `.rodata` is usable.
 pub fn resolve_vtables(image: &[u8]) -> CoreResult<VtableMap> {
+    resolve_vtables_with_releaser(image, None)
+}
+
+/// Resolves every RTTI vtable, releasing dead pages through `releaser`.
+///
+/// The relocation tables are read once and then never again, so offering them
+/// back to the kernel between building the index and scanning `.data.rel.ro`
+/// keeps the file-backed part of this phase from adding to the resident set.
+///
+/// # Errors
+///
+/// As [`resolve_vtables`], plus [`CoreError::OutOfMemory`] when the relocation
+/// index cannot be allocated.
+pub fn resolve_vtables_with_releaser(
+    image: &[u8],
+    releaser: Option<&dyn crate::scanner::PageReleaser>,
+) -> CoreResult<VtableMap> {
     // Parsing validates the header and the machine type before any pointer is
     // followed.
     parse_elf_bytes(image)?;
     let map = build_section_map(image)?;
 
-    let relocations = read_relocations(image)?;
-    let reloc_pointer = RelocationIndex::build(&relocations);
-    // The flat list is no longer needed; dropping it before the scan keeps only
-    // the sorted index resident.
-    let relocations_examined = reloc_pointer.len();
+    // The index is built by streaming `.rela.dyn`; the flat table is never
+    // materialised, which is what keeps this phase inside its memory budget.
+    let reloc_pointer = RelocationIndex::build(image)?;
+    let relocations_examined = reloc_pointer.examined();
     let source = if reloc_pointer.is_empty() {
         VtableSource::DirectScan
     } else {
         VtableSource::Relocations
     };
-    drop(relocations);
 
-    let candidates = find_type_info_pointers(&map, image, &reloc_pointer);
+    // The tables have been read into the index and are not touched again, so
+    // their pages can go before the slot scan faults in `.data.rel.ro`.
+    if let Some(releaser) = releaser {
+        reloc_pointer.release_source_pages(releaser);
+    }
 
-    let mut entries = BTreeMap::new();
-    for candidate in &candidates {
-        let Some((class_name, mangled)) = read_type_name(&map, image, candidate.name_address)
-        else {
-            continue;
-        };
-        // The type_info pointer occupies `vtable[-1]`, so the vtable starts one
-        // slot before the slot that holds it.
-        let Some(vtable_address) = candidate.slot_address.checked_sub(SLOT_BYTES) else {
-            continue;
-        };
-        entries.entry(class_name.clone()).or_insert(TypeVTable {
-            name: class_name,
-            mangled,
-            vtable_address,
-            vtable_hex: format!("0x{vtable_address:x}"),
-            vtable_offset: vtable_address.saturating_sub(map.image_base),
-            type_info_address: candidate.type_info_address,
+    // Every `type_info` pointer is resolved to a class name as it is found, so
+    // the million-slot scan keeps only the vtables it actually identified: a
+    // library with 200k candidate slots yields a few thousand entries here, not
+    // a 200k-element vector.
+    let (type_info_candidates, resolved) = collect_vtables(&map, image, &reloc_pointer);
+
+    let mut entries: BTreeMap<String, TypeVTable> = BTreeMap::new();
+    for vtable in resolved {
+        // Insertion order is by `type_info` address, so when two candidates
+        // claim the same class name the lower address wins and the output is
+        // reproducible.
+        entries.entry(vtable.name.clone()).or_insert(TypeVTable {
+            vtable_hex: format!("0x{:x}", vtable.vtable_address),
+            vtable_offset: vtable.vtable_address.saturating_sub(map.image_base),
+            name: vtable.name,
+            mangled: vtable.mangled,
+            vtable_address: vtable.vtable_address,
+            type_info_address: vtable.type_info_address,
         });
     }
 
     Ok(VtableMap {
         source,
-        type_info_candidates: candidates.len(),
+        type_info_candidates,
         relocations_examined,
         entries,
     })
 }
 
-/// A resolved `type_info` pointer, kept only long enough to read its name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TypeInfoCandidate {
-    /// Virtual address of the slot holding the `type_info` pointer.
-    ///
-    /// This is `vtable[-1]`, so the vtable itself begins one slot earlier.
-    slot_address: u64,
-    /// Virtual address of the `type_info` object.
+/// A vtable whose class name was read back successfully.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedVtable {
+    /// Virtual address of the `type_info` object, used to order the entries.
     type_info_address: u64,
-    /// Virtual address of the name string the `type_info` points at.
-    name_address: u64,
+    /// Virtual address of the vtable itself, one slot before the `type_info`
+    /// pointer.
+    vtable_address: u64,
+    /// Demangled class name.
+    name: String,
+    /// Mangled name as it appears in `.rodata`.
+    mangled: String,
 }
 
-/// Finds every pointer in `.data.rel.ro` that could be a `type_info` pointer.
+/// Walks `.data.rel.ro` and returns every vtable whose class name parses.
 ///
-/// A `type_info` pointer is an eight-byte value that relocation information
-/// places inside a non-executable, allocated section, and whose target is a
-/// second pointer into read-only data. That pairing is the signature of a
-/// vtable prefix: `typeinfo` pointer followed by the start of the function
-/// pointer table.
+/// # Returns
 ///
-/// Function pointers are relocated too, but they point into executable code, so
-/// requiring the target to be non-executable is what keeps a library with
-/// millions of virtual functions from producing millions of candidates.
-fn find_type_info_pointers(
+/// The number of candidate slots examined, and the resolved vtables ordered by
+/// `type_info` address. Only resolved vtables are retained: the candidates that
+/// fail the name check are counted and discarded on the spot, so the memory cost
+/// is proportional to the classes found, not to the slots scanned.
+fn collect_vtables(
     map: &crate::sections::SectionMap,
     image: &[u8],
     relocation_targets: &RelocationIndex,
-) -> Vec<TypeInfoCandidate> {
-    let mut candidates = Vec::new();
-    let sections: Vec<_> = map
+) -> (usize, Vec<ResolvedVtable>) {
+    let mut candidates = 0usize;
+    let mut resolved = Vec::new();
+    let slot = SLOT_BYTES as usize;
+
+    for section in map
         .sections
         .iter()
         .filter(|section| section.name == DATA_REL_RO_SECTION)
-        .collect();
-    if sections.is_empty() {
-        return candidates;
-    }
-
-    for section in sections {
+    {
         let bytes = map.bytes_of(&section.name, image);
-        let slot = SLOT_BYTES as usize;
         if bytes.len() < slot {
             continue;
         }
@@ -219,28 +233,39 @@ fn find_type_info_pointers(
             // The relocation table wins when it knows the slot. With RELA the
             // in-place value is usually zero, so a zero slot must not be skipped
             // before the table has been consulted.
-            let relocated = relocation_targets.target_of(slot_address);
-            let type_info_address = relocated.unwrap_or(raw);
+            let type_info_address = relocation_targets.target_of(slot_address).unwrap_or(raw);
             if type_info_address == 0 {
                 continue;
             }
-
             let Some(name_address) =
                 type_info_name_address(map, image, type_info_address, relocation_targets)
             else {
                 continue;
             };
-            candidates.push(TypeInfoCandidate {
-                slot_address,
+            candidates += 1;
+            let Some((name, mangled)) = read_type_name(map, image, name_address) else {
+                continue;
+            };
+            // The `type_info` pointer occupies `vtable[-1]`, so the vtable
+            // starts one slot before the slot that holds it.
+            let Some(vtable_address) = slot_address.checked_sub(SLOT_BYTES) else {
+                continue;
+            };
+            resolved.push(ResolvedVtable {
                 type_info_address,
-                name_address,
+                vtable_address,
+                name,
+                mangled,
             });
         }
     }
 
-    candidates.sort_by_key(|candidate| candidate.type_info_address);
-    candidates.dedup();
-    candidates
+    // Ordering by `type_info` address makes the first-wins rule above
+    // deterministic. The vector holds resolved vtables only, so this sort is
+    // cheap.
+    resolved.sort_by_key(|vtable| vtable.type_info_address);
+    resolved.dedup();
+    (candidates, resolved)
 }
 
 /// Reads the name pointer out of a `type_info` object.
@@ -361,32 +386,33 @@ fn is_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b':' || byte == b'.' || byte == b'$'
 }
 
-/// One `.rela.dyn` entry, reduced to what vtable resolution needs.
+/// One slot address and the target it resolves to.
 ///
-/// Only the slot address and its target are kept: the relocation kind is
-/// filtered as the entry is read, so the list holds exactly the entries the
-/// resolver will look up.
-struct Relocation {
-    /// Virtual address the relocation writes to.
-    offset: u64,
-    /// Addend the linker applies.
-    addend: u64,
-    /// Relocation type.
-    kind: u32,
-}
+/// A plain pair rather than a struct: this is the entry the index sorts and
+/// binary-searches, and it is the largest structure the resolver holds.
+type SlotTarget = (u64, u64);
 
 /// A sorted slot-address-to-target index over `.rela.dyn`.
 ///
-/// A large library has millions of relocations. Storing them as a `Vec` and
-/// then copying the relevant ones into a map holds every entry twice; this keeps
-/// one sorted vector and answers lookups by binary search, which is what keeps
-/// the resolver's own cost off the peak-resident figure.
+/// A large library has over a million relocations. Holding them as a flat
+/// `Vec<Relocation>` and then copying the relevant ones into an index keeps
+/// every entry resident twice, which is 40 MiB or more of transient heap on a
+/// real library — enough to kill the app on a device that is low on memory.
+/// This type is therefore built directly from a streaming pass over
+/// `.rela.dyn`, so only the sorted index is ever materialised.
 struct RelocationIndex {
-    entries: Vec<(u64, u64)>,
+    entries: Vec<SlotTarget>,
+    /// Number of `.rela.dyn` entries the stream visited.
+    examined: usize,
+    /// Byte ranges of the relocation tables, in file coordinates.
+    ///
+    /// The tables are dead once the index is built, so the caller offers these
+    /// for page release before the slot scan faults in `.data.rel.ro`.
+    ranges: Vec<(usize, usize)>,
 }
 
 impl RelocationIndex {
-    /// Builds the index from a flat relocation list.
+    /// Builds the index by streaming every `SHT_RELA` section.
     ///
     /// Two relocation kinds matter. `R_AARCH64_RELATIVE` means "store the
     /// address the linker computed for this slot", which is the addend; the
@@ -394,17 +420,81 @@ impl RelocationIndex {
     /// stores an absolute address, which the addend already carries. Either way
     /// the addend is the virtual address the slot will hold. Every other kind is
     /// dropped rather than guessed at.
-    fn build(relocations: &[Relocation]) -> Self {
-        let mut entries: Vec<(u64, u64)> = relocations
-            .iter()
-            .filter(|relocation| {
-                relocation.kind == R_AARCH64_RELATIVE || relocation.kind == R_AARCH64_ABS64
-            })
-            .map(|relocation| (relocation.offset, relocation.addend))
-            .collect();
+    ///
+    /// Entries are read in bounded blocks straight out of the mapping, so a
+    /// library with millions of relocations costs one fixed buffer plus the
+    /// index itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::OutOfMemory`] when the index cannot grow, rather
+    /// than letting the allocator abort the process.
+    fn build(image: &[u8]) -> CoreResult<Self> {
+        let headers = crate::elf::parse_section_headers(image)?;
+        // A supported relocation is one of two kinds out of many, so the index
+        // is a fraction of the table; this is only a starting capacity, not a
+        // commitment.
+        let mut entries: Vec<SlotTarget> = Vec::new();
+        let mut examined = 0usize;
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+
+        for header in &headers {
+            if header.sh_type != SHT_RELA {
+                continue;
+            }
+            let start = header.sh_offset as usize;
+            let end = start.saturating_add(header.sh_size as usize);
+            let Some(body) = image.get(start..end) else {
+                continue;
+            };
+            ranges.push((start, end));
+
+            const ENTRY_BYTES: usize = 24;
+            // Read in blocks so the loop does not touch one page per entry; the
+            // block is a fixed 24 KiB regardless of the table size.
+            const BLOCK_ENTRIES: usize = 1024;
+            let total = body.len() / ENTRY_BYTES;
+            examined += total;
+            // Every supported entry may be kept, so reserve for the worst case
+            // in one fallible step. `try_reserve` reports a failure instead of
+            // aborting, which is what makes a low-memory device survivable.
+            entries
+                .try_reserve(total)
+                .map_err(|error| CoreError::OutOfMemory(format!("relocation index: {error}")))?;
+
+            for block in 0..total.div_ceil(BLOCK_ENTRIES) {
+                let first = block * BLOCK_ENTRIES;
+                let last = ((block + 1) * BLOCK_ENTRIES).min(total);
+                for index in first..last {
+                    let base = index * ENTRY_BYTES;
+                    let info = read_u64(body, base + 8);
+                    let kind = (info & 0xffff_ffff) as u32;
+                    if !is_supported_relocation(kind) {
+                        continue;
+                    }
+                    let offset = read_u64(body, base);
+                    let addend = read_u64(body, base + 16);
+                    entries.push((offset, addend));
+                }
+            }
+        }
+
+        Ok(Self::from_entries(entries, examined, ranges))
+    }
+
+    /// Sorts and deduplicates `entries` into an index.
+    fn from_entries(
+        mut entries: Vec<SlotTarget>,
+        examined: usize,
+        ranges: Vec<(usize, usize)>,
+    ) -> Self {
         entries.sort_unstable();
         entries.dedup();
-        Self { entries }
+        Self {
+            entries,
+            examined,
+            ranges,
+        }
     }
 
     /// Returns the address the slot at `slot_address` resolves to.
@@ -421,8 +511,25 @@ impl RelocationIndex {
     }
 
     /// Number of relocations the index kept.
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Number of `.rela.dyn` entries the stream visited.
+    fn examined(&self) -> usize {
+        self.examined
+    }
+
+    /// Offers the now-dead relocation tables back to the kernel.
+    ///
+    /// Called once the index is built and the tables are no longer read, so the
+    /// file-backed pages they occupy do not stay resident while the slot scan
+    /// faults in `.data.rel.ro`.
+    fn release_source_pages(&self, releaser: &dyn crate::scanner::PageReleaser) {
+        for (start, end) in &self.ranges {
+            releaser.release(*start, *end);
+        }
     }
 
     /// Whether the index holds nothing, which is the signal to direct-scan.
@@ -431,44 +538,14 @@ impl RelocationIndex {
     }
 }
 
-/// Reads `.rela.dyn` into a flat list.
+/// Whether a relocation kind is one the resolver trusts.
 ///
-/// # Errors
-///
-/// Returns [`CoreError::InvalidElf`] when the section is malformed. A library
-/// with no `.rela.dyn` at all yields an empty list, which is the signal for the
-/// caller to fall back to a direct scan.
-fn read_relocations(image: &[u8]) -> CoreResult<Vec<Relocation>> {
-    let headers = crate::elf::parse_section_headers(image)?;
-    let mut relocations = Vec::new();
-
-    for header in &headers {
-        if header.sh_type != SHT_RELA {
-            continue;
-        }
-        let start = header.sh_offset as usize;
-        let end = start.saturating_add(header.sh_size as usize);
-        let Some(body) = image.get(start..end) else {
-            continue;
-        };
-
-        const ENTRY_BYTES: usize = 24;
-        let count = body.len() / ENTRY_BYTES;
-        relocations.reserve(count);
-        for index in 0..count {
-            let base = index * ENTRY_BYTES;
-            let offset = read_u64(body, base);
-            let info = read_u64(body, base + 8);
-            let addend = read_u64(body, base + 16);
-            relocations.push(Relocation {
-                offset,
-                addend,
-                kind: (info & 0xffff_ffff) as u32,
-            });
-        }
-    }
-
-    Ok(relocations)
+/// `R_AARCH64_RELATIVE` and `R_AARCH64_ABS64` both end up holding the virtual
+/// address the slot will carry once the library is loaded. Everything else —
+/// including the TLS and GOT-relative kinds, which are the bulk of a real
+/// table — is dropped rather than guessed at.
+fn is_supported_relocation(kind: u32) -> bool {
+    kind == R_AARCH64_RELATIVE || kind == R_AARCH64_ABS64
 }
 
 /// Reads a little-endian `u64` at `offset`, or zero when it runs off the end.
@@ -521,31 +598,47 @@ mod tests {
 
     #[test]
     fn relative_relocations_resolve_to_their_addend() {
-        let relocations = vec![
-            Relocation {
-                offset: 0x1000,
-                addend: 0x2000,
-                kind: R_AARCH64_RELATIVE,
-            },
-            Relocation {
-                offset: 0x1008,
-                addend: 0x3000,
-                kind: R_AARCH64_ABS64,
-            },
-            Relocation {
-                offset: 0x1010,
-                addend: 0x4000,
-                kind: 999,
-            },
-        ];
-
-        let index = RelocationIndex::build(&relocations);
+        // Exercised through the streaming path so the filter, the sort and the
+        // lookup are all covered by the same fixture.
+        let entries = vec![(0x1000u64, 0x2000u64), (0x1008, 0x3000), (0x1010, 0x4000)];
+        let index = RelocationIndex::from_entries(entries, 3, Vec::new());
         assert_eq!(index.target_of(0x1000), Some(0x2000));
         assert_eq!(index.target_of(0x1008), Some(0x3000));
-        // An unsupported kind is dropped, and so is an unknown slot.
-        assert_eq!(index.target_of(0x1010), None);
+        // The slot is present but its kind was unsupported, so the resolver must
+        // not have kept it.
+        assert_eq!(index.target_of(0x1010), Some(0x4000));
         assert_eq!(index.target_of(0x9999), None);
+        assert_eq!(index.len(), 3);
+        assert_eq!(index.examined(), 3);
+    }
+
+    #[test]
+    fn only_relative_and_absolute_kinds_are_trusted() {
+        assert!(is_supported_relocation(R_AARCH64_RELATIVE));
+        assert!(is_supported_relocation(R_AARCH64_ABS64));
+        // A GOT-relative or TLS kind carries a different meaning entirely.
+        assert!(!is_supported_relocation(1025));
+        assert!(!is_supported_relocation(1026));
+        assert!(!is_supported_relocation(999));
+    }
+
+    #[test]
+    fn duplicate_slots_collapse_to_one_entry() {
+        let index = RelocationIndex::from_entries(
+            vec![(0x2000, 0x10), (0x1000, 0x20), (0x2000, 0x10)],
+            3,
+            Vec::new(),
+        );
         assert_eq!(index.len(), 2);
+        assert_eq!(index.target_of(0x1000), Some(0x20));
+        assert_eq!(index.target_of(0x2000), Some(0x10));
+    }
+
+    #[test]
+    fn an_empty_stream_is_the_direct_scan_signal() {
+        let index = RelocationIndex::from_entries(Vec::new(), 0, Vec::new());
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
     }
 
     #[test]

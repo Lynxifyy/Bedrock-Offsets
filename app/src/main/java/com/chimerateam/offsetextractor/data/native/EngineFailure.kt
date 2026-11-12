@@ -5,8 +5,8 @@ package com.chimerateam.offsetextractor.data.native
  *
  * The message is formatted as `kind: detail`, where `kind` is one of
  * `missing_so`, `invalid_apk`, `invalid_descriptor`, `storage_full`,
- * `io_error`, `invalid_elf`, `unsupported_arch`, `missing_section`,
- * `invalid_pattern`, `cancelled` or `unknown`.
+ * `out_of_memory`, `io_error`, `invalid_elf`, `unsupported_arch`,
+ * `missing_section`, `invalid_pattern`, `cancelled` or `unknown`.
  *
  * @property kind machine-readable failure classification.
  * @property detail human-readable description.

@@ -101,6 +101,11 @@ object ErrorMapper {
                 hint = "Free some space and retry."
             )
 
+            EngineErrorKind.OutOfMemory -> UserFacingError(
+                message = "The scan ran out of memory while resolving the library.",
+                hint = "Close other apps and try again; the extraction itself is streaming."
+            )
+
             EngineErrorKind.InvalidElf -> UserFacingError(
                 message = "$subject is not a valid ELF shared object.",
                 hint = "The file inside the APK may be corrupted or truncated."
