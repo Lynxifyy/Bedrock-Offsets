@@ -14,7 +14,6 @@ import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.saf.DocumentWriter
-import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.WriteResult
@@ -663,8 +662,14 @@ class MainViewModel(
             }
         }
         map
-    } catch (failure: EngineException) {
-        emit(Logs.warn(TAG_RUST, "Vtable resolution skipped: ${failure.message}"))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (throwable: Throwable) {
+        // The RTTI pass is the memory-hungry one, and a failure there is not
+        // fatal: the offset scan is already complete and is reported on its own.
+        // Catching only EngineException would let an OutOfMemoryError discard a
+        // good scan, so every throwable is absorbed here.
+        emit(Logs.warn(TAG_RUST, "Vtable resolution skipped: ${throwable.message}"))
         VtableMap.EMPTY
     }
 

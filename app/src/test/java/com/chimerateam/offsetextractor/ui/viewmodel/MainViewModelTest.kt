@@ -756,6 +756,26 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aVtableFailureStillYieldsTheOffsetScan() = runTest(dispatcher) {
+        // The RTTI pass is the memory-hungry one. When it dies -- an
+        // OutOfMemoryError is not an EngineException -- the offset scan it was
+        // paired with is already complete and must still be reported, rather
+        // than the whole scan being thrown away.
+        val engine = FakeEngine(vtableFailure = OutOfMemoryError("relocation table"))
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(ScannerPhase.Success, state.phase)
+        assertNotNull("the offset scan must survive a failed vtable pass", state.result)
+        assertEquals(1, state.result?.patternHits?.size)
+        assertTrue(state.result?.vtables?.isEmpty != false)
+        assertNull(state.error)
+    }
+
+    @Test
     fun rapidSelectionsOnlyRunTheLastScan() = runTest(dispatcher) {
         val engine = FakeEngine(delayMillis = 50)
         val viewModel = newViewModel(engine = engine)
@@ -1036,7 +1056,9 @@ private class FakeEngine(
     private val failure: Throwable? = null,
     private val delayMillis: Long = 0,
     /** Scan outcome the double returns; `null` builds the default outcome. */
-    private val scan: ScanOutcome? = null
+    private val scan: ScanOutcome? = null,
+    /** Failure thrown by `resolveVtables` alone; `null` uses the default map. */
+    private val vtableFailure: Throwable? = null
 ) : OffsetEngine {
 
     var calls = 0
@@ -1138,6 +1160,7 @@ private class FakeEngine(
         if (delayMillis > 0) {
             delay(delayMillis)
         }
+        vtableFailure?.let { throw it }
         failure?.let { throw it }
         return vtableResult ?: throw EngineException(EngineErrorKind.InvalidElf, "no vtables")
     }
