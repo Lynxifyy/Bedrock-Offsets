@@ -85,4 +85,33 @@ class SignaturePackTest {
             patterns.all { it.name.isNotBlank() && it.pattern.isNotBlank() }
         )
     }
+
+    @Test
+    fun everyBundledSignatureIsAJniSymbol() {
+        // Each name has to be an exported JNI entry point: that is what lets the
+        // engine check the offset against the library's own symbol table and
+        // report it as verified instead of guessed.
+        val asset = java.io.File("src/main/assets/patterns.json")
+        val patterns = SignaturePack.parse(asset.readText())
+
+        assertTrue(
+            "every signature must be named after a Java_ symbol",
+            patterns.all { it.name.startsWith("Java_") }
+        )
+        assertTrue(
+            "a signature name must be a plain identifier so it can be a JSON key",
+            patterns.all { name -> name.name.all { it.isLetterOrDigit() || it == '_' } }
+        )
+    }
+
+    @Test
+    fun noTwoBundledSignaturesShareAPattern() {
+        // A duplicate would make one entry unreachable: the engine reports a
+        // match under the first name that compiled it.
+        val asset = java.io.File("src/main/assets/patterns.json")
+        val patterns = SignaturePack.parse(asset.readText())
+
+        val distinct = patterns.map { it.pattern }.toSet()
+        assertEquals(patterns.size, distinct.size)
+    }
 }
