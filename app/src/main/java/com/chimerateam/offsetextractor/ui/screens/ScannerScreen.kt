@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -72,19 +70,6 @@ fun ScannerScreen(
         val availableWidth = maxWidth
         val sideBySide = availableWidth >= 600.dp
 
-        val controls: @Composable () -> Unit = {
-            ControlsPane(
-                state = state,
-                onSelectApk = onSelectApk,
-                onSelectApks = onSelectApks,
-                onCancelSelection = onCancelSelection,
-                onRetry = onRetry,
-                onCopyJson = onCopyJson,
-                onShareJson = onShareJson,
-                onSaveJson = onSaveJson
-            )
-        }
-
         if (sideBySide) {
             Row(
                 modifier = Modifier
@@ -92,13 +77,27 @@ fun ScannerScreen(
                     .padding(PanelGap),
                 horizontalArrangement = Arrangement.spacedBy(PanelGap)
             ) {
+                // Deliberately not scrollable: the success pane ends in a lazily
+                // scrolled list, and a lazy list inside a vertically scrollable
+                // parent is measured with an infinite maximum height, which
+                // throws. The pane takes the full height and the list scrolls
+                // inside it.
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .verticalScroll(rememberScrollState())
                 ) {
-                    controls()
+                    ControlsPane(
+                        state = state,
+                        fillHeight = true,
+                        onSelectApk = onSelectApk,
+                        onSelectApks = onSelectApks,
+                        onCancelSelection = onCancelSelection,
+                        onRetry = onRetry,
+                        onCopyJson = onCopyJson,
+                        onShareJson = onShareJson,
+                        onSaveJson = onSaveJson
+                    )
                 }
                 LiveLogPane(
                     entries = entries,
@@ -116,7 +115,17 @@ fun ScannerScreen(
                     .padding(PanelGap),
                 verticalArrangement = Arrangement.spacedBy(PanelGap)
             ) {
-                controls()
+                ControlsPane(
+                    state = state,
+                    fillHeight = false,
+                    onSelectApk = onSelectApk,
+                    onSelectApks = onSelectApks,
+                    onCancelSelection = onCancelSelection,
+                    onRetry = onRetry,
+                    onCopyJson = onCopyJson,
+                    onShareJson = onShareJson,
+                    onSaveJson = onSaveJson
+                )
                 LiveLogPane(
                     entries = entries,
                     onCopyLog = onCopyLog,
@@ -133,6 +142,7 @@ fun ScannerScreen(
 @Composable
 private fun ControlsPane(
     state: ScannerUiState,
+    fillHeight: Boolean,
     onSelectApk: () -> Unit,
     onSelectApks: () -> Unit,
     onCancelSelection: () -> Unit,
@@ -154,6 +164,7 @@ private fun ControlsPane(
         PhasePane(
             phase = phase,
             state = state,
+            fillHeight = fillHeight,
             onSelectApk = onSelectApk,
             onSelectApks = onSelectApks,
             onCancelSelection = onCancelSelection,
@@ -169,6 +180,7 @@ private fun ControlsPane(
 private fun PhasePane(
     phase: ScannerPhase,
     state: ScannerUiState,
+    fillHeight: Boolean,
     onSelectApk: () -> Unit,
     onSelectApks: () -> Unit,
     onCancelSelection: () -> Unit,
@@ -185,6 +197,7 @@ private fun PhasePane(
 
         ScannerPhase.Success -> SuccessPane(
             state = state,
+            fillHeight = fillHeight,
             onStartNewScan = onCancelSelection,
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
@@ -214,21 +227,27 @@ private fun PhasePane(
 @Composable
 private fun SuccessPane(
     state: ScannerUiState,
+    fillHeight: Boolean,
     onStartNewScan: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit
 ) {
     val result = state.result ?: return
-    Column(modifier = Modifier.fillMaxWidth()) {
+    // When the pane owns the full height, the summary stays pinned and the list
+    // scrolls in whatever space is left. Otherwise the pane is content-sized and
+    // the list scrolls within the height its parent already bounds.
+    Column(modifier = if (fillHeight) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
         ResultsPanel(result = result)
         Spacer(Modifier.height(PanelGap))
         ResultsScreen(
             result = result,
+            fillHeight = fillHeight,
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
             onSaveJson = onSaveJson,
-            onStartNewScan = onStartNewScan
+            onStartNewScan = onStartNewScan,
+            modifier = if (fillHeight) Modifier.weight(1f) else Modifier
         )
     }
 }

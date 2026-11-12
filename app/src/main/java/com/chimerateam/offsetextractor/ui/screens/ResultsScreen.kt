@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -51,6 +52,8 @@ internal const val SEARCH_FIELD_TAG = "results-search"
  * that is what an out-of-date signature pack looks like.
  *
  * @param result the completed scan summary.
+ * @param fillHeight whether the screen should fill the height it is given and
+ *   let its list scroll, rather than sizing to its content.
  * @param onCopyJson copies the exported JSON to the clipboard.
  * @param onShareJson shares the exported JSON.
  * @param onSaveJson writes the exported JSON to a user-chosen location.
@@ -60,6 +63,7 @@ internal const val SEARCH_FIELD_TAG = "results-search"
 @Composable
 fun ResultsScreen(
     result: ScanResultSummary,
+    fillHeight: Boolean = false,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
@@ -71,7 +75,9 @@ fun ResultsScreen(
     val visible = remember(rows, query) { rows.filter { it.matches(query) } }
     val conflicts = remember(rows) { rows.count { it.status.isConflict } }
 
-    Column(modifier = modifier.fillMaxWidth()) {
+    Column(
+        modifier = if (fillHeight) modifier.fillMaxSize() else modifier.fillMaxWidth()
+    ) {
         Text(text = "Offsets", style = MonoText.headline)
         Spacer(Modifier.height(8.dp))
         Text(
@@ -102,7 +108,11 @@ fun ResultsScreen(
                 }
             )
         } else {
-            LazyColumn(modifier = Modifier.fillMaxWidth()) {
+            // With a bounded parent the list takes the leftover height and
+            // scrolls there; otherwise it sizes to its rows.
+            val listModifier =
+                if (fillHeight) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth()
+            LazyColumn(modifier = listModifier) {
                 items(visible, key = { "${it.category}:${it.name}:${it.addressHex}" }) { row ->
                     OffsetRowItem(row)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
