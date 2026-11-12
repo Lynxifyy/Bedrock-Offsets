@@ -101,6 +101,12 @@ forked agent-server SDK (`Lynxifyy/software-agent-sdk-2.0`).
   variant has no Compose test manifest); goblin's `Elf::lazy_parse` leaves
   `section_headers` empty (use `parse_section_headers`); JNI symbols are
   `Java_com_chimerateam_offsetextractor_data_native_NativeLib_<method>`.
+- **Latest release: v1.0.6** (tag on `fd36ce6`, PR #11 squash-merged). Release
+  APK is **debug-key signed**: no `SIGNING_KEYSTORE_BASE64` secret exists, so the
+  Release workflow's "fail if meant to be signed" step is skipped by design.
+  Always verify the *downloaded* artefact with
+  `python3 scripts/verify_release.py --apk <file>`. Local full-gate runner:
+  `/tmp/test_all.sh` (14 gates + `cargo audit`).
 - **Review-findings PR #11** (`fix/review-findings`, 16 fixes, one commit each):
   cancelling a coroutine does **not** stop a blocking JNI scan — Rust
   `scanner::begin_scan()` registers the in-flight scan behind a generation-checked
