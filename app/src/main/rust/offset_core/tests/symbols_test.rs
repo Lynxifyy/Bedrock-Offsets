@@ -68,8 +68,9 @@ fn real_engine_exports_the_jni_entry_points() {
     // The UI calls this from another thread to stop a blocking scan, so it must
     // be exported with the exact name Kotlin declares as `external`.
     assert!(
-        names
-            .contains(&"Java_com_chimerateam_offsetextractor_data_native_NativeLib_cancelScanNative"),
+        names.contains(
+            &"Java_com_chimerateam_offsetextractor_data_native_NativeLib_cancelScanNative"
+        ),
         "expected cancelScanNative in {names:?}"
     );
     assert!(names.iter().all(|name| name.starts_with(JNI_SYMBOL_PREFIX)));
