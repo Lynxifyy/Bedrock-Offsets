@@ -31,12 +31,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -100,15 +96,6 @@ class MainViewModel(
 
     /** Current scanner snapshot. */
     val uiState: StateFlow<ScannerUiState> = _uiState.asStateFlow()
-
-    private val _logs = MutableSharedFlow<LogEntry>(
-        replay = 0,
-        extraBufferCapacity = LOG_BUFFER,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-
-    /** Live-log stream; buffered so a slow collector cannot block the engine. */
-    val logs: SharedFlow<LogEntry> = _logs.asSharedFlow()
 
     private val _logEntries = MutableStateFlow<List<LogEntry>>(emptyList())
 
@@ -801,7 +788,6 @@ class MainViewModel(
     }
 
     private fun emit(entry: LogEntry) {
-        _logs.tryEmit(entry)
         _logEntries.update { existing ->
             val appended = existing + entry
             if (appended.size <= MAX_LOG_ENTRIES) {
@@ -827,7 +813,6 @@ class MainViewModel(
      * @param patterns signatures the scanner looks for; empty skips the scan.
      */
     companion object {
-        private const val LOG_BUFFER = 64
 
         /**
          * Builds a ViewModel wired to the real engine.

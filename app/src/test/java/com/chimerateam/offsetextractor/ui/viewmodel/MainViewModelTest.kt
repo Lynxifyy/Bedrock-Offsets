@@ -3,7 +3,6 @@ package com.chimerateam.offsetextractor.ui.viewmodel
 import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
-import app.cash.turbine.test
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.native.BuildIdentity
@@ -31,15 +30,11 @@ import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.SafFailure
 import com.chimerateam.offsetextractor.data.saf.WriteResult
-import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogLevel
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import java.io.File
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -148,12 +143,11 @@ class MainViewModelTest {
             100 to "Scan complete"
         )
         val viewModel = newViewModel(engine = engine)
-        val logs = mutableListOf<LogEntry>()
-        val collector = launch { viewModel.logs.collect { logs += it } }
 
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
-        collector.cancel()
+
+        val logs = viewModel.logEntries.value
 
         val state = viewModel.uiState.value
         assertEquals(ScannerPhase.Success, state.phase)
@@ -248,12 +242,10 @@ class MainViewModelTest {
         val engine = FakeEngine()
         val viewModel = newViewModel(engine = engine)
 
-        val collected = mutableListOf<LogEntry>()
-        val job = startCollector(this, viewModel, collected)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
-        job.cancel()
+
+        val collected = viewModel.logEntries.value
 
         assertTrue(
             "expected the zero-copy mapping line",
@@ -266,12 +258,10 @@ class MainViewModelTest {
         val engine = FakeEngine()
         val viewModel = newViewModel(engine = engine)
 
-        val collected = mutableListOf<LogEntry>()
-        val job = startCollector(this, viewModel, collected)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
-        job.cancel()
+
+        val collected = viewModel.logEntries.value
 
         val boundary = collected.firstOrNull { it.message.contains("Section .text") }
         assertNotNull("expected a .text boundary line", boundary)
@@ -348,12 +338,10 @@ class MainViewModelTest {
         )
         val viewModel = newViewModel(engine = engine)
 
-        val collected = mutableListOf<LogEntry>()
-        val job = startCollector(this, viewModel, collected)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
-        job.cancel()
+
+        val collected = viewModel.logEntries.value
 
         assertTrue(
             "expected a SAF descriptor line",
@@ -390,19 +378,12 @@ class MainViewModelTest {
         val engine = FakeEngine(failure = EngineException(EngineErrorKind.InvalidApk, "bad"))
         val viewModel = newViewModel(engine = engine)
 
-        viewModel.logs.test {
-            viewModel.onApkSelected(uri)
-            advanceUntilIdle()
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
 
-            val errors = mutableListOf<LogEntry>()
-            while (true) {
-                val next = awaitItem()
-                if (next.level == LogLevel.Error) errors.add(next)
-                if (next.tag == "RUST" && next.level == LogLevel.Error) break
-            }
-            assertTrue(errors.isNotEmpty())
-            cancelAndIgnoreRemainingEvents()
-        }
+        val errors = viewModel.logEntries.value.filter { it.level == LogLevel.Error }
+        assertTrue("expected an error on the log", errors.isNotEmpty())
+        assertTrue(errors.any { it.tag == "RUST" })
     }
 
     @Test
@@ -415,16 +396,14 @@ class MainViewModelTest {
             WriteResult.Success
         }
         val viewModel = newViewModel(writer = writer)
-        val logs = mutableListOf<LogEntry>()
-        val collector = startCollector(this, viewModel, logs)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
 
         val destination = android.net.Uri.parse("content://downloads/offsets.json")
         viewModel.onExportDestinationChosen(destination)
         advanceUntilIdle()
-        collector.cancel()
+
+        val logs = viewModel.logEntries.value
 
         assertEquals(destination, writtenUri)
         assertTrue("expected the JSON document", writtenText.contains("schemaVersion"))
@@ -440,14 +419,12 @@ class MainViewModelTest {
             WriteResult.Success
         }
         val viewModel = newViewModel(writer = writer)
-        val logs = mutableListOf<LogEntry>()
-        val collector = startCollector(this, viewModel, logs)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
         viewModel.onExportDestinationChosen(null)
         advanceUntilIdle()
-        collector.cancel()
+
+        val logs = viewModel.logEntries.value
 
         assertEquals(0, writeCalls)
         assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
@@ -459,14 +436,12 @@ class MainViewModelTest {
     fun aFailedExportSurfacesTheReasonAndKeepsTheResult() = runTest(dispatcher) {
         val writer = DocumentWriter { _, _ -> WriteResult.Failure("Storage is full.") }
         val viewModel = newViewModel(writer = writer)
-        val logs = mutableListOf<LogEntry>()
-        val collector = startCollector(this, viewModel, logs)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
         viewModel.onExportDestinationChosen(android.net.Uri.parse("content://x/y.json"))
         advanceUntilIdle()
-        collector.cancel()
+
+        val logs = viewModel.logEntries.value
 
         assertEquals("Storage is full.", viewModel.uiState.value.exportMessage)
         assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
@@ -995,14 +970,6 @@ class MainViewModelTest {
         viewModel.onBatchSummaryShown()
 
         assertNull(viewModel.uiState.value.batchSummary)
-    }
-
-    private fun startCollector(
-        scope: CoroutineScope,
-        viewModel: MainViewModel,
-        into: MutableList<LogEntry>
-    ): Job = scope.launch {
-        viewModel.logs.collect { into.add(it) }
     }
 
     private fun newViewModel(
