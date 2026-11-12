@@ -114,12 +114,10 @@ jobs:
       - name: Test the build scripts
         run: python3 -m unittest discover -s scripts/tests -t . -v
 
-      - name: Check the signature pack is up to date
-        run: python3 scripts/generate_patterns.py patterns.txt --check
-
-      # The pack must also be reproducible from the source it claims to come
-      # from. This rebuilds it from the committed `patterns.txt` and compares,
-      # which catches a hand-edit that the generator would not produce.
+      # The pack must be reproducible from the source it claims to come from.
+      # Regenerating from the committed `patterns.txt` and diffing catches both
+      # a stale pack and a hand-edit the generator would not produce, so a
+      # separate `--check` pass would only repeat this comparison.
       - name: Check the signature pack round-trips
         run: |
           python3 scripts/generate_patterns.py patterns.txt
