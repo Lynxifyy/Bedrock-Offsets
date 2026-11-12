@@ -203,8 +203,9 @@ read, `2` for a bad argument. The release workflow runs it before assembling.
 
 Checks the built release APK against the shipping budget: the size cap, the
 packaged arm64-v8a engine, the absence of `Log.d`/`Log.v` call sites in the
-bytecode, that every Gson model survived shrinking with a constructor, and the
-absence of an `INTERNET` permission. The Gson check catches the release-only
+bytecode, that every Gson model survived shrinking with a constructor, that the
+JNI progress callback method kept its name, and the absence of an `INTERNET`
+permission. The Gson check catches the release-only
 failure where R8 strips a model's constructor and Gson then throws
 "Abstract classes can't be instantiated!"; see
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). CI runs it after
@@ -213,6 +214,7 @@ failure where R8 strips a model's constructor and Gson then throws
 ```bash
 python3 scripts/verify_release.py                     # newest APK under app/build
 python3 scripts/verify_release.py path/to/app.apk
+python3 scripts/verify_release.py --apk path/to/app.apk
 ```
 
 Exit codes: `0` when every check passes, `1` when one fails, `2` when the APK

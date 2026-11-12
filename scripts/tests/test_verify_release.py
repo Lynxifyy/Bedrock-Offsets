@@ -415,6 +415,21 @@ class CliTests(unittest.TestCase):
         apk = build_apk(self.root, natives=())
         self.assertEqual(1, verify_release.main([str(apk)]))
 
+    def test_the_apk_can_be_named_with_a_flag(self) -> None:
+        # CI and the docs call the script both ways; the flag form must resolve
+        # the same file as the positional form.
+        apk = build_apk(self.root)
+        self.assertEqual(0, verify_release.main(["--apk", str(apk)]))
+
+    def test_the_flag_overrides_the_positional_argument(self) -> None:
+        chosen = build_apk(self.root, name="chosen.apk")
+        other = build_apk(self.root, name="other.apk")
+        os.utime(chosen, (1_000_000, 1_000_000))
+        os.utime(other, (2_000_000, 2_000_000))
+
+        # The directory would resolve to `other.apk`; the flag must win.
+        self.assertEqual(0, verify_release.main([str(self.root), "--apk", str(chosen)]))
+
     def test_a_missing_apk_exits_two(self) -> None:
         missing = self.root / "absent.apk"
         self.assertEqual(2, verify_release.main([str(missing)]))

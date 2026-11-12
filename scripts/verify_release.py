@@ -413,10 +413,16 @@ def main(argv: list[str] | None = None) -> int:
         nargs="?",
         help="release APK, or a directory to search (default: app/build/outputs/apk/release)",
     )
+    parser.add_argument(
+        "--apk",
+        dest="apk_flag",
+        type=Path,
+        help="release APK to check; takes precedence over the positional argument",
+    )
     args = parser.parse_args(argv)
 
     try:
-        target = args.apk or Path("app/build/outputs/apk/release")
+        target = args.apk_flag or args.apk or Path("app/build/outputs/apk/release")
         apk = find_apk(target) if target.is_dir() else target
         if not apk.is_file():
             raise ReleaseCheckError(f"{apk} does not exist")
