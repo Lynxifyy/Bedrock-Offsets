@@ -76,6 +76,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val forceRescan by viewModel.forceRescan.collectAsStateWithLifecycle()
     val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsStateWithLifecycle()
+    val lastBuildId by viewModel.lastBuildId.collectAsStateWithLifecycle()
     val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
 
     val picker = rememberLauncherForActivityResult(
@@ -300,7 +301,8 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         cacheSizeLabel = formatBytes(cacheSizeBytes),
                         forceRescan = forceRescan,
                         onForceRescanChange = { viewModel.setForceRescan(it) },
-                        onClearCache = { viewModel.clearCache() }
+                        onClearCache = { viewModel.clearCache() },
+                        lastBuildId = lastBuildId
                     )
                 }
             }

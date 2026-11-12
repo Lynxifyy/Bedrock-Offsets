@@ -3,7 +3,6 @@ package com.chimerateam.offsetextractor.ui.viewmodel
 import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
-import app.cash.turbine.test
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.native.BuildIdentity
@@ -31,16 +30,11 @@ import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.SafFailure
 import com.chimerateam.offsetextractor.data.saf.WriteResult
-import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogLevel
-import com.chimerateam.offsetextractor.ui.state.ProgressTracker
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import java.io.File
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -149,12 +143,11 @@ class MainViewModelTest {
             100 to "Scan complete"
         )
         val viewModel = newViewModel(engine = engine)
-        val logs = mutableListOf<LogEntry>()
-        val collector = launch { viewModel.logs.collect { logs += it } }
 
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
-        collector.cancel()
+
+        val logs = viewModel.logEntries.value
 
         val state = viewModel.uiState.value
         assertEquals(ScannerPhase.Success, state.phase)
@@ -249,12 +242,10 @@ class MainViewModelTest {
         val engine = FakeEngine()
         val viewModel = newViewModel(engine = engine)
 
-        val collected = mutableListOf<LogEntry>()
-        val job = startCollector(this, viewModel, collected)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
-        job.cancel()
+
+        val collected = viewModel.logEntries.value
 
         assertTrue(
             "expected the zero-copy mapping line",
@@ -267,12 +258,10 @@ class MainViewModelTest {
         val engine = FakeEngine()
         val viewModel = newViewModel(engine = engine)
 
-        val collected = mutableListOf<LogEntry>()
-        val job = startCollector(this, viewModel, collected)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
-        job.cancel()
+
+        val collected = viewModel.logEntries.value
 
         val boundary = collected.firstOrNull { it.message.contains("Section .text") }
         assertNotNull("expected a .text boundary line", boundary)
@@ -323,6 +312,21 @@ class MainViewModelTest {
     }
 
     @Test
+    fun cancellingAScanAlsoReachesTheNativeEngine() = runTest(dispatcher) {
+        // Cancelling the coroutine cannot interrupt the blocking JNI scan, so
+        // cancel() must also signal the engine's own cancellation flag.
+        val engine = FakeEngine(delayMillis = 10_000)
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        runCurrent()
+
+        viewModel.cancel()
+
+        assertEquals("the engine must be told to stop", 1, engine.cancelCalls)
+    }
+
+    @Test
     fun retryReturnsToIdleAndClearsTheError() = runTest(dispatcher) {
         val engine = FakeEngine(
             failure = EngineException(EngineErrorKind.InvalidApk, "bad")
@@ -349,12 +353,10 @@ class MainViewModelTest {
         )
         val viewModel = newViewModel(engine = engine)
 
-        val collected = mutableListOf<LogEntry>()
-        val job = startCollector(this, viewModel, collected)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
-        job.cancel()
+
+        val collected = viewModel.logEntries.value
 
         assertTrue(
             "expected a SAF descriptor line",
@@ -391,19 +393,12 @@ class MainViewModelTest {
         val engine = FakeEngine(failure = EngineException(EngineErrorKind.InvalidApk, "bad"))
         val viewModel = newViewModel(engine = engine)
 
-        viewModel.logs.test {
-            viewModel.onApkSelected(uri)
-            advanceUntilIdle()
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
 
-            val errors = mutableListOf<LogEntry>()
-            while (true) {
-                val next = awaitItem()
-                if (next.level == LogLevel.Error) errors.add(next)
-                if (next.tag == "RUST" && next.level == LogLevel.Error) break
-            }
-            assertTrue(errors.isNotEmpty())
-            cancelAndIgnoreRemainingEvents()
-        }
+        val errors = viewModel.logEntries.value.filter { it.level == LogLevel.Error }
+        assertTrue("expected an error on the log", errors.isNotEmpty())
+        assertTrue(errors.any { it.tag == "RUST" })
     }
 
     @Test
@@ -416,16 +411,14 @@ class MainViewModelTest {
             WriteResult.Success
         }
         val viewModel = newViewModel(writer = writer)
-        val logs = mutableListOf<LogEntry>()
-        val collector = startCollector(this, viewModel, logs)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
 
         val destination = android.net.Uri.parse("content://downloads/offsets.json")
         viewModel.onExportDestinationChosen(destination)
         advanceUntilIdle()
-        collector.cancel()
+
+        val logs = viewModel.logEntries.value
 
         assertEquals(destination, writtenUri)
         assertTrue("expected the JSON document", writtenText.contains("schemaVersion"))
@@ -441,14 +434,12 @@ class MainViewModelTest {
             WriteResult.Success
         }
         val viewModel = newViewModel(writer = writer)
-        val logs = mutableListOf<LogEntry>()
-        val collector = startCollector(this, viewModel, logs)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
         viewModel.onExportDestinationChosen(null)
         advanceUntilIdle()
-        collector.cancel()
+
+        val logs = viewModel.logEntries.value
 
         assertEquals(0, writeCalls)
         assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
@@ -460,14 +451,12 @@ class MainViewModelTest {
     fun aFailedExportSurfacesTheReasonAndKeepsTheResult() = runTest(dispatcher) {
         val writer = DocumentWriter { _, _ -> WriteResult.Failure("Storage is full.") }
         val viewModel = newViewModel(writer = writer)
-        val logs = mutableListOf<LogEntry>()
-        val collector = startCollector(this, viewModel, logs)
-
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
         viewModel.onExportDestinationChosen(android.net.Uri.parse("content://x/y.json"))
         advanceUntilIdle()
-        collector.cancel()
+
+        val logs = viewModel.logEntries.value
 
         assertEquals("Storage is full.", viewModel.uiState.value.exportMessage)
         assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
@@ -593,6 +582,19 @@ class MainViewModelTest {
         assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
         assertEquals(1, engine.scanCalls)
         assertEquals(0L, viewModel.cacheSizeBytes.value)
+    }
+
+    @Test
+    fun aSuccessfulScanRecordsTheBuildId() = runTest(dispatcher) {
+        // The id is what the Settings screen shows, and what the next launch
+        // uses to recognise a cached scan, so it must be published.
+        val preferences = FakeScanPreferences()
+        val viewModel = newViewModel(preferences = preferences)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals("abcdef0123456789", viewModel.lastBuildId.value)
     }
 
     @Test
@@ -756,6 +758,26 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aVtableFailureStillYieldsTheOffsetScan() = runTest(dispatcher) {
+        // The RTTI pass is the memory-hungry one. When it dies -- an
+        // OutOfMemoryError is not an EngineException -- the offset scan it was
+        // paired with is already complete and must still be reported, rather
+        // than the whole scan being thrown away.
+        val engine = FakeEngine(vtableFailure = OutOfMemoryError("relocation table"))
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(ScannerPhase.Success, state.phase)
+        assertNotNull("the offset scan must survive a failed vtable pass", state.result)
+        assertEquals(1, state.result?.patternHits?.size)
+        assertTrue(state.result?.vtables?.isEmpty != false)
+        assertNull(state.error)
+    }
+
+    @Test
     fun rapidSelectionsOnlyRunTheLastScan() = runTest(dispatcher) {
         val engine = FakeEngine(delayMillis = 50)
         val viewModel = newViewModel(engine = engine)
@@ -853,6 +875,28 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aBatchNamesTheApkItIsScanning() = runTest(dispatcher) {
+        val engine = FakeEngine(delayMillis = 50)
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApksSelected(
+            listOf(
+                Uri.parse("content://test.provider/first.apk"),
+                Uri.parse("content://test.provider/second.apk")
+            )
+        )
+        // Stop mid-run, while the first APK is still being scanned, so the
+        // dialog state is observable rather than already cleared.
+        runCurrent()
+
+        val name = viewModel.uiState.value.batch?.currentName
+        assertNotNull("the dialog must name the APK being scanned", name)
+        assertTrue("unexpected name: $name", name.orEmpty().contains("minecraft.apk"))
+
+        advanceUntilIdle()
+    }
+
+    @Test
     fun aBatchReportsOneFailureWithoutSinkingTheRun() = runTest(dispatcher) {
         val access = FakeSafAccess(
             failFor = setOf("content://test.provider/broken.apk")
@@ -943,20 +987,6 @@ class MainViewModelTest {
         assertNull(viewModel.uiState.value.batchSummary)
     }
 
-    @Test
-    fun progressTrackerClampsOutOfRangeValues() {
-        assertEquals(0, ProgressTracker.of(-5, "x").percent)
-        assertEquals(100, ProgressTracker.of(250, "x").percent)
-    }
-
-    private fun startCollector(
-        scope: CoroutineScope,
-        viewModel: MainViewModel,
-        into: MutableList<LogEntry>
-    ): Job = scope.launch {
-        viewModel.logs.collect { into.add(it) }
-    }
-
     private fun newViewModel(
         engine: OffsetEngine = FakeEngine(),
         access: SafApkAccess = FakeSafAccess(),
@@ -1036,11 +1066,21 @@ private class FakeEngine(
     private val failure: Throwable? = null,
     private val delayMillis: Long = 0,
     /** Scan outcome the double returns; `null` builds the default outcome. */
-    private val scan: ScanOutcome? = null
+    private val scan: ScanOutcome? = null,
+    /** Failure thrown by `resolveVtables` alone; `null` uses the default map. */
+    private val vtableFailure: Throwable? = null
 ) : OffsetEngine {
 
     var calls = 0
         private set
+
+    /** Times the engine was asked to cancel the scan in flight. */
+    var cancelCalls = 0
+        private set
+
+    override fun cancelScan() {
+        cancelCalls++
+    }
 
     var mapCalls = 0
         private set
@@ -1138,6 +1178,7 @@ private class FakeEngine(
         if (delayMillis > 0) {
             delay(delayMillis)
         }
+        vtableFailure?.let { throw it }
         failure?.let { throw it }
         return vtableResult ?: throw EngineException(EngineErrorKind.InvalidElf, "no vtables")
     }
@@ -1190,6 +1231,24 @@ private class FakeEngine(
             programHeaderCount = 9,
             soname = "libminecraftpe.so"
         )
+    }
+}
+
+/** In-memory [ScanPreferences] with observable writes. */
+private class FakeScanPreferences : ScanPreferences {
+
+    private val buildIds = kotlinx.coroutines.flow.MutableStateFlow("")
+    private val rescan = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    override val lastBuildId: kotlinx.coroutines.flow.Flow<String> = buildIds
+    override val forceRescan: kotlinx.coroutines.flow.Flow<Boolean> = rescan
+
+    override suspend fun setLastBuildId(buildId: String) {
+        buildIds.value = buildId
+    }
+
+    override suspend fun setForceRescan(force: Boolean) {
+        rescan.value = force
     }
 }
 

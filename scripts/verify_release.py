@@ -36,6 +36,12 @@ REQUIRED_NATIVE_OBJECTS = (
     "lib/arm64-v8a/liboffset_core.so",
 )
 
+# The callback interface the engine calls into from native code. Its method is
+# looked up by name at run time, so R8 must leave it alone; this is the class and
+# method the check below proves survived.
+JNI_CALLBACK_CLASS = "Lcom/chimerateam/offsetextractor/data/native/ProgressCallback;"
+JNI_CALLBACK_METHOD = "onProgress"
+
 # Substrings that must not appear in the packaged bytecode. R8 rewrites names,
 # so this looks for the logging call sites that a release build should have
 # removed rather than for a class name.
@@ -88,7 +94,6 @@ GSON_MODEL_CLASSES = (
     "Lcom/chimerateam/offsetextractor/ui/state/ScannerUiState;",
     "Lcom/chimerateam/offsetextractor/ui/state/BatchProgress;",
     "Lcom/chimerateam/offsetextractor/ui/state/BatchSummary;",
-    "Lcom/chimerateam/offsetextractor/ui/state/ProgressTracker;",
 )
 
 
@@ -284,6 +289,45 @@ def _simple_name(descriptor: str) -> str:
     return descriptor[1:-1].replace("/", ".").replace("$", ".")
 
 
+def check_jni_callback_method(apk: Path) -> CheckResult:
+    """Verify the JNI callback method survived shrinking unrenamed.
+
+    The engine resolves `onProgress` by name from native code. R8 is free to
+    rename it, and a renamed method turns every progress update into a swallowed
+    `NoSuchMethodError`, so the check reads the class the engine calls.
+
+    Args:
+        apk: the artefact to inspect.
+
+    Returns:
+        The check result.
+    """
+    try:
+        tables = _read_dex_tables(apk)
+    except dex.DexError as error:
+        return CheckResult(name="JNI callback method", passed=False, detail=str(error))
+
+    entry = _find_class(tables, JNI_CALLBACK_CLASS)
+    if entry is None:
+        return CheckResult(
+            name="JNI callback method",
+            passed=False,
+            detail="ProgressCallback was shrunk away",
+        )
+    if JNI_CALLBACK_METHOD not in entry.method_names:
+        return CheckResult(
+            name="JNI callback method",
+            passed=False,
+            detail=f"ProgressCallback has no {JNI_CALLBACK_METHOD} method "
+            f"(methods: {', '.join(sorted(entry.method_names)) or 'none'})",
+        )
+    return CheckResult(
+        name="JNI callback method",
+        passed=True,
+        detail=f"ProgressCallback.{JNI_CALLBACK_METHOD} is present",
+    )
+
+
 def check_manifest(apk: Path) -> CheckResult:
     """Verify the manifest requests no network permission.
 
@@ -330,6 +374,7 @@ def run_checks(apk: Path) -> list[CheckResult]:
         check_native_objects(names),
         check_no_debug_logging(apk),
         check_gson_models(apk),
+        check_jni_callback_method(apk),
         check_manifest(apk),
     ]
 
@@ -367,10 +412,16 @@ def main(argv: list[str] | None = None) -> int:
         nargs="?",
         help="release APK, or a directory to search (default: app/build/outputs/apk/release)",
     )
+    parser.add_argument(
+        "--apk",
+        dest="apk_flag",
+        type=Path,
+        help="release APK to check; takes precedence over the positional argument",
+    )
     args = parser.parse_args(argv)
 
     try:
-        target = args.apk or Path("app/build/outputs/apk/release")
+        target = args.apk_flag or args.apk or Path("app/build/outputs/apk/release")
         apk = find_apk(target) if target.is_dir() else target
         if not apk.is_file():
             raise ReleaseCheckError(f"{apk} does not exist")

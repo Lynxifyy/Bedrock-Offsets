@@ -20,11 +20,15 @@ import kotlinx.coroutines.CancellationException
  * @param onProgress called before each item with the totals so far.
  * @param onFailure called when an item throws, so the caller can log it. It is
  *   a suspend function because reporting a failure may itself touch state.
+ * @param describe names one item for the progress dialog. It must not throw;
+ *   a name that cannot be read yields an empty string, which the queue reports
+ *   as `null` so the dialog simply omits the line.
  */
 class BatchQueue(
     private val process: suspend (Uri) -> Boolean,
     private val onProgress: (BatchProgress) -> Unit = {},
-    private val onFailure: suspend (Throwable) -> Unit = {}
+    private val onFailure: suspend (Throwable) -> Unit = {},
+    private val describe: (Uri) -> String = { it.lastPathSegment.orEmpty() }
 ) {
 
     /**
@@ -40,12 +44,14 @@ class BatchQueue(
         var failed = 0
 
         uris.forEachIndexed { index, uri ->
+            val name = runCatching { describe(uri) }.getOrDefault("").takeIf { it.isNotBlank() }
             onProgress(
                 BatchProgress(
                     total = uris.size,
                     completed = index,
                     succeeded = succeeded,
-                    failed = failed
+                    failed = failed,
+                    currentName = name
                 )
             )
 

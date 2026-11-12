@@ -14,7 +14,6 @@ import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.saf.DocumentWriter
-import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.WriteResult
@@ -32,12 +31,8 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -102,15 +97,6 @@ class MainViewModel(
     /** Current scanner snapshot. */
     val uiState: StateFlow<ScannerUiState> = _uiState.asStateFlow()
 
-    private val _logs = MutableSharedFlow<LogEntry>(
-        replay = 0,
-        extraBufferCapacity = LOG_BUFFER,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-
-    /** Live-log stream; buffered so a slow collector cannot block the engine. */
-    val logs: SharedFlow<LogEntry> = _logs.asSharedFlow()
-
     private val _logEntries = MutableStateFlow<List<LogEntry>>(emptyList())
 
     /** Retained log entries in chronological order, capped at [MAX_LOG_ENTRIES]. */
@@ -128,6 +114,11 @@ class MainViewModel(
     /** Total size of everything held in the on-disk cache. */
     val cacheSizeBytes: StateFlow<Long> = _cacheSizeBytes.asStateFlow()
 
+    private val _lastBuildId = MutableStateFlow("")
+
+    /** Build identifier recorded by the most recent successful scan. */
+    val lastBuildId: StateFlow<String> = _lastBuildId.asStateFlow()
+
     private var activeApk: ApkSource? = null
     private var extractionJob: Job? = null
 
@@ -137,6 +128,9 @@ class MainViewModel(
         preferences?.let { store ->
             viewModelScope.launch(supervisor + ioDispatcher) {
                 store.forceRescan.collect { force -> _forceRescan.value = force }
+            }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.lastBuildId.collect { buildId -> _lastBuildId.value = buildId }
             }
         }
     }
@@ -217,6 +211,10 @@ class MainViewModel(
                 // belt-and-braces case where something escaped it.
                 val mapped = ErrorMapper.fromThrowable(throwable)
                 fail(mapped.message, mapped.hint, tag = TAG_UI)
+            },
+            describe = { uri ->
+                val metadata = safAccess.queryMetadata(uri)
+                "${metadata.displayName} (${formatBytes(metadata.sizeBytes)})"
             }
         )
 
@@ -238,6 +236,9 @@ class MainViewModel(
         if (_uiState.value.batch == null) return
         val job = extractionJob
         extractionJob = null
+        // Stop the native scan too: cancelling the coroutine cannot interrupt
+        // the blocking JNI call for the APK currently being scanned.
+        engine.cancelScan()
         job?.cancel()
         releaseActiveApk()
         emit(Logs.warn(TAG_UI, "Batch cancelled."))
@@ -298,6 +299,10 @@ class MainViewModel(
     fun cancel() {
         val job = extractionJob
         extractionJob = null
+        // The scan is a blocking JNI call, so cancelling the coroutine alone
+        // leaves the native workers running. Signal the engine first so the
+        // workers stop at their next check.
+        engine.cancelScan()
         job?.cancel()
         releaseActiveApk()
         emit(Logs.warn(TAG_UI, "Cancelled; descriptor released."))
@@ -462,6 +467,7 @@ class MainViewModel(
         if (stored) {
             refreshCacheSize()
         }
+        _lastBuildId.value = buildId
         viewModelScope.launch(supervisor + ioDispatcher) {
             preferences?.setLastBuildId(buildId)
         }
@@ -663,8 +669,14 @@ class MainViewModel(
             }
         }
         map
-    } catch (failure: EngineException) {
-        emit(Logs.warn(TAG_RUST, "Vtable resolution skipped: ${failure.message}"))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (throwable: Throwable) {
+        // The RTTI pass is the memory-hungry one, and a failure there is not
+        // fatal: the offset scan is already complete and is reported on its own.
+        // Catching only EngineException would let an OutOfMemoryError discard a
+        // good scan, so every throwable is absorbed here.
+        emit(Logs.warn(TAG_RUST, "Vtable resolution skipped: ${throwable.message}"))
         VtableMap.EMPTY
     }
 
@@ -783,7 +795,6 @@ class MainViewModel(
     }
 
     private fun emit(entry: LogEntry) {
-        _logs.tryEmit(entry)
         _logEntries.update { existing ->
             val appended = existing + entry
             if (appended.size <= MAX_LOG_ENTRIES) {
@@ -809,7 +820,6 @@ class MainViewModel(
      * @param patterns signatures the scanner looks for; empty skips the scan.
      */
     companion object {
-        private const val LOG_BUFFER = 64
 
         /**
          * Builds a ViewModel wired to the real engine.

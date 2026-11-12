@@ -47,36 +47,6 @@ pub fn parse_peak_resident(status: &str) -> Option<u64> {
     None
 }
 
-/// Current resident set size of this process, in bytes.
-///
-/// # Returns
-///
-/// The current size, or `None` when `/proc` is unavailable.
-pub fn current_resident_bytes() -> Option<u64> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    parse_current_resident(&status)
-}
-
-/// Extracts `VmRSS` from the text of `/proc/self/status`.
-pub fn parse_current_resident(status: &str) -> Option<u64> {
-    for line in status.lines() {
-        let Some(rest) = line.strip_prefix("VmRSS:") else {
-            continue;
-        };
-        let mut fields = rest.split_whitespace();
-        let value = fields.next()?.parse::<u64>().ok()?;
-        let unit = fields.next().unwrap_or("kB");
-        let multiplier = match unit {
-            "kB" | "KB" => 1024,
-            "mB" | "MB" => 1024 * 1024,
-            "B" => 1,
-            _ => 1024,
-        };
-        return value.checked_mul(multiplier);
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,16 +59,9 @@ mod tests {
     }
 
     #[test]
-    fn current_resident_is_parsed_from_a_status_blob() {
-        let status = "Name:\toffset_core\nVmHWM:\t  204800 kB\nVmRSS:\t  102400 kB\n";
-        assert_eq!(parse_current_resident(status), Some(102_400 * 1024));
-    }
-
-    #[test]
     fn a_status_blob_without_the_field_yields_nothing() {
         assert_eq!(parse_peak_resident("Name:\tx\n"), None);
         assert_eq!(parse_peak_resident(""), None);
-        assert_eq!(parse_current_resident("Name:\tx\n"), None);
     }
 
     #[test]

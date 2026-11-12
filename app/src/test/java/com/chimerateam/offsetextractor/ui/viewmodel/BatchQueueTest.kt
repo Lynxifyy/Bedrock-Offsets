@@ -89,6 +89,36 @@ class BatchQueueTest {
     }
 
     @Test
+    fun `progress names the item about to run`() = runTest {
+        // The dialog shows the file being scanned, so the queue has to say
+        // which one it is about to hand to the engine, not just its index.
+        val names = mutableListOf<String?>()
+        val queue = BatchQueue(
+            process = { true },
+            onProgress = { names += it.currentName },
+            describe = { u -> "${u.lastPathSegment.orEmpty()} (12 MB)" }
+        )
+
+        queue.run(listOf(uri("a.apk"), uri("b.apk")))
+
+        assertEquals(listOf("a.apk (12 MB)", "b.apk (12 MB)"), names)
+    }
+
+    @Test
+    fun `an unnamed item reports no name rather than a blank one`() = runTest {
+        val names = mutableListOf<String?>()
+        val queue = BatchQueue(
+            process = { true },
+            onProgress = { names += it.currentName },
+            describe = { "" }
+        )
+
+        queue.run(listOf(uri("a.apk")))
+
+        assertEquals(listOf(null), names)
+    }
+
+    @Test
     fun `cancellation propagates instead of being counted as a failure`() = runTest {
         val queue = BatchQueue(process = { u ->
             if (u.lastPathSegment == "stop.apk") throw CancellationException("cancelled")

@@ -16,7 +16,20 @@ class EngineFailure(
     val detail: String
 ) : RuntimeException("$kind: $detail") {
 
-    /** Splits the raw message back into its kind and detail parts. */
+    /**
+     * Builds a failure from the single message the JVM constructs.
+     *
+     * JNI `ThrowNew` always resolves `<init>(Ljava/lang/String;)V`, so this is
+     * the constructor the native engine's `throw_new` reaches. Without it the
+     * JVM raises a `NoSuchMethodError` instead and the intended failure is lost.
+     *
+     * @param message the `kind: detail` text produced by the engine.
+     */
+    constructor(message: String) : this(
+        kind = kindOf(message),
+        detail = detailOf(message)
+    )
+
     companion object {
         /**
          * Parses a raw `kind: detail` message.
@@ -24,17 +37,16 @@ class EngineFailure(
          * @param raw message thrown across the JNI boundary.
          * @return the parsed kind and detail; `unknown` when unparseable.
          */
-        fun parse(raw: String?): EngineFailure {
-            val text = raw.orEmpty()
-            val separator = text.indexOf(':')
-            return if (separator <= 0) {
-                EngineFailure("unknown", text.ifEmpty { "native failure" })
-            } else {
-                EngineFailure(
-                    kind = text.substring(0, separator).trim(),
-                    detail = text.substring(separator + 1).trim()
-                )
-            }
+        fun parse(raw: String?): EngineFailure = EngineFailure(raw.orEmpty())
+
+        /** Extracts the kind from a `kind: detail` message. */
+        private fun kindOf(raw: String): String =
+            if (raw.indexOf(':') <= 0) "unknown" else raw.substringBefore(':').trim()
+
+        /** Extracts the detail from a `kind: detail` message. */
+        private fun detailOf(raw: String): String = when {
+            raw.indexOf(':') <= 0 -> raw.ifEmpty { "native failure" }
+            else -> raw.substringAfter(':').trim()
         }
     }
 }

@@ -29,14 +29,14 @@ def _uleb128(value: int) -> bytes:
             return bytes(out)
 
 
-def build_dex(classes: list[tuple[str, int, bool]]) -> bytes:
+def build_dex(classes: list[tuple[str, int, tuple[str, ...]]]) -> bytes:
     """Assemble a minimal but valid ``classes.dex``.
 
     Only the header, the string, type and method tables and the class
     definitions are written, which is exactly what the verifier reads.
 
     Args:
-        classes: one ``(descriptor, access_flags, has_constructor)`` per class.
+        classes: one ``(descriptor, access_flags, method_names)`` per class.
 
     Returns:
         The bytes of a dex file.
@@ -52,16 +52,17 @@ def build_dex(classes: list[tuple[str, int, bool]]) -> bytes:
         intern(descriptor)
     intern("V")
     intern("Ljava/lang/Object;")
-    intern("<init>")
+    for _, _, method_names in classes:
+        for name in method_names:
+            intern(name)
 
     object_index = strings.index("Ljava/lang/Object;")
     void_index = strings.index("V")
-    init_index = strings.index("<init>")
 
     method_ids = [
-        (strings.index(descriptor), void_index, init_index)
-        for descriptor, _, has_constructor in classes
-        if has_constructor
+        (strings.index(descriptor), void_index, strings.index(name))
+        for descriptor, _, method_names in classes
+        for name in method_names
     ]
 
     header_size = 0x70
@@ -79,13 +80,20 @@ def build_dex(classes: list[tuple[str, int, bool]]) -> bytes:
         blob += _uleb128(len(encoded)) + encoded + b"\x00"
 
     class_data_offsets = [0] * len(classes)
-    for index, (descriptor, _, has_constructor) in enumerate(classes):
-        if not has_constructor:
+    for index, (descriptor, _, method_names) in enumerate(classes):
+        if not method_names:
             continue
         class_data_offsets[index] = data_off + len(blob)
-        method_index = method_ids.index((strings.index(descriptor), void_index, init_index))
-        blob += _uleb128(0) + _uleb128(0) + _uleb128(1) + _uleb128(0)
-        blob += _uleb128(method_index) + _uleb128(0) + _uleb128(0)
+        indices = sorted(
+            method_ids.index((strings.index(descriptor), void_index, strings.index(name)))
+            for name in method_names
+        )
+        blob += _uleb128(0) + _uleb128(0) + _uleb128(len(indices)) + _uleb128(0)
+        previous = 0
+        for position, method_index in enumerate(indices):
+            delta = method_index if position == 0 else method_index - previous
+            previous = method_index
+            blob += _uleb128(delta) + _uleb128(0) + _uleb128(0)
 
     total = data_off + len(blob)
     out = bytearray(total)
@@ -125,8 +133,16 @@ def build_dex(classes: list[tuple[str, int, bool]]) -> bytes:
 
 
 def healthy_dex() -> bytes:
-    """A dex holding every model the verifier expects, all instantiable."""
-    return build_dex([(descriptor, 0x0001, True) for descriptor in verify_release.GSON_MODEL_CLASSES])
+    """A dex holding every model the verifier expects, all intact."""
+    classes = [(descriptor, 0x0001, ("<init>",)) for descriptor in verify_release.GSON_MODEL_CLASSES]
+    classes.append(
+        (
+            verify_release.JNI_CALLBACK_CLASS,
+            0x0601,
+            (verify_release.JNI_CALLBACK_METHOD,),
+        )
+    )
+    return build_dex(classes)
 
 
 def build_apk(
@@ -234,7 +250,7 @@ class CheckTests(unittest.TestCase):
         # class abstract, and Gson then refuses to instantiate it.
         broken = verify_release.GSON_MODEL_CLASSES[0]
         dex_bytes = build_dex(
-            [(descriptor, 0x0401, False) for descriptor in verify_release.GSON_MODEL_CLASSES]
+            [(descriptor, 0x0401, ()) for descriptor in verify_release.GSON_MODEL_CLASSES]
         )
         apk = build_apk(self.root, dex=dex_bytes)
 
@@ -245,7 +261,7 @@ class CheckTests(unittest.TestCase):
 
     def test_a_model_with_a_constructor_but_abstract_still_fails(self) -> None:
         dex_bytes = build_dex(
-            [(descriptor, 0x0401, True) for descriptor in verify_release.GSON_MODEL_CLASSES]
+            [(descriptor, 0x0401, ("<init>",)) for descriptor in verify_release.GSON_MODEL_CLASSES]
         )
         apk = build_apk(self.root, dex=dex_bytes)
 
@@ -256,7 +272,7 @@ class CheckTests(unittest.TestCase):
 
     def test_a_shrunk_away_model_fails_the_model_check(self) -> None:
         survivors = verify_release.GSON_MODEL_CLASSES[1:]
-        dex_bytes = build_dex([(descriptor, 0x0001, True) for descriptor in survivors])
+        dex_bytes = build_dex([(descriptor, 0x0001, ("<init>",)) for descriptor in survivors])
         apk = build_apk(self.root, dex=dex_bytes)
 
         result = verify_release.check_gson_models(apk)
@@ -278,6 +294,45 @@ class CheckTests(unittest.TestCase):
             archive.writestr("classes.dex", b"\x03\x00\x00\x00")
 
         self.assertFalse(verify_release.check_gson_models(apk).passed)
+
+
+class JniCallbackTests(unittest.TestCase):
+    """The check that proves the JNI callback method survived shrinking."""
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+
+    def tearDown(self) -> None:
+        self.directory.cleanup()
+
+    def test_the_surviving_callback_method_passes(self) -> None:
+        apk = build_apk(self.root)
+        self.assertTrue(verify_release.check_jni_callback_method(apk).passed)
+
+    def test_a_renamed_callback_method_fails(self) -> None:
+        classes = [
+            (descriptor, 0x0001, ("<init>",))
+            for descriptor in verify_release.GSON_MODEL_CLASSES
+        ]
+        # The callback kept its constructor but its method was renamed.
+        classes.append((verify_release.JNI_CALLBACK_CLASS, 0x0601, ("a",)))
+        apk = build_apk(self.root, dex=build_dex(classes))
+
+        result = verify_release.check_jni_callback_method(apk)
+        self.assertFalse(result.passed)
+        self.assertIn("onProgress", result.detail)
+
+    def test_a_shrunk_away_callback_fails(self) -> None:
+        classes = [
+            (descriptor, 0x0001, ("<init>",))
+            for descriptor in verify_release.GSON_MODEL_CLASSES
+        ]
+        apk = build_apk(self.root, dex=build_dex(classes))
+
+        result = verify_release.check_jni_callback_method(apk)
+        self.assertFalse(result.passed)
+        self.assertIn("shrunk away", result.detail)
 
 
 class ProguardRuleTests(unittest.TestCase):
@@ -330,6 +385,12 @@ class ProguardRuleTests(unittest.TestCase):
         self.assertNotIn("offsetextractor.model.**", self.rules_text)
         self.assertNotIn("offsetextractor.data.model.**", self.rules_text)
 
+    def test_the_jni_callback_method_is_kept(self) -> None:
+        # The engine calls `onProgress` by name; a rename makes every progress
+        # update a swallowed NoSuchMethodError.
+        self.assertIn("ProgressCallback", self.rules_text)
+        self.assertIn("void onProgress(int, java.lang.String);", self.rules_text)
+
     def test_the_signature_attribute_is_kept(self) -> None:
         # Without Signature, Gson cannot see List<PatternHit> as anything but a
         # raw List and silently mis-types the result.
@@ -353,6 +414,21 @@ class CliTests(unittest.TestCase):
     def test_an_apk_with_a_missing_engine_exits_one(self) -> None:
         apk = build_apk(self.root, natives=())
         self.assertEqual(1, verify_release.main([str(apk)]))
+
+    def test_the_apk_can_be_named_with_a_flag(self) -> None:
+        # CI and the docs call the script both ways; the flag form must resolve
+        # the same file as the positional form.
+        apk = build_apk(self.root)
+        self.assertEqual(0, verify_release.main(["--apk", str(apk)]))
+
+    def test_the_flag_overrides_the_positional_argument(self) -> None:
+        chosen = build_apk(self.root, name="chosen.apk")
+        other = build_apk(self.root, name="other.apk")
+        os.utime(chosen, (1_000_000, 1_000_000))
+        os.utime(other, (2_000_000, 2_000_000))
+
+        # The directory would resolve to `other.apk`; the flag must win.
+        self.assertEqual(0, verify_release.main([str(self.root), "--apk", str(chosen)]))
 
     def test_a_missing_apk_exits_two(self) -> None:
         missing = self.root / "absent.apk"

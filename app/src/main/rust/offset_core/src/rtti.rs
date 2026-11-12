@@ -32,7 +32,7 @@ use serde::Serialize;
 
 use crate::elf::parse_elf_bytes;
 use crate::error::{CoreError, CoreResult};
-use crate::sections::{build_section_map, DATA_REL_RO_SECTION, RELA_DYN_SECTION, RODATA_SECTION};
+use crate::sections::{build_section_map, DATA_REL_RO_SECTION, RODATA_SECTION};
 
 /// Longest class name accepted from a mangled type name.
 ///
@@ -558,9 +558,6 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
     }
 }
 
-/// Name of the section holding relocations, re-exported for tests.
-pub const RELOCATION_SECTION: &str = RELA_DYN_SECTION;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,5 +645,18 @@ mod tests {
     }
 
     #[test]
-    fn relocation_sections_are_recognised() {}
+    fn relocation_sections_are_recognised() {
+        // The index is built by section *type*, not name, but the name is what
+        // the rest of the engine reasons about, so it must classify as an
+        // ordinary section rather than one of the three scanned kinds.
+        use crate::sections::{
+            SectionKind, DATA_REL_RO_SECTION, RELA_DYN_SECTION, RODATA_SECTION, TEXT_SECTION,
+        };
+
+        assert_eq!(RELA_DYN_SECTION, ".rela.dyn");
+        assert_eq!(SectionKind::from_name(RELA_DYN_SECTION), SectionKind::Other);
+        assert_ne!(RELA_DYN_SECTION, TEXT_SECTION);
+        assert_ne!(RELA_DYN_SECTION, RODATA_SECTION);
+        assert_ne!(RELA_DYN_SECTION, DATA_REL_RO_SECTION);
+    }
 }

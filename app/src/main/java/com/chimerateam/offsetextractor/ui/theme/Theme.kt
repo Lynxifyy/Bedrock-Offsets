@@ -5,53 +5,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** Which background treatment the app should use. */
 enum class ThemeMode { System, Light, Dark, Amoled }
-
-/**
- * Colour roles that Material 3 does not model, such as log-tag accents.
- *
- * @property isAmoled whether the AMOLED pure-black background is active.
- * @property logRust accent for `[RUST]` log lines.
- * @property logUi accent for `[UI]` log lines.
- * @property logError accent for `[ERROR]` log lines.
- * @property logCache accent for `[CACHE]` log lines.
- * @property logSaf accent for `[SAF]` log lines.
- * @property honeyGlow colour of the scanning honeycomb glow.
- */
-data class ExtendedColors(
-    val isAmoled: Boolean,
-    val logRust: Color,
-    val logUi: Color,
-    val logError: Color,
-    val logCache: Color,
-    val logSaf: Color,
-    val honeyGlow: Color
-)
-
-private val LocalExtendedColors = staticCompositionLocalOf {
-    ExtendedColors(
-        isAmoled = false,
-        logRust = LogRustPurple,
-        logUi = LogUiBlue,
-        logError = LogErrorRed,
-        logCache = LogCacheTeal,
-        logSaf = LogSafGreen,
-        honeyGlow = Honey300
-    )
-}
-
-/** Access the non-Material colour roles. */
-object AppTheme {
-    val colors: ExtendedColors
-        @Composable get() = LocalExtendedColors.current
-}
 
 private val LightColors = lightColorScheme(
     primary = Caramel600,
@@ -128,21 +87,9 @@ fun BedrockOffsetExtractorTheme(
         ThemeMode.System -> if (dark) DarkColors else LightColors
     }
 
-    val extended = ExtendedColors(
-        isAmoled = themeMode == ThemeMode.Amoled,
-        logRust = LogRustPurple,
-        logUi = LogUiBlue,
-        logError = LogErrorRed,
-        logCache = LogCacheTeal,
-        logSaf = LogSafGreen,
-        honeyGlow = if (dark) Honey300 else Caramel600
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = AppTypography,
+        content = content
     )
-
-    CompositionLocalProvider(LocalExtendedColors provides extended) {
-        MaterialTheme(
-            colorScheme = colorScheme,
-            typography = AppTypography,
-            content = content
-        )
-    }
 }

@@ -6,7 +6,7 @@
 
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
@@ -113,13 +113,4 @@ fn stream_entry_to_file<R: Read>(entry: &mut R, destination: &Path) -> CoreResul
 
     let digest = hasher.finalize();
     Ok((to_hex(&digest), written))
-}
-
-/// Returns a stable cache file name for a given entry, used by callers that
-/// want to predict where the extraction will land.
-pub fn cache_file_name_for(entry_name: &str) -> PathBuf {
-    Path::new(entry_name)
-        .file_name()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("libminecraftpe.so"))
 }

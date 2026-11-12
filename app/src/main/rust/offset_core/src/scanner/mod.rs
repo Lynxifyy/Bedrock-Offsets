@@ -20,6 +20,7 @@ pub mod matcher;
 pub mod verifier;
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 
@@ -227,9 +228,144 @@ pub const MAX_HITS_PER_PATTERN: usize = 4096;
 /// Most hits kept across every pattern in one scan.
 pub const MAX_HITS_TOTAL: usize = 32768;
 
+/// The scan currently in flight, so a caller can cancel it from another thread.
+///
+/// A scan runs as a blocking call: the JNI entry point does not return until the
+/// pass finishes, so cancelling the coroutine that called it cannot reach the
+/// workers. Registering the active scan here gives a second thread -- the one
+/// servicing a "Cancel" tap -- a handle to the same [`ScanControl`] the workers
+/// poll, which is what actually stops the pass.
+///
+/// Only one scan runs at a time, so a single slot is enough. The `usize` is a
+/// generation counter: a guard only clears the slot when it still owns the
+/// current generation, so a late drop cannot unregister a scan that has already
+/// replaced it.
+static ACTIVE_SCAN: OnceLock<Mutex<ActiveScan>> = OnceLock::new();
+
+/// The generation and control of the registered scan, if one is running.
+type ActiveScan = Option<(usize, Arc<ScanControl>)>;
+
+fn active_scan_slot() -> &'static Mutex<ActiveScan> {
+    ACTIVE_SCAN.get_or_init(|| Mutex::new(None))
+}
+
+/// Registers a fresh scan as the cancellable one.
+///
+/// The returned guard deregisters the scan when it is dropped at the end of the
+/// pass, so a completed scan never answers a later cancellation.
+pub fn begin_scan() -> ScanGuard {
+    let mut slot = active_scan_slot()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let generation = slot.as_ref().map(|(id, _)| id + 1).unwrap_or(0);
+    let control = Arc::new(ScanControl::new());
+    *slot = Some((generation, Arc::clone(&control)));
+    ScanGuard {
+        generation,
+        control,
+    }
+}
+
+/// Asks the scan in flight, if any, to stop.
+///
+/// A no-op when no scan is running, so a stray tap on "Cancel" is harmless.
+pub fn cancel_active_scan() {
+    let slot = active_scan_slot()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if let Some((_, control)) = slot.as_ref() {
+        control.cancel();
+    }
+}
+
+/// Keeps a scan registered as cancellable until it ends.
+pub struct ScanGuard {
+    generation: usize,
+    control: Arc<ScanControl>,
+}
+
+impl ScanGuard {
+    /// The control the scan's workers poll for cancellation.
+    pub fn control(&self) -> &ScanControl {
+        &self.control
+    }
+}
+
+impl Drop for ScanGuard {
+    fn drop(&mut self) {
+        let mut slot = active_scan_slot()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        // Only clear the slot when this guard is still the current registration;
+        // a newer scan must not be unregistered by an older guard's drop.
+        if matches!(slot.as_ref(), Some((id, _)) if *id == self.generation) {
+            *slot = None;
+        }
+    }
+}
+
 /// Reports progress to an optional sink, ignoring the sink when absent.
 fn report(sink: Option<&dyn ProgressSink>, percent: u32, message: &str) {
     if let Some(sink) = sink {
         sink.report(percent.min(100), message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancelling_the_active_scan_stops_the_registered_control() {
+        let guard = begin_scan();
+        assert!(!guard.control().is_cancelled());
+
+        cancel_active_scan();
+
+        assert!(
+            guard.control().is_cancelled(),
+            "the scan in flight must see the cancellation"
+        );
+    }
+
+    #[test]
+    fn cancelling_with_no_scan_in_flight_is_a_no_op() {
+        // Nothing is registered yet, so this must not panic or leave a flag set
+        // that would cancel the next scan.
+        cancel_active_scan();
+
+        let guard = begin_scan();
+        assert!(
+            !guard.control().is_cancelled(),
+            "a stale cancellation must not leak into the next scan"
+        );
+    }
+
+    #[test]
+    fn dropping_a_scan_unregisters_it() {
+        {
+            let _guard = begin_scan();
+            cancel_active_scan();
+        }
+
+        // The finished scan is gone, so a fresh one starts uncancelled even
+        // though the previous one was cancelled.
+        let guard = begin_scan();
+        assert!(!guard.control().is_cancelled());
+    }
+
+    #[test]
+    fn a_finished_scan_does_not_clear_a_newer_one() {
+        let stale = begin_scan();
+        // The stale guard is dropped after a new scan has already registered,
+        // which must leave the newer registration intact.
+        let fresh = begin_scan();
+        drop(stale);
+
+        cancel_active_scan();
+        assert!(
+            fresh.control().is_cancelled(),
+            "the newer scan must still be the registered one"
+        );
     }
 }

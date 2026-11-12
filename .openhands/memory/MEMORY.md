@@ -101,6 +101,14 @@ forked agent-server SDK (`Lynxifyy/software-agent-sdk-2.0`).
   variant has no Compose test manifest); goblin's `Elf::lazy_parse` leaves
   `section_headers` empty (use `parse_section_headers`); JNI symbols are
   `Java_com_chimerateam_offsetextractor_data_native_NativeLib_<method>`.
+- **Review-findings PR #11** (`fix/review-findings`, 16 fixes, one commit each):
+  cancelling a coroutine does **not** stop a blocking JNI scan — Rust
+  `scanner::begin_scan()` registers the in-flight scan behind a generation-checked
+  `ScanGuard`, `cancelScanNative` flips the flag, `MainViewModel.cancel/cancelBatch`
+  signal the engine before `job.cancel()`. Also: Compose `ModifierParameter` lint
+  needs `modifier` as the **first** optional param; CI rustfmt can wrap a long
+  method chain differently from the container's — copy the `Diff in` form from the
+  job log. `GSON_MODEL_CLASSES` is now **30** entries.
 - **Branch targeting**: `feat/offset-extractor-engine` drifted **32 behind / 10
   ahead** of `main`, so a fix committed there cannot merge cleanly. Branch new work
   off current `main` instead.
@@ -199,5 +207,5 @@ forked agent-server SDK (`Lynxifyy/software-agent-sdk-2.0`).
   to `EngineErrorKind.Payload`; `ErrorMapper` renders a clean message instead of
   leaking the obfuscated class name. `ResultCache.load` catches `JsonParseException`.
 - **Verify locally**: build `assembleRelease` then `python3
-  scripts/verify_release.py` should print `Gson models: 31 models instantiable`.
+  scripts/verify_release.py` should print `Gson models: 30 models instantiable`.
   CI uploads `app/build/outputs/mapping/release/` as the `r8-mapping` artefact.

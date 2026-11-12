@@ -74,3 +74,38 @@ fn catch_panics_passes_successful_values_through() {
     let result = catch_panics("testing", || 21 * 2);
     assert_eq!(result.expect("no panic"), 42);
 }
+
+/// The JNI failure class must expose the constructor `ThrowNew` resolves.
+///
+/// JNI's `ThrowNew` always looks for `<init>(Ljava/lang/String;)V`. When the
+/// class lacks it the JVM raises a `NoSuchMethodError` instead, which loses the
+/// typed failure the engine reported. The Kotlin class lives outside this crate,
+/// so the contract is pinned here against its source.
+#[test]
+fn the_engine_failure_class_exposes_the_throw_new_constructor() {
+    let source = fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../java/com/chimerateam/offsetextractor/data/native/EngineFailure.kt"
+    ))
+    .expect("the Kotlin EngineFailure must be readable from the crate");
+
+    assert!(
+        source.contains("constructor(message: String)"),
+        "EngineFailure must declare a single-String constructor for JNI ThrowNew:\n{source}"
+    );
+}
+
+/// The proguard keep rule must retain the constructor the JVM looks up.
+#[test]
+fn the_engine_failure_constructor_is_kept_from_shrinking() {
+    let rules = fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../proguard-rules.pro"
+    ))
+    .expect("proguard-rules.pro must be readable from the crate");
+
+    assert!(
+        rules.contains("<init>(java.lang.String);"),
+        "proguard-rules.pro must keep EngineFailure's single-String constructor:\n{rules}"
+    );
+}

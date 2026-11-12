@@ -65,6 +65,42 @@ class ScanCacheTest {
     }
 
     @Test
+    fun aFailedReplacementLeavesNoTemporaryFileBehind() {
+        val cache = cache()
+        cache.ensureDirectories()
+        // A non-empty directory cannot be replaced by a rename, so the move
+        // fails after the payload has already been written to the temporary
+        // file. The failed attempt must clean up after itself.
+        val blocked = cache.documentFor("id")
+        blocked.mkdirs()
+        File(blocked, "blocker").writeText("x")
+
+        assertFalse(cache.writeDocument("id", "payload"))
+
+        val leftovers = cache.documentDir.listFiles().orEmpty()
+            .filter { it.isFile && it.name.endsWith(".tmp") }
+        assertTrue(
+            "a failed write must not leave a temporary file: $leftovers",
+            leftovers.isEmpty()
+        )
+    }
+
+    @Test
+    fun aFailedReplacementDoesNotDestroyThePreviousDocument() {
+        val cache = cache()
+        cache.writeDocument("id", "first")
+
+        // Block the replacement by turning the temporary path into a
+        // directory: the payload cannot be written, so the stored document
+        // must be left exactly as it was.
+        val temporary = File(cache.documentDir, "${cache.documentFor("id").name}.tmp")
+        temporary.mkdirs()
+
+        assertFalse(cache.writeDocument("id", "second"))
+        assertEquals("first", cache.readDocument("id"))
+    }
+
+    @Test
     fun theTotalSizeCountsLibrariesAndDocuments() {
         val cache = cache()
         cache.ensureDirectories()

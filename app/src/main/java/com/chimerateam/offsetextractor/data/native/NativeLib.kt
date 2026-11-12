@@ -120,6 +120,17 @@ object NativeLib {
     }
 
     /**
+     * Asks the scan in flight to stop.
+     *
+     * The scan is a blocking call, so this is the only way to interrupt it from
+     * another thread. A no-op when no scan is running.
+     */
+    fun cancelScan() {
+        ensureLoaded()
+        cancelScanNative()
+    }
+
+    /**
      * Resolves the RTTI vtables the library at [path] declares.
      *
      * @param path absolute path of the extracted library.
@@ -156,4 +167,6 @@ object NativeLib {
     ): String
 
     private external fun resolveVtablesNative(path: String, sha256: String): String
+
+    private external fun cancelScanNative()
 }

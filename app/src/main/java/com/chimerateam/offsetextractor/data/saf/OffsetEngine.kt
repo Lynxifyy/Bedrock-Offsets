@@ -80,6 +80,16 @@ interface OffsetEngine {
     ): ScanOutcome
 
     /**
+     * Asks the scan in flight to stop.
+     *
+     * [scanText] is a blocking call, so cancelling the coroutine that invoked
+     * it does not reach the engine's workers. This is the other half of
+     * cancellation: the UI calls it from another thread and the scan observes
+     * the flag at its next check. It is a no-op when no scan is running.
+     */
+    fun cancelScan()
+
+    /**
      * Resolves the RTTI vtables the library declares.
      *
      * A library that carries no C++ RTTI, which is the case for the Rust engine

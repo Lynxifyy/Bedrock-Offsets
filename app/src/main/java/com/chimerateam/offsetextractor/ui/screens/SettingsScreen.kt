@@ -33,6 +33,8 @@ import com.chimerateam.offsetextractor.ui.theme.ThemeMode
  * @param forceRescan whether cached results are ignored.
  * @param onForceRescanChange invoked with the new cache policy.
  * @param onClearCache invoked when the user asks to clear cached artefacts.
+ * @param lastBuildId build identifier recorded by the most recent scan, or an
+ *   empty string when nothing has been scanned yet.
  * @param modifier layout modifier for the screen.
  */
 @Composable
@@ -43,7 +45,8 @@ fun SettingsScreen(
     forceRescan: Boolean,
     onForceRescanChange: (Boolean) -> Unit,
     onClearCache: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    lastBuildId: String = ""
 ) {
     Column(
         modifier = modifier
@@ -85,6 +88,16 @@ fun SettingsScreen(
                 subtitle = "Ignore a cached result and scan every time",
                 checked = forceRescan,
                 onCheckedChange = onForceRescanChange
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Last scanned build",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = lastBuildId.ifBlank { "None yet" },
+                style = MonoText.body,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(8.dp))
             Text(
@@ -138,7 +151,8 @@ private fun SettingsScreenPreview() {
             cacheSizeLabel = "0 B",
             forceRescan = false,
             onForceRescanChange = {},
-            onClearCache = {}
+            onClearCache = {},
+            lastBuildId = "abcdef0123456789"
         )
     }
 }

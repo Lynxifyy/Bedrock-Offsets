@@ -4,10 +4,21 @@
 }
 
 # The engine loads by name and throws EngineFailure back across the boundary, so
-# its name and constructor must survive shrinking unchanged.
+# its name and constructors must survive shrinking unchanged. The single-string
+# constructor is the one JNI `ThrowNew` resolves; the two-argument constructor is
+# what the Kotlin side builds directly.
 -keep class com.chimerateam.offsetextractor.data.native.NativeLib { *; }
 -keep class com.chimerateam.offsetextractor.data.native.EngineFailure {
+    <init>(java.lang.String);
     <init>(java.lang.String, java.lang.String);
+}
+
+# The engine invokes this method by name from native code, so R8 must not rename
+# it. The callback is a fun interface, and the method is the SAM method; without
+# this rule a shrunk build can rename it, the call fails with NoSuchMethodError,
+# and progress silently stops updating.
+-keepclassmembers class com.chimerateam.offsetextractor.data.native.ProgressCallback {
+    void onProgress(int, java.lang.String);
 }
 
 # Gson builds these models by reflection: it calls a constructor and assigns
