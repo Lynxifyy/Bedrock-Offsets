@@ -4,9 +4,12 @@
 }
 
 # The engine loads by name and throws EngineFailure back across the boundary, so
-# its name and constructor must survive shrinking unchanged.
+# its name and constructors must survive shrinking unchanged. The single-string
+# constructor is the one JNI `ThrowNew` resolves; the two-argument constructor is
+# what the Kotlin side builds directly.
 -keep class com.chimerateam.offsetextractor.data.native.NativeLib { *; }
 -keep class com.chimerateam.offsetextractor.data.native.EngineFailure {
+    <init>(java.lang.String);
     <init>(java.lang.String, java.lang.String);
 }
 

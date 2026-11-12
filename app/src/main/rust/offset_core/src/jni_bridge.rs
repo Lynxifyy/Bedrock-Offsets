@@ -557,6 +557,12 @@ fn throw_core_error(env: &mut JNIEnv, error: &CoreError) {
     throw_engine_failure(env, kind, &error.to_string());
 }
 
+/// Throws the engine's failure class with a `kind: detail` message.
+///
+/// The JVM's `ThrowNew` resolves `<init>(Ljava/lang/String;)V` on the class
+/// named by [`ENGINE_EXCEPTION_CLASS`]; that constructor must exist or the JVM
+/// raises a `NoSuchMethodError` instead and the typed failure is lost. The
+/// Kotlin class provides it, and `app/proguard-rules.pro` keeps it.
 fn throw_engine_failure(env: &mut JNIEnv, kind: &str, detail: &str) {
     let message = format!("{kind}: {detail}");
     if env.throw_new(ENGINE_EXCEPTION_CLASS, message).is_err() {
