@@ -19,8 +19,8 @@ use crate::progress::JniProgressSink;
 use crate::prologue::PrologueVerifier;
 use crate::rtti::resolve_vtables_with_releaser;
 use crate::scanner::{
-    scan_section_releasing_pages, verify_prologues_with_progress, ProgressSink, ScanControl,
-    ScanOutcome,
+    begin_scan, cancel_active_scan, scan_section_releasing_pages, verify_prologues_with_progress,
+    ProgressSink, ScanOutcome,
 };
 use crate::sections::build_section_map;
 use crate::symbols::build_symbol_report;
@@ -382,6 +382,20 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
     }
 }
 
+/// Asks the scan currently in flight to stop.
+///
+/// The scan runs as a blocking call, so cancelling the Kotlin coroutine that
+/// called it cannot reach the workers. This entry point is the other half: the
+/// UI calls it from another thread and the workers observe the flag at their
+/// next cancellation check. It is a no-op when no scan is running.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_cancelScanNative(
+    _env: JNIEnv,
+    _this: JObject,
+) {
+    cancel_active_scan();
+}
+
 /// The payload the scan entry point serialises.
 #[derive(Debug, Serialize)]
 struct ScanPayload {
@@ -419,11 +433,14 @@ pub fn scan_text_json_with_progress(
     let map = build_section_map(library.bytes())?;
     let set = PatternSet::new(&specs)?;
 
-    let control = ScanControl::new();
+    // Register the pass so a "Cancel" tap on another thread can reach its
+    // workers; the guard deregisters it when the scan ends.
+    let guard = begin_scan();
+    let control = guard.control();
     // The mapping is offered wave by wave so the pages behind the scan can be
     // reclaimed; without it a 342 MB `.text` stays resident for the whole pass.
     let outcome =
-        scan_section_releasing_pages(&map, library.bytes(), &set, &control, sink, Some(&library))?;
+        scan_section_releasing_pages(&map, library.bytes(), &set, control, sink, Some(&library))?;
 
     // The library's own symbol table is an independent witness: when a
     // signature's name is also an exported symbol the two addresses can be
@@ -439,7 +456,7 @@ pub fn scan_text_json_with_progress(
     // symbol-confirmed hit is kept even when it is a leaf with no frame.
     let verifier = PrologueVerifier::new()?;
     let mut outcome =
-        verify_prologues_with_progress(outcome, &map, library.bytes(), &verifier, &control, sink)?;
+        verify_prologues_with_progress(outcome, &map, library.bytes(), &verifier, control, sink)?;
     outcome.verification = Some(summary);
     // Verification walked `.text` again; those pages are dead weight now too.
     library.advise_pages_droppable();

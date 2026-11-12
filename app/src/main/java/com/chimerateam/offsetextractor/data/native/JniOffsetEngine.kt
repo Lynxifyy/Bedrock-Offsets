@@ -101,6 +101,17 @@ class JniOffsetEngine(
     }
 
     /**
+     * Asks the scan in flight to stop.
+     *
+     * Delegated straight to the bindings, which flip a flag the native workers
+     * poll. A failure to reach the native library is swallowed: the caller is
+     * already cancelling, and a link error must not turn a cancel into a crash.
+     */
+    override fun cancelScan() {
+        runCatching { nativeLibrary.cancelScan() }
+    }
+
+    /**
      * Resolves the RTTI vtables the library declares.
      *
      * @param library the library produced by [extractNativeLibrary].
@@ -187,6 +198,13 @@ interface NativeLibrary {
     ): String
 
     /**
+     * Asks the scan in flight to stop.
+     *
+     * A no-op when no scan is running.
+     */
+    fun cancelScan()
+
+    /**
      * Resolves the RTTI vtables of the library at [path].
      *
      * @param path absolute path of the extracted library.
@@ -218,6 +236,8 @@ object JniNativeLibrary : NativeLibrary {
         patternsJson: String,
         callback: ProgressCallback?
     ): String = NativeLib.scanText(path, sha256, patternsJson, callback)
+
+    override fun cancelScan() = NativeLib.cancelScan()
 
     override fun resolveVtables(path: String, sha256: String): String =
         NativeLib.resolveVtables(path, sha256)

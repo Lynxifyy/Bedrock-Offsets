@@ -236,6 +236,9 @@ class MainViewModel(
         if (_uiState.value.batch == null) return
         val job = extractionJob
         extractionJob = null
+        // Stop the native scan too: cancelling the coroutine cannot interrupt
+        // the blocking JNI call for the APK currently being scanned.
+        engine.cancelScan()
         job?.cancel()
         releaseActiveApk()
         emit(Logs.warn(TAG_UI, "Batch cancelled."))
@@ -296,6 +299,10 @@ class MainViewModel(
     fun cancel() {
         val job = extractionJob
         extractionJob = null
+        // The scan is a blocking JNI call, so cancelling the coroutine alone
+        // leaves the native workers running. Signal the engine first so the
+        // workers stop at their next check.
+        engine.cancelScan()
         job?.cancel()
         releaseActiveApk()
         emit(Logs.warn(TAG_UI, "Cancelled; descriptor released."))

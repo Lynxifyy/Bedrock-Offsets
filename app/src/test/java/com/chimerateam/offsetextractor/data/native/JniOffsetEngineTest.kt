@@ -346,6 +346,14 @@ class JniOffsetEngineTest {
         private val failure: Throwable? = null
     ) : NativeLibrary {
 
+        /** Times the engine asked the native side to cancel the scan. */
+        var cancelCalls = 0
+            private set
+
+        override fun cancelScan() {
+            cancelCalls++
+        }
+
         override fun describeSections(path: String, sha256: String): String {
             failure?.let { throw it }
             return sections
@@ -382,6 +390,16 @@ class JniOffsetEngineTest {
             failure?.let { throw it }
             return mapping
         }
+    }
+
+    @Test
+    fun cancelScanIsForwardedToTheBindings() {
+        val bindings = FakeBindings()
+        val engine = JniOffsetEngine(bindings)
+
+        engine.cancelScan()
+
+        assertEquals(1, bindings.cancelCalls)
     }
 
     private companion object {

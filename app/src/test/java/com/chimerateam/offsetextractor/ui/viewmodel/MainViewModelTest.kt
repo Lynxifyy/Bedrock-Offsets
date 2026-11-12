@@ -312,6 +312,21 @@ class MainViewModelTest {
     }
 
     @Test
+    fun cancellingAScanAlsoReachesTheNativeEngine() = runTest(dispatcher) {
+        // Cancelling the coroutine cannot interrupt the blocking JNI scan, so
+        // cancel() must also signal the engine's own cancellation flag.
+        val engine = FakeEngine(delayMillis = 10_000)
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        runCurrent()
+
+        viewModel.cancel()
+
+        assertEquals("the engine must be told to stop", 1, engine.cancelCalls)
+    }
+
+    @Test
     fun retryReturnsToIdleAndClearsTheError() = runTest(dispatcher) {
         val engine = FakeEngine(
             failure = EngineException(EngineErrorKind.InvalidApk, "bad")
@@ -1058,6 +1073,14 @@ private class FakeEngine(
 
     var calls = 0
         private set
+
+    /** Times the engine was asked to cancel the scan in flight. */
+    var cancelCalls = 0
+        private set
+
+    override fun cancelScan() {
+        cancelCalls++
+    }
 
     var mapCalls = 0
         private set
