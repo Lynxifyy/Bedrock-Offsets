@@ -1,15 +1,101 @@
 # Signature pack source for scripts/generate_patterns.py.
 #
-# One signature per line: 'name = bytes'. '??' matches any byte.
-# Regenerate with:  python3 scripts/generate_patterns.py patterns.txt
+# Derived from a real libminecraftpe.so by scripts/derive_patterns.py,
+# not written by hand: every name is an exported JNI entry point and
+# every signature is the shortest byte string unique in .text, so a
+# match is one address and can be checked against the symbol table.
+#
+# Regenerate with:  python3 scripts/derive_patterns.py <libminecraftpe.so>
+# Then:             python3 scripts/generate_patterns.py patterns.txt
 
-adrp_add_page_off = ?? ?? ?? ?? ?? ?? ?? 91
-bti_c_landing_pad = 5F 24 03 D5
-callee_saved_save_x19_x20 = F3 53 BF A9
-callee_saved_save_x21_x22 = F5 5B BF A9
-frame_pointer_setup = FD 03 00 91
-frame_push_with_pac = FD 7B BF A9 7F 23 03 D5
-frame_push_x29_x30 = FD 7B BF A9
-pacibsp_prologue = 7F 23 03 D5 FD 7B BF A9
-stack_alloc_0x20 = FF 83 00 D1
-stp_q0_q1_frame = FD 7B 01 A9
+Java_com_google_androidgamesdk_ChoreographerCallback_nOnChoreographer = 48 00 40 F9 E0 03 02 AA E1 03 1F AA
+Java_com_google_androidgamesdk_GameActivity_initializeNativeCode = FD 7B BB A9 FA 67 01 A9 F8 5F 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 03 00 91 F3 03 07 AA F4 03 06 AA
+Java_com_google_androidgamesdk_SwappyDisplayManager_nOnRefreshPeriodChanged = FF 03 01 D1 FD 7B 02 A9 F3 1B 00 F9 FD 83 00 91 53 D0 3B D5 68 16 40 F9 A8 83 1F F8 E3 13 00 A9
+Java_com_google_androidgamesdk_SwappyDisplayManager_nSetSupportedRefreshPeriods = FF 83 02 D1 FD 7B 04 A9 FC 6F 05 A9 FA 67 06 A9 F8 5F 07 A9 F6 57 08 A9 F4 4F 09 A9 FD 03 01 91 08 00 40 F9 E1 03 03 AA
+Java_com_microsoft_xal_androidjava_PresenceManager_pausePresence = FF 03 01 D1 FD 7B 02 A9 F4 4F 03 A9 FD 83 00 91 54 D0 3B D5 88 16 40 F9 A8 83 1F F8 E8 03 00 91 A4 82 85 95
+Java_com_microsoft_xal_androidjava_PresenceManager_resumePresence = FF C3 00 D1 FD 7B 01 A9 F4 4F 02 A9 FD 43 00 91 54 D0 3B D5 88 16 40 F9 E8 07 00 F9 E8 03 00 91 06 83 85 95
+Java_com_microsoft_xal_browser_BrowserLaunchActivity_checkIsLoaded = C0 CC 05 F0 02 F5 FC B0
+Java_com_microsoft_xal_browser_BrowserLaunchActivity_urlOperationCanceled = E6 03 04 AA E5 03 03 2A E1 03 00 AA 40 00 80 52
+Java_com_microsoft_xal_browser_BrowserLaunchActivity_urlOperationFailed = E6 03 04 AA E5 03 03 2A E1 03 00 AA 20 00 80 52
+Java_com_microsoft_xal_browser_BrowserLaunchActivity_urlOperationSucceeded = E6 03 05 AA E5 03 04 2A
+Java_com_microsoft_xal_logging_XalLogger_nativeLogBatch = FF 03 02 D1 FD 7B 02 A9 FC 6F 03 A9 FA 67 04 A9 F8 5F 05 A9 F6 57 06 A9 F4 4F 07 A9 FD 83 00 91 5B D0 3B D5 F4 03 03 AA F6 03 02 2A
+Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_create = FD 7B BE A9 F4 4F 01 A9 FD 03 00 91 00 02 80 52 7B D0 88 95
+Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getEnvironment = E0 03 1F AA C0 03 5F D6 FD 7B BE A9 F3 0B 00 F9 FD 03 00 91 48 00 40 F9
+Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getOverrideTitleId = FF 83 01 D1 FD 7B 02 A9 F7 1B 00 F9 F6 57 04 A9 F4 4F 05 A9 FD 83 00 91 57 D0 3B D5 E8 16 40 F9 A8 83 1F F8 40 00 40 F9
+Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getSandbox = FD 7B BE A9 F3 0B 00 F9 FD 03 00 91 48 00 40 F9 F3 03 00 AA E0 03 08 AA
+Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getScid = FF 83 01 D1 FD 7B 02 A9 F8 5F 03 A9 F6 57 04 A9 F4 4F 05 A9 FD 83 00 91 58 D0 3B D5 08 17 40 F9 F3 03 00 AA
+Java_com_microsoft_xbox_idp_interop_XboxLiveAppConfig_getTitleId = 40 00 40 F9 78 67 89 15
+Java_com_microsoft_xbox_idp_util_HttpCall_create = FD 7B BB A9 FC 67 01 A9 F8 5F 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 03 00 91 FF C3 0B D1 57 D0 3B D5
+Java_com_microsoft_xbox_idp_util_HttpCall_getResponseAsync__Lcom_microsoft_xbox_idp_util_HttpCall_Callback_2 = FF 83 07 D1 FD 7B 1A A9 FC 5F 1B A9 F6 57 1C A9 F4 4F 1D A9 FD 83 06 91 57 D0 3B D5 E8 16 40 F9 F4 03 01 AA
+Java_com_microsoft_xbox_idp_util_HttpCall_setContentTypeHeaderValue = FF C3 01 D1 FD 7B 03 A9 F8 5F 04 A9 F6 57 05 A9 F4 4F 06 A9 FD C3 00 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 62 09 00 B4 F4 03 00 AA F3 03 01 AA E0 63 00 91 E1 03 14 AA 65 84 89 95
+Java_com_microsoft_xbox_idp_util_HttpCall_setCustomHeader = FF 83 02 D1 FD 7B 06 A9 F8 5F 07 A9 F6 57 08 A9 F4 4F 09 A9 FD 83 01 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 82 10 00 B4
+Java_com_microsoft_xbox_idp_util_HttpCall_setRequestBody__Ljava_lang_String_2 = FF C3 01 D1 FD 7B 03 A9 F8 5F 04 A9 F6 57 05 A9 F4 4F 06 A9 FD C3 00 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 62 09 00 B4 F4 03 00 AA F3 03 01 AA E0 63 00 91 E1 03 14 AA 79 86 89 95
+Java_com_microsoft_xbox_idp_util_HttpCall_setRequestBody___3B = FF C3 01 D1 FD 7B 02 A9 F9 1B 00 F9 F8 5F 04 A9 F6 57 05 A9 F4 4F 06 A9 FD 83 00 91 58 D0 3B D5 08 17 40 F9 F3 03 02 AA
+Java_com_microsoft_xbox_idp_util_HttpCall_setXboxContractVersionHeaderValue = FF C3 01 D1 FD 7B 03 A9 F8 5F 04 A9 F6 57 05 A9 F4 4F 06 A9 FD C3 00 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 62 09 00 B4 F4 03 00 AA F3 03 01 AA E0 63 00 91 E1 03 14 AA EC 83 89 95
+Java_com_mojang_minecraftpe_AppExitInfoHelper_nativeSendApplicationExitInfo = FF 43 03 D1 FD 7B 07 A9 FC 6F 08 A9 FA 67 09 A9 F8 5F 0A A9 F6 57 0B A9 F4 4F 0C A9 FD C3 01 91 5A D0 3B D5 F9 03 02 AA
+Java_com_mojang_minecraftpe_BatteryMonitor_nativeUpdateBatteryStatus = E2 03 22 1E 40 00 22 1E
+Java_com_mojang_minecraftpe_BatteryMonitor_nativeUpdateBatteryThermalStatus = A2 00 F8 37 5F EC 05 71
+Java_com_mojang_minecraftpe_CrashManager_nativeNotifyUncaughtException = FF 03 02 D1 FD 7B 04 A9 F8 5F 05 A9 F6 57 06 A9 F4 4F 07 A9 FD 03 01 91 56 D0 3B D5 55 23 01 F0
+Java_com_mojang_minecraftpe_FilePickerManager_nativeDirectoryPickResult = FF 43 05 D1 FD 7B 10 A9 FC 8B 00 F9 F8 5F 12 A9 F6 57 13 A9 F4 4F 14 A9 FD 03 04 91 57 D0 3B D5 F4 03 00 AA E0 63 00 91
+Java_com_mojang_minecraftpe_MainActivity_isAndroidAmazon = E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 FF 83 04 D1
+Java_com_mojang_minecraftpe_MainActivity_isAndroidChromebook = E0 03 1F 2A C0 03 5F D6 FF 83 04 D1 FD 7B 0E A9
+Java_com_mojang_minecraftpe_MainActivity_isAndroidTrial = E0 03 1F 2A C0 03 5F D6 5C C3 4F 14
+Java_com_mojang_minecraftpe_MainActivity_isBrazeEnabled = 5C C3 4F 14 20 00 80 52
+Java_com_mojang_minecraftpe_MainActivity_isEduMode = E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 20 00 80 52 C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 FF 83 04 D1
+Java_com_mojang_minecraftpe_MainActivity_isPreview = E0 03 1F 2A C0 03 5F D6 20 00 80 52 C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 FF 83 04 D1
+Java_com_mojang_minecraftpe_MainActivity_isPublishBuild = 20 00 80 52 C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 20 00 80 52 C0 03 5F D6 E0 03 1F 2A
+Java_com_mojang_minecraftpe_MainActivity_isTestInfrastructureDisabled = 20 00 80 52 C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 E0 03 1F 2A C0 03 5F D6 FF 83 04 D1
+Java_com_mojang_minecraftpe_MainActivity_nativeBackPressed = FF 83 04 D1 FD 7B 0E A9 FC 7B 00 F9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 08 BF 05 90 00 01 45 F9 80 0D 00 B4 3B CB 7D 95
+Java_com_mojang_minecraftpe_MainActivity_nativeBackSpacePressed = FF 83 04 D1 FD 7B 0E A9 FC 7B 00 F9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 08 BF 05 90 00 01 45 F9 80 0D 00 B4 A1 CA 7D 95
+Java_com_mojang_minecraftpe_MainActivity_nativeClearAButtonState = E0 BE 05 F0 00 60 2A 91
+Java_com_mojang_minecraftpe_MainActivity_nativeDeviceCorrelation = FF 83 02 D1 FD 7B 06 A9 F7 3B 00 F9 F6 57 08 A9 F4 4F 09 A9 FD 83 01 91 57 D0 3B D5 F6 03 00 AA F4 03 02 AA
+Java_com_mojang_minecraftpe_MainActivity_nativeGetDeviceId = FF 43 01 D1 FD 7B 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 83 00 91 55 D0 3B D5 A8 16 40 F9 A8 83 1F F8 E8 BE 05 90
+Java_com_mojang_minecraftpe_MainActivity_nativeKeyHandler = FF 83 04 D1 FD 7B 0E A9 FC 5F 0F A9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 57 D0 3B D5 F4 03 02 2A
+Java_com_mojang_minecraftpe_MainActivity_nativeLoginData = C0 03 5F D6 FF 43 02 D1 FD 7B 05 A9 F8 5F 06 A9 F6 57 07 A9 F4 4F 08 A9 FD 43 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 BE 05 F0
+Java_com_mojang_minecraftpe_MainActivity_nativeOnDestroy = C0 03 5F D6 C0 03 5F D6 C0 03 5F D6 FF 83 04 D1 FD 7B 0E A9
+Java_com_mojang_minecraftpe_MainActivity_nativeOnPickFileCanceled = FF 43 01 D1 FD 7B 02 A9 F5 1B 00 F9 F4 4F 04 A9 FD 83 00 91 55 D0 3B D5 A8 16 40 F9 A8 83 1F F8 E8 BE 05 B0
+Java_com_mojang_minecraftpe_MainActivity_nativeOnPickFileSuccess = FF 03 07 D1 FD 7B 16 A9 FC 6F 17 A9 FA 67 18 A9 F8 5F 19 A9 F6 57 1A A9 F4 4F 1B A9 FD 83 05 91 58 D0 3B D5 F9 BE 05 D0
+Java_com_mojang_minecraftpe_MainActivity_nativeOnPickImageCanceled = FF C3 04 D1 FD 7B 0F A9 FC 83 00 F9 F6 57 11 A9 F4 4F 12 A9 FD C3 03 91 56 D0 3B D5 F3 03 02 AA C8 16 40 F9
+Java_com_mojang_minecraftpe_MainActivity_nativeOnPickImageSuccess = FF 43 06 D1 FD 7B 15 A9 FC 5F 16 A9 F6 57 17 A9 F4 4F 18 A9 FD 43 05 91 57 D0 3B D5 F3 03 03 AA
+Java_com_mojang_minecraftpe_MainActivity_nativeProcessIntentUriQuery = FD 7B BB A9 FC 0B 00 F9 F8 5F 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 03 00 91 FF C3 17 D1 57 D0 3B D5
+Java_com_mojang_minecraftpe_MainActivity_nativeResize = FF 83 04 D1 FD 7B 0E A9 FC 5F 0F A9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 57 D0 3B D5 13 BF 05 90
+Java_com_mojang_minecraftpe_MainActivity_nativeReturnKeyPressed = FF C3 04 D1 FD 7B 0E A9 FC 7B 00 F9 F8 5F 10 A9 F6 57 11 A9 F4 4F 12 A9 FD 83 03 91 58 D0 3B D5 14 BF 05 90
+Java_com_mojang_minecraftpe_MainActivity_nativeRunNativeCallbackOnUiThread = 41 00 40 A9 20 00 1F D6
+Java_com_mojang_minecraftpe_MainActivity_nativeSetHeadphonesConnected = C0 03 5F D6 FF 43 03 D1 EE 23 00 FD ED 33 05 6D
+Java_com_mojang_minecraftpe_MainActivity_nativeSetIntegrityToken = FF 03 02 D1 FD 7B 04 A9 F7 2B 00 F9 F6 57 06 A9 F4 4F 07 A9 FD 03 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 C8 BE 05 F0 08 01 45 F9 68 06 00 B4 F5 03 00 AA E0 03 08 AA F4 03 02 AA 25 B8 7D 95
+Java_com_mojang_minecraftpe_MainActivity_nativeSetIntegrityTokenErrorMessage = FF 03 02 D1 FD 7B 04 A9 F7 2B 00 F9 F6 57 06 A9 F4 4F 07 A9 FD 03 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 C8 BE 05 F0 08 01 45 F9 68 06 00 B4 F5 03 00 AA E0 03 08 AA F4 03 02 AA C8 B7 7D 95
+Java_com_mojang_minecraftpe_MainActivity_nativeSetTextboxText = FF C3 05 D1 FD 7B 11 A9 FC 93 00 F9 FA 67 13 A9 F8 5F 14 A9 F6 57 15 A9 F4 4F 16 A9 FD 43 04 91 59 D0 3B D5 28 17 40 F9 A8 83 1F F8
+Java_com_mojang_minecraftpe_MainActivity_nativeShiftKeyPressed = FF 83 04 D1 FD 7B 0E A9 FC 7B 00 F9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 BE 05 F0
+Java_com_mojang_minecraftpe_MainActivity_nativeShutdown = FF 43 02 D1 FD 7B 05 A9 F8 5F 06 A9 F6 57 07 A9 F4 4F 08 A9 FD 43 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 BE 05 F0
+Java_com_mojang_minecraftpe_MainActivity_nativeStopThis = C0 03 5F D6 C0 03 5F D6 FF 83 04 D1 FD 7B 0E A9 FC 5F 0F A9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 57 D0 3B D5 13 BF 05 90
+Java_com_mojang_minecraftpe_MainActivity_nativeStoragePermissionRequestResult = FF 83 02 D1 FD 7B 07 A9 F6 57 08 A9 F4 4F 09 A9 FD C3 01 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 BE 05 F0
+Java_com_mojang_minecraftpe_MainActivity_nativeSuspend = C0 03 5F D6 FF 83 04 D1 FD 7B 0E A9 FC 5F 0F A9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 57 D0 3B D5 13 BF 05 90
+Java_com_mojang_minecraftpe_MainActivity_nativeSuspendGameplayUpdates = 5F 1C 00 72 08 BF 05 90
+Java_com_mojang_minecraftpe_MainActivity_nativeWaitCrashManagementSetupComplete = FF 43 01 D1 FD 7B 02 A9 F5 1B 00 F9 F4 4F 04 A9 FD 83 00 91 54 D0 3B D5 D5 BE 05 F0
+Java_com_mojang_minecraftpe_MainActivity_onSoftKeyboardClosed = FF 83 04 D1 FD 7B 0E A9 FC 7B 00 F9 F6 57 10 A9 F4 4F 11 A9 FD 83 03 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 C8 BE 05 F0
+Java_com_mojang_minecraftpe_NetworkMonitor_nativeUpdateNetworkStatus = FF 03 02 D1 FD 7B 03 A9 FA 67 04 A9 F8 5F 05 A9 F6 57 06 A9 F4 4F 07 A9 FD C3 00 91 58 D0 3B D5 37 BE 05 F0
+Java_com_mojang_minecraftpe_NotificationListenerService_nativePushNotificationReceived = FF 43 05 D1 FD 7B 0F A9 FC 83 00 F9 FA 67 11 A9 F8 5F 12 A9 F6 57 13 A9 F4 4F 14 A9 FD C3 03 91 59 D0 3B D5 28 17 40 F9 A8 83 1F F8 E8 BE 05 B0
+Java_com_mojang_minecraftpe_ThermalMonitor_nativeUpdateLowPowerModeStatus = 5F 1C 00 72 A8 08 04 F0
+Java_com_mojang_minecraftpe_Webview_MinecraftWebview_nativeOnWebError = FF 03 03 D1 FD 7B 08 A9 F7 4B 00 F9 F6 57 0A A9 F4 4F 0B A9 FD 03 02 91 56 D0 3B D5 C8 16 40 F9 A8 83 1F F8 E8 08 04 90
+Java_com_mojang_minecraftpe_Webview_MinecraftWebview_nativeSendToHost = FF 83 02 D1 FD 7B 06 A9 F8 5F 07 A9 F6 57 08 A9 F4 4F 09 A9 FD 83 01 91 58 D0 3B D5 08 17 40 F9 A8 83 1F F8 E8 08 04 B0
+Java_com_mojang_minecraftpe_WorldRecovery_nativeComplete = FF 03 03 D1 FD 7B 0A A9 F4 4F 0B A9 FD 83 02 91 54 D0 3B D5 E0 23 01 91
+Java_com_mojang_minecraftpe_WorldRecovery_nativeError = FF 43 05 D1 FD 7B 10 A9 FC 8B 00 F9 F8 5F 12 A9 F6 57 13 A9 F4 4F 14 A9 FD 03 04 91 58 D0 3B D5 F7 03 00 AA A0 83 01 D1
+Java_com_mojang_minecraftpe_WorldRecovery_nativeUpdate = FD 7B BA A9 FC 6F 01 A9 FA 67 02 A9 F8 5F 03 A9 F6 57 04 A9 F4 4F 05 A9 FD 03 00 91 FF 43 0B D1 59 D0 3B D5 F8 03 00 AA
+Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_onInputDeviceAddedNative = FD 7B BE A9 F4 4F 01 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 00 03 00 B4 F4 03 02 2A 44 BB 7D 95
+Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_onInputDeviceChangedNative = C0 03 5F D6 FD 7B BE A9 F4 4F 01 A9 FD 03 00 91 E8 BE 05 90
+Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_onInputDeviceRemovedNative = FD 7B BE A9 F4 4F 01 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 00 03 00 B4 F4 03 02 2A 16 BB 7D 95
+Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setControllerDetailsNative = FD 7B BC A9 F7 0B 00 F9 F6 57 02 A9 F4 4F 03 A9 FD 03 00 91 E8 BE 05 90
+Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setDoubleTriggersSupportedNative = FD 7B BE A9 F3 0B 00 F9 FD 03 00 91 E8 BE 05 90
+Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setFoundDualsenseControllerNative = FD 7B BD A9 F5 0B 00 F9 F4 4F 02 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 80 04 00 B4 F4 03 02 2A 11 BA 7D 95
+Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setFoundPlaystationControllerNative = FD 7B BD A9 F5 0B 00 F9 F4 4F 02 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 80 04 00 B4 F4 03 02 2A 4D BA 7D 95
+Java_com_mojang_minecraftpe_input_JellyBeanDeviceManager_setFoundXboxControllerNative = FD 7B BD A9 F5 0B 00 F9 F4 4F 02 A9 FD 03 00 91 E8 BE 05 90 00 01 45 F9 80 04 00 B4 F4 03 02 2A 89 BA 7D 95
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchaseCanceled = FF 03 03 D1 FD 7B 09 A9 F6 57 0A A9 F4 4F 0B A9 FD 43 02 91 55 D0 3B D5 F3 03 02 AA E1 03 00 AA A8 16 40 F9 E0 63 00 91 E2 03 03 AA A8 83 1F F8 55 29 B0 97
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchaseFailed = FF 03 03 D1 FD 7B 09 A9 F6 57 0A A9 F4 4F 0B A9 FD 43 02 91 55 D0 3B D5 F3 03 02 AA E1 03 00 AA A8 16 40 F9 E0 63 00 91 E2 03 03 AA A8 83 1F F8 C6 28 B0 97
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchasePending = FF 03 03 D1 FD 7B 09 A9 F6 57 0A A9 F4 4F 0B A9 FD 43 02 91 55 D0 3B D5 F3 03 02 AA E1 03 00 AA A8 16 40 F9 E0 63 00 91 E2 03 03 AA A8 83 1F F8 6C 27 B0 97
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchasePlatformStoreFailed = FF 03 04 D1 FD 7B 0D A9 F6 57 0E A9 F4 4F 0F A9 FD 43 03 91 56 D0 3B D5 F5 03 00 AA
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onPurchaseSuccessful = FD 7B BC A9 FC 5F 01 A9 F6 57 02 A9 F4 4F 03 A9 FD 03 00 91 FF 43 08 D1 57 D0 3B D5 F5 03 00 AA
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onQueryProductsFail = FF C3 01 D1 FD 7B 05 A9 F4 4F 06 A9 FD 43 01 91 54 D0 3B D5 E0 03 02 AA F3 43 00 91 88 16 40 F9 A8 83 1F F8 68 E0 04 B0
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onQueryProductsSuccess = FF 43 06 D1 FD 7B 13 A9 FC 6F 14 A9 FA 67 15 A9 F8 5F 16 A9 F6 57 17 A9 F4 4F 18 A9 FD C3 04 91 48 D0 3B D5 F3 03 03 AA
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onQueryPurchasesFail = FF C3 01 D1 FD 7B 05 A9 F4 4F 06 A9 FD 43 01 91 54 D0 3B D5 E0 03 02 AA F3 43 00 91 88 16 40 F9 A8 83 1F F8 48 E0 04 F0
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onQueryPurchasesSuccess = FD 7B BA A9 FC 6F 01 A9 FA 67 02 A9 F8 5F 03 A9 F6 57 04 A9 F4 4F 05 A9 FD 03 00 91 FF 03 07 D1 48 D0 3B D5 F4 03 03 AA
+Java_com_mojang_minecraftpe_store_NativeStoreListener_onStoreInitialized = FF C3 01 D1 FD 7B 05 A9 F4 4F 06 A9 FD 43 01 91 54 D0 3B D5 E0 03 02 AA 69 E0 04 B0
