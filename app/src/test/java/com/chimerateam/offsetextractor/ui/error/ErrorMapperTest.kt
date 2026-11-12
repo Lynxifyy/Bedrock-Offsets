@@ -1,5 +1,6 @@
 package com.chimerateam.offsetextractor.ui.error
 
+import com.chimerateam.offsetextractor.data.native.EnginePayloads
 import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import org.junit.Assert.assertEquals
@@ -48,5 +49,26 @@ class ErrorMapperTest {
 
         assertTrue(error.message.contains("boom"))
         assertNotNull(error.hint)
+    }
+
+    @Test
+    fun aNativeAllocationFailureIsReportedAsALowMemoryProblem() {
+        // The engine reports `out_of_memory` instead of aborting the process, so
+        // the mapping must exist or the user sees an unknown failure for what is
+        // really a memory problem.
+        val failure = EngineException(EngineErrorKind.OutOfMemory, "relocation index")
+
+        val error = ErrorMapper.fromEngine(failure, "\"scan.apk\"")
+
+        assertTrue(error.message.contains("memory", ignoreCase = true))
+        assertNotNull(error.hint)
+    }
+
+    @Test
+    fun theEngineKindStringMapsOntoTheLowMemoryClassification() {
+        assertEquals(
+            EngineErrorKind.OutOfMemory,
+            EnginePayloads.kindOf("out_of_memory")
+        )
     }
 }

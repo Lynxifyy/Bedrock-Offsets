@@ -231,6 +231,7 @@ object EnginePayloads {
         "invalid_apk" -> EngineErrorKind.InvalidApk
         "invalid_descriptor" -> EngineErrorKind.InvalidDescriptor
         "storage_full" -> EngineErrorKind.StorageFull
+        "out_of_memory" -> EngineErrorKind.OutOfMemory
         "invalid_elf" -> EngineErrorKind.InvalidElf
         "unsupported_arch" -> EngineErrorKind.UnsupportedArchitecture
         "missing_section" -> EngineErrorKind.MissingSection

@@ -40,6 +40,13 @@ pub enum CoreError {
     /// The scan was cancelled by the caller.
     #[error("scan cancelled")]
     Cancelled,
+
+    /// An allocation failed, or a structure would have grown past its budget.
+    ///
+    /// This is reported instead of letting the allocator abort the process: a
+    /// device that is low on memory should see an error, not an instant close.
+    #[error("out of memory: {0}")]
+    OutOfMemory(String),
 }
 
 /// Convenience alias used throughout the engine.

@@ -131,6 +131,18 @@ the pointer immediately before it in `.data.rel.ro` is the vtable. If the
 relocations are stripped, a direct scan of `.data.rel.ro` for the same pointer
 value is the fallback.
 
+A real library's `.rela.dyn` holds over a million entries. Reading it into a
+flat vector and then copying the supported ones into a second vector costs
+about 64 MiB of transient heap — on top of the scan's resident set, inside the
+process heap cap, which is enough for the kernel to kill the app rather than
+let the engine return an error. The table is therefore streamed in bounded
+blocks and filtered as it is read, so only the sorted index is allocated, and
+the dead table pages are offered back to the kernel before `.data.rel.ro` is
+faulted in. Each candidate slot is resolved to its class name in the same pass,
+so the scan keeps only the vtables it identified rather than every candidate
+slot it considered. On the reference library this holds the phase under 40 MiB
+of heap and the whole pipeline under 54 MiB resident.
+
 ### 8. Symbol cross-check (Rust, `verify.rs`)
 
 The dynamic symbol table (`.dynsym`) is parsed and the exported `Java_*` symbols

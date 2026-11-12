@@ -131,6 +131,14 @@ enum class EngineErrorKind {
     /** The device ran out of storage while writing the extracted file. */
     StorageFull,
 
+    /**
+     * The engine could not allocate a structure it needed.
+     *
+     * Reported from native code instead of aborting the process, so a device
+     * that is low on memory sees an explanation rather than an instant close.
+     */
+    OutOfMemory,
+
     /** The file is not a parseable ELF object. */
     InvalidElf,
 

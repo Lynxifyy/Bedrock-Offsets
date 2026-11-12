@@ -17,7 +17,7 @@ use crate::memory::peak_resident_bytes;
 use crate::patterns::PatternSet;
 use crate::progress::JniProgressSink;
 use crate::prologue::PrologueVerifier;
-use crate::rtti::resolve_vtables;
+use crate::rtti::resolve_vtables_with_releaser;
 use crate::scanner::{
     scan_section_releasing_pages, verify_prologues_with_progress, ProgressSink, ScanControl,
     ScanOutcome,
@@ -481,7 +481,9 @@ fn parse_pattern_specs(patterns_json: &str) -> CoreResult<Vec<(String, String)>>
 /// Propagates any mapping or vtable-resolution failure.
 pub fn resolve_vtables_json(path: &str, sha256: &str) -> CoreResult<String> {
     let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
-    let map = resolve_vtables(library.bytes())?;
+    // The mapping is its own page releaser, so the relocation tables are handed
+    // back to the kernel as soon as the index has read them.
+    let map = resolve_vtables_with_releaser(library.bytes(), Some(&library))?;
     Ok(serde_json::to_string(&map).unwrap_or_default())
 }
 
@@ -548,6 +550,9 @@ fn throw_core_error(env: &mut JNIEnv, error: &CoreError) {
         CoreError::MissingSection(_) => "missing_section",
         CoreError::InvalidPattern(_) => "invalid_pattern",
         CoreError::Cancelled => "cancelled",
+        // A failed allocation is reported as an out-of-memory condition so the
+        // UI can show the low-memory message instead of the process dying.
+        CoreError::OutOfMemory(_) => "out_of_memory",
     };
     throw_engine_failure(env, kind, &error.to_string());
 }
