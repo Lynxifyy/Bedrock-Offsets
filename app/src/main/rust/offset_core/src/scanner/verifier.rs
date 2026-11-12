@@ -7,6 +7,7 @@
 use crate::error::{CoreError, CoreResult};
 use crate::prologue::PrologueVerifier;
 use crate::sections::SectionMap;
+use crate::verify::VerificationStatus;
 
 use super::{
     report, PatternHit, ProgressSink, ScanControl, ScanOutcome, MATCH_PERCENT, PROGRESS_STEPS,
@@ -17,6 +18,11 @@ use super::{
 /// A byte signature only says "these bytes occur here". Decoding the bytes at
 /// the match and requiring a stack-frame or landing-pad form is what turns a
 /// byte match into a function start.
+///
+/// A hit the symbol table has already confirmed is kept even when its bytes are
+/// not a prologue: a leaf function such as `isEduMode` is `mov w0, wzr; ret`
+/// with no frame at all, and the exported symbol is a stronger witness than the
+/// prologue shape. Only hits with nothing else to vouch for them are discarded.
 ///
 /// # Errors
 ///
@@ -77,10 +83,18 @@ pub fn verify_prologues_with_progress(
 
         let offset = hit.section_offset as usize;
         let verdict = verifier.verify(bytes, offset);
-        if verdict.accepted {
+        // A hit the symbol table confirmed is kept whatever its first bytes
+        // look like: a leaf getter has no frame to recognise, and the symbol is
+        // the stronger witness. Everything else still has to decode to a
+        // prologue, which is what keeps a stray byte match out of the report.
+        let confirmed = hit.verification_status == VerificationStatus::Verified;
+        if verdict.accepted || confirmed {
+            // The prologue fields describe what was decoded, so they stay empty
+            // for a confirmed leaf: reporting a form that was not found would
+            // make the row's detail a lie.
             kept.push(PatternHit {
-                prologue_kind: Some(verdict.kind),
-                prologue_instruction: Some(verdict.instruction),
+                prologue_kind: verdict.accepted.then_some(verdict.kind),
+                prologue_instruction: verdict.accepted.then_some(verdict.instruction),
                 ..hit
             });
         } else {
@@ -100,6 +114,73 @@ mod tests {
     use super::*;
     use crate::scanner::scan_section;
     use crate::scanner::test_support::set_of;
+    use crate::verify::VerificationStatus;
+
+    /// Builds a one-section map over `image`.
+    fn map_of(image: &[u8]) -> crate::sections::SectionMap {
+        let section = crate::sections::SectionInfo {
+            name: ".text".to_string(),
+            kind: crate::sections::SectionKind::Text,
+            address: 0x1000,
+            size: image.len() as u64,
+            offset: 0,
+            align: 16,
+            delta: 0x1000,
+            allocated: true,
+            executable: true,
+            writable: false,
+            occupies_file: true,
+        };
+        crate::sections::SectionMap {
+            image_base: 0x1000,
+            text: section,
+            sections: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_symbol_confirmed_leaf_survives_without_a_prologue() {
+        // `mov w0, wzr; ret` is a whole function with no frame, so the prologue
+        // check rejects it. The symbol table says the bytes are right, and that
+        // witness is stronger, so the hit must be kept and not discarded.
+        let mut image = vec![0u8; 64];
+        image[0..8].copy_from_slice(&[0xe0, 0x03, 0x1f, 0x2a, 0xc0, 0x03, 0x5f, 0xd6]);
+        let map = map_of(&image);
+
+        let set = set_of(&[("isEduMode", "E0 03 1F 2A C0 03 5F D6")]);
+        let mut outcome = scan_section(&map, &image, &set, &ScanControl::new()).expect("scan");
+        outcome.hits[0].verification_status = VerificationStatus::Verified;
+
+        let verifier = crate::prologue::PrologueVerifier::new().expect("capstone");
+        let verified = verify_prologues(outcome, &map, &image, &verifier, &ScanControl::new())
+            .expect("verify");
+
+        assert_eq!(verified.hits.len(), 1, "a confirmed leaf must survive");
+        assert_eq!(verified.discarded, 0);
+        // No prologue was decoded, so the detail stays empty rather than
+        // claiming a form that is not there.
+        assert_eq!(verified.hits[0].prologue_kind, None);
+        assert_eq!(verified.hits[0].prologue_instruction, None);
+    }
+
+    #[test]
+    fn an_unconfirmed_non_prologue_is_still_discarded() {
+        // The same bytes without a symbol witness are a coincidence and must be
+        // dropped, so the relaxation cannot leak stray matches into the report.
+        let mut image = vec![0u8; 64];
+        image[0..8].copy_from_slice(&[0xe0, 0x03, 0x1f, 0x2a, 0xc0, 0x03, 0x5f, 0xd6]);
+        let map = map_of(&image);
+
+        let set = set_of(&[("stray", "E0 03 1F 2A C0 03 5F D6")]);
+        let outcome = scan_section(&map, &image, &set, &ScanControl::new()).expect("scan");
+
+        let verifier = crate::prologue::PrologueVerifier::new().expect("capstone");
+        let verified = verify_prologues(outcome, &map, &image, &verifier, &ScanControl::new())
+            .expect("verify");
+
+        assert!(verified.hits.is_empty());
+        assert_eq!(verified.discarded, 1);
+    }
 
     #[test]
     fn a_hit_that_is_not_a_prologue_is_discarded() {
