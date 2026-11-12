@@ -4,69 +4,15 @@ FreeHands = a fork of OpenHands Agent Canvas (`Lynxifyy/FreeHands`) used as a
 coding app with DeepSeek V4.1 Flash, plus a Capacitor Android shell and a
 forked agent-server SDK (`Lynxifyy/software-agent-sdk-2.0`).
 
-## Branches and PRs
+## Branches and PRs (FreeHands)
 - Long-lived feature branch: `feat/discord-automations-and-bot-connect`
-  (local ref `feat-discord`). It carries all the app-bundle work.
-- Open PRs: FreeHands **#5** (draft, ready to merge). SDK **#2** is **merged**
-  (merge commit `d0da07d`); the FreeHands SDK pin now points at that merged SHA.
-- `main` has **no branch protection**, so the red fork-only checks do not block
+  (local ref `feat-discord`) — carries all the app-bundle work.
+- Merge conflicts between sibling branches off the same base are all "keep both":
+  action/type-guard/base unions, the adapter `client_tools` list, the websocket
+  dispatch, action titles, client-tool result prefixes, and `translation.json`
+  (union the keys by parsing each side as JSON — never by hand).
+- `main` has **no branch protection**, so the fork-only red checks do not block
   a merge.
-- PR #4 (`feat/ui-preview-critique-tools`) **merged** to main (`840934a`).
-  #4 and #5 were independent siblings off `e78c813` that both added client tools
-  at the same seams, so #5 needed a merge of main first (merge commit `fc63fa24`).
-  Conflicts were all "keep both": action/type-guard/base unions, the adapter
-  `client_tools` list, the websocket dispatch, action titles, client-tool result
-  prefixes, and `translation.json` (union of both branches' keys — merge it
-  programmatically by parsing each side as JSON, never by hand).
-
-## Agent-tools workstream (the "phases" from the Chat-recovery- HTML chat)
-The original plan lived in `Lynxifyy/Chat-recovery-`
-(`conversation-14eef971253347218f1067053099cc7f.html`). Phases are done **two per
-PR**, then merged, then stop for the user's confirmation. Progress:
-- **PR #6** (merged `2d2b51f`): Phase 1 live task list + **green** done tick
-  (`text-success`, in both `task-tracking/task-item.tsx` files) and Phase 2
-  in-app settings (no browser escape from the packaged app).
-- **PR #7** (merged `6bf357c`): Phase 3 model-aware thinking status
-  (`thinkingModelLabel` in `src/utils/format-model-name.ts`, `ACTION_MESSAGE$MODEL_THINKING`)
-  and Phase 4 Oli presence (`src/utils/oli-activity.ts` derives `deriveOliStatus`
-  from an unresolved `TaskAction` whose `subagent_type` is `oli`;
-  `OliRobotHead` in `src/components/features/chat/oli-robot-head.tsx`, blue
-  `bg-logo`, `oli-think`/`oli-code`/`oli-antenna` keyframes in `tailwind.css`).
-  Also fixed a stale `task-tracking-item-status.test.tsx` assertion left on main.
-- **Phases 5+6 → FreeHands PR #8** (open, branch `feat/discord-recommended-and-bot-token` @ `3c971c9`):
-  Discord now appears in Recommended automations through a host catalog entry
-  `DISCORD_RECOMMENDED_AUTOMATION` in `src/constants/discord.ts`
-  (+ `getHostAutomationCatalog()` in `src/utils/recommended-automation-rail.ts`,
-  used by both the rail and the section) and a bundled `src/icons/discord.svg`
-  registered in `McpLogoBadge.LOCAL_LOGO_ICONS`. The launcher routes the Discord
-  card to the guided setup. Bot-token entry lives in the DiscordConnectModal;
-  the token is saved as `DISCORD_BOT_TOKEN` via `SecretsService` and never posted
-  to chat (`src/services/discord-connect.ts`).
-- **Phase 7 → FreeHands PR #9** (open, branch `feat/keep-sandboxes-alive-setting` @ `a412552`):
-  new app preference `always_keep_sandbox_alive` (App Settings toggle
-  `SETTINGS$ALWAYS_KEEP_SANDBOX_ALIVE`); `pauseConversation` honors
-  `{ keepSandboxAlive }` so cloud mode skips pausing the sandbox and the stop
-  hooks keep the runtime URL.
-- **Phases 8+9 → SDK PR #3** (open, branch `feat/cloud-terminal-tool` @ `6d94a0f`,
-  two commits `419b22b` + `6d94a0f`):
-  - `openhands.tools.cloud_terminal`: one-shot command via workspace
-    `execute_command` (works local + remote/cloud); default exec tool.
-  - `openhands.tools.file_builder`: writes text/md, PNG (base64), ZIP, DOCX;
-    default exec tool, paths confined to working dir.
-  - builtin subagent `oli` (`preset/subagents/oli.md`): coding agent with
-    terminal/file_editor/task_tracker/file_builder/cloud_terminal/verify.
-  - All wired into `DEFAULT_EXEC_TOOL_NAMES` + `preset/default.py`; test lists
-    updated (`test_settings.py`, `cross/test_default_tool_names.py`,
-    `persisted_settings_baselines/v2/agent_profile_tool_switches.json`,
-    `test_builtin_agents.py`).
-- **Phase 10 → litellm PR #2** (open, branch `feat/deepseek-v4stream-metadata` @
-  `997dd4fc`): add `supports_streaming`+`supports_parallel_function_calling` to
-  deepseek-v4-pro/flash/v4.1-flash/v4.1-flash-vision-exp and `supports_vision` to
-  vision-exp; test `tests/litellm/llms/deepseek/test_deepseek_v4_models.py`.
-
-SDK/litellm test envs are created ad hoc with `uv venv /tmp/sdkvenv` +
-`uv pip install --python <venv> -e <pkg> pytest [pytest-asyncio]`. litellm is
-installed from the repo root (`-e .`).
 
 ## Git auth (important)
 - `$GITHUB_TOKEN` / `$Github` are read-only for git push on Lynxifyy repos (403).
@@ -107,48 +53,48 @@ installed from the repo root (`-e .`).
   source). Public bot application id is `1568005572769480704`.
 
 ## GlowberryClient (ChimeraAnt-DEV/GlowberryClient) — Android launcher
-- **Native code lives in a git submodule**: `app/src/main/cpp/preloader`
-  (remote `ChimeraAnt-DEV/preloader-android`, working branch `lynxifyy/preloader-hardening`).
-  A change under `app/src/main/cpp/preloader/**` must be committed **inside the submodule**,
-  pushed, then the parent repo must commit the bumped submodule pointer. `git add` of a
-  submodule path in the parent stages the gitlink, not the file.
-  **Always check the pin is not behind the submodule's `main`** (`git -C <sub> merge-base
-  --is-ancestor origin/main HEAD`). A `feat/*` submodule branch can silently skip a large
-  `main` PR: the pin here was 13 commits behind main (frame-boundary clock, seqlock fixes,
-  Optifine device/thread fixes, atomic sig-cache write, snapshot channel + TSAN). Merge
-  `origin/main` into the working branch, resolve, run `tests/cosmetics/run_tests.sh`, push the
-  submodule, then bump the parent pin. Merging main can also add JNI exports with no Java
-  declaration → `JniBindingParityTest` fails with `stale-export`; add the Java `native` methods
+- **Native code is a git submodule**: `app/src/main/cpp/preloader` (remote
+  `ChimeraAnt-DEV/preloader-android`). A change under that path must be committed
+  **inside the submodule**, pushed, then the parent must commit the bumped
+  pointer — `git add` of a submodule path in the parent stages the gitlink, not
+  the file. **Always check the pin is not behind the submodule's `main`**
+  (`git -C <sub> merge-base --is-ancestor origin/main HEAD`); a long-lived
+  `feat/*` branch can silently skip a large `main` PR. Merging `main` can also add
+  JNI exports with no Java declaration → `JniBindingParityTest` fails with
+  `stale-export`; add the Java `native` methods
   (`app/src/main/java/.../launcher/preloader/BerryApi.java`).
-- **Build/test**: `JAVA_HOME=/workspace/tools/jdk-21.0.13+9 ANDROID_HOME=/workspace/android-sdk
-  ./gradlew :app:testDebugUnitTest` (~3843 tests, ~25s, all green). Targeted:
+- **Build/test**: `JAVA_HOME=/workspace/tools/jdk-21.0.13+9
+  ANDROID_HOME=/workspace/android-sdk ./gradlew :app:testDebugUnitTest`
+  (3844 tests, 0 failures, 1 skipped, ~25s warm). Targeted:
   `--tests "org.chimeramc.client.<pkg>.*"`. Native host tests:
-  `bash app/src/main/cpp/preloader/tests/cosmetics/run_tests.sh` (needs g++ + zlib + nlohmann).
-- **BerryAPI ABI guard**: `python3 scripts/verify_berryapi_abi.py` (test:
-  `scripts/tests/verify_berryapi_abi_test.py`). Pins the 14 dlsym'd `BERRY_*` symbols and the
-  seam/replay/governor ABI numbers against the bundled `libBerryAPI.so`. **`BERRY_Inject` and
-  `BERRY_IsAttached` return `int` (0/1), not C++ `bool`** — BerryAPI's header says a 1-byte bool
-  return leaves the upper result register undefined. Official BerryAPI: `Lynxifyy/BerryAPI`
-  (clone to /tmp to read headers; ABI 8, `BERRY_ABI_VERSION`).
-- **Module catalogue**: `PvpModuleCatalog` = 200 entries (38 `link()` + 162 `add()`). Honest split:
-  **50 reachable/toggleable**, **112 disabled/badged** (52 `ENGINE_HOOK` + 60 `SERVER_DECIDED`).
-  Pinned by `PvpModuleScopesTest.theBadgeCountsMatchTheAuditNote`. The 52 ENGINE_HOOK need a
-  **complete world seam** (the preloader binds only `get_local_player`; the stripped
-  `libminecraftpe.so` gives no entity-list/level anchor) + a signature pack for the active build.
-  The 60 SERVER_DECIDED cannot be enabled by any client code.
-- **Setup wizard**: `SetupWizardActivity` is a self-sizing popup over `MainActivity`; each step
-  shows only its own block; finishing calls `finishWizard()` → `MainActivity` (never a controller
-  screen). Test `SetupWizardLastTabsTest` pins it.
-- **Git author for this repo's commits**: `Lynxifyy <297587416+Lynxifyy@users.noreply.github.com>`,
-  no co-authors, no AI mentions in PRs. Push with `$GithubLynxifyy` (has repo scope; `create_pr`
-  tool's token is read-only here → use a `curl` POST to the API).
-- **Two Android CI gates that fail locally-silent changes** (both run in `android.yml` before the
-  Gradle build, so they fail fast): `python3 scripts/check_ui_hygiene.py` fails on *new*
-  `findViewById` calls beyond a per-file baseline — read the view from the generated ViewBinding
-  instead (or `--update` with a reason). `./gradlew :app:lintDebug` fails on a new
-  `MissingSuperCall` — do not override `onBackPressed()` without calling `super`; register an
-  `OnBackPressedCallback` on `getOnBackPressedDispatcher()` instead. Full unit suite is
-  **3844 tests, 0 failures, 1 skipped** (~25s warm).
+  `bash app/src/main/cpp/preloader/tests/cosmetics/run_tests.sh` (needs g++ +
+  zlib + nlohmann).
+- **BerryAPI ABI guard**: `python3 scripts/verify_berryapi_abi.py`. Pins the 14
+  dlsym'd `BERRY_*` symbols and the seam/replay/governor ABI numbers against the
+  bundled `libBerryAPI.so`. **`BERRY_Inject`/`BERRY_IsAttached` return `int`
+  (0/1), not C++ `bool`** — a 1-byte bool return leaves the upper result register
+  undefined. Upstream: `Lynxifyy/BerryAPI` (ABI 8).
+- **Module catalogue**: `PvpModuleCatalog` = 200 entries (38 `link()` + 162
+  `add()`). Honest split: **50 reachable/toggleable**, **112 disabled/badged**
+  (52 `ENGINE_HOOK` + 60 `SERVER_DECIDED`), pinned by
+  `PvpModuleScopesTest.theBadgeCountsMatchTheAuditNote`. The 52 ENGINE_HOOK need a
+  **complete world seam** (the preloader binds only `get_local_player`; the
+  stripped `libminecraftpe.so` gives no entity-list/level anchor) plus a signature
+  pack for the active build. The 60 SERVER_DECIDED cannot be enabled by client
+  code.
+- **Setup wizard**: `SetupWizardActivity` is a self-sizing popup over
+  `MainActivity`; each step shows only its own block; finishing calls
+  `finishWizard()` → `MainActivity` (never a controller screen). Pinned by
+  `SetupWizardLastTabsTest`.
+- **Two CI gates that fail locally-silent changes** (both in `android.yml` before
+  the Gradle build, so they fail fast): `python3 scripts/check_ui_hygiene.py` fails
+  on *new* `findViewById` calls beyond a per-file baseline — read the view from the
+  generated ViewBinding instead (or `--update` with a reason). `:app:lintDebug`
+  fails on a new `MissingSuperCall` — do not override `onBackPressed()` without
+  calling `super`; register an `OnBackPressedCallback` on
+  `getOnBackPressedDispatcher()` instead.
+- **Git author**: `Lynxifyy <297587416+Lynxifyy@users.noreply.github.com>`, no
+  co-authors, no AI mentions in PRs. Push with `$GithubLynxifyy`.
 
 ## Bedrock-Offsets (Lynxifyy/Bedrock-Offsets) — Android + Rust offset extractor
 - **Traps**: `createComposeRule` tests belong in `app/src/testDebug/` (the release
@@ -190,7 +136,7 @@ installed from the repo root (`-e .`).
   (warn + exit 0, not a build failure) and (b) installing the toolchain in the test job.
 - **Release**: tag `v*` triggers `release.yml` (cross-compile, `verify_version.py` guard,
   assembleRelease, verify_release.py, changelog.py, `gh release create`). Version pinned in
-  `app/build.gradle.kts` (`versionCode = 1`, `versionName = "1.0.0"`); the tag must match or
+  `app/build.gradle.kts` (`versionCode = 6`, `versionName = "1.0.5"`); the tag must match or
   `verify_version.py` fails. Release signing is optional: with no keystore secrets the
   release variant now reuses the **debug** signing config (commit d4fb36b) — without that
   explicit assignment Gradle emits `app-release-unsigned.apk` which will not install.
@@ -199,14 +145,40 @@ installed from the repo root (`-e .`).
 - **Build/test**: `source /workspace/tools/env.sh` then `./gradlew testDebugUnitTest
   ktlintCheck lintDebug` (~161 Kotlin tests). Rust: `cd app/src/main/rust/offset_core &&
   cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test
-  --all-targets` (133 tests). Python: `python3 -m unittest discover -s scripts/tests -t .`
-  (73 tests).
+  --all-targets` (149 tests; `MCPE_SO=<path>` adds the live-library ones). Python: `python3 -m unittest discover -s scripts/tests -t .`
+  (97 tests).
 - **ktlint** `12.1.1` + `.editorconfig` (`ktlint_code_style = android_studio`). ktlintCheck is
   a CI gate.
 - **Env quirk**: this container's `$ANDROID_HOME` and tools live under `/workspace`
   (`/workspace/tools/jdk-21.0.13+9`, `/workspace/tools/cargo/bin`, `/workspace/android-sdk`);
   `source /workspace/tools/env.sh` sets them. jniLibs is gitignored, so the `.so` is built
   fresh on every checkout.
+
+### Memory budget: the crash class is a transient heap spike, not a leak
+- **Symptom shape**: on device the log simply *stops* — no exception, no engine
+  error. That is the kernel killing the process for exceeding the heap cap, so
+  there is nothing to catch and nothing to log. Any phase that allocates in
+  proportion to input is a candidate.
+- **v1.0.5 fix (`rtti.rs`)**: `.rela.dyn` on the reference lib holds **1,043,633
+  entries**; reading it into a flat `Vec<Relocation>` and copying the supported
+  ones was a **64 MiB transient spike**. Now: stream in bounded `BLOCK_ENTRIES`
+  blocks and filter as you read (`try_reserve` → `CoreError::OutOfMemory`);
+  resolve each candidate's class name in the same pass (the 227,513-entry
+  candidate vector is gone); release the dead relocation pages *before*
+  `.data.rel.ro` is faulted in. Measured: phase heap 64 → <40 MiB, pipeline peak
+  RSS 86.4 → **53.7 MiB**, scan peak 21.2 MiB, output unchanged (4,688 vtables).
+- **`.rela.dyn` is NOT sorted by offset** (13,418 out-of-order entries), so the
+  sorted index is load-bearing — do not "simplify" it into a streaming merge.
+- **Guard**: `tests/rtti_memory_test.rs` budgets the phase's own heap with a
+  counting allocator and failed at 64 MiB before the fix. Reach for this pattern
+  whenever a phase's allocation is sized by the input.
+- **Error kinds** cross JNI as `kind: detail`. Keep three places in sync:
+  `jni_bridge::throw_core_error`, `EnginePayloads.kindOf`, and
+  `ErrorMapper.fromEngine`. `ErrorMapperTest` enumerates every kind and fails if
+  two share a message.
+- **Open (device-only)**: the scan phase reported **165.3 MB** on device where
+  the host measures 21.2 MiB. Not reproduced; suspects are the two concurrent
+  `ProgressCallback` objects and the JNI string marshalling of the payload.
 
 ### Gson + R8 release shrink trap (fixed)
 - **Symptom**: release-only failure `JsonIOException: Abstract classes can't be
@@ -229,4 +201,3 @@ installed from the repo root (`-e .`).
 - **Verify locally**: build `assembleRelease` then `python3
   scripts/verify_release.py` should print `Gson models: 31 models instantiable`.
   CI uploads `app/build/outputs/mapping/release/` as the `r8-mapping` artefact.
-
