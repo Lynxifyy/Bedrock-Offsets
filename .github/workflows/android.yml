@@ -116,6 +116,14 @@ jobs:
 
       - name: Check the signature pack is up to date
         run: python3 scripts/generate_patterns.py patterns.txt --check
+
+      # The pack must also be reproducible from the source it claims to come
+      # from. This rebuilds it from the committed `patterns.txt` and compares,
+      # which catches a hand-edit that the generator would not produce.
+      - name: Check the signature pack round-trips
+        run: |
+          python3 scripts/generate_patterns.py patterns.txt
+          git diff --exit-code app/src/main/assets/patterns.json
   rust:
     name: Rust engine
     runs-on: ubuntu-latest

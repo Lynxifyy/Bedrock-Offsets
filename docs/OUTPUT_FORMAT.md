@@ -28,15 +28,15 @@ version; a rename or a removal bumps `schemaVersion`.
   },
   "offsets": {
     "vtable:ClientInstance": "0x2c4a100",
-    "pattern:frame_push_x29_x30": "0x1a2b3c",
-    "pattern:pacibsp_prologue": "0x1c4d020",
-    "pattern:stack_alloc_0x20": "-",
+    "pattern:Java_com_mojang_minecraftpe_MainActivity_nativeResize": "0x889c618",
+    "pattern:Java_com_mojang_minecraftpe_MainActivity_isEduMode": "0x889df5c",
+    "pattern:Java_com_mojang_minecraftpe_MainActivity_nativeShutdown": "-",
     "symbol:Java_com_mojang_nativeTick": "0x1d0a4c8"
   },
   "verification": {
-    "verified": 4,
+    "verified": 90,
     "conflicts": 0,
-    "unverified": 6,
+    "unverified": 1,
     "symbols_available": true
   },
   "vtables": {
@@ -50,9 +50,9 @@ version; a rename or a removal bumps `schemaVersion`.
     "Java_com_mojang_nativeTick": "0x1d0a4c8"
   },
   "stats": {
-    "expectedSignatures": 11,
-    "matchedSignatures": 10,
-    "discardedMatches": 37,
+    "expectedSignatures": 91,
+    "matchedSignatures": 91,
+    "discardedMatches": 0,
     "vtables": 1,
     "symbols": 214,
     "verifiedOffsets": 4,

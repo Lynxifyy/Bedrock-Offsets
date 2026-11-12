@@ -94,6 +94,13 @@ automaton, which finds every candidate in one pass over the section. Each
 candidate is then checked against the wildcard mask by hand. The automaton
 narrows the search; the manual check decides.
 
+The shipped pack does not use wildcards. Every signature is the shortest byte
+string at an exported `Java_*` symbol that occurs exactly once in `.text`, so a
+signature finds one address and that address can be checked against the symbol
+table (step 8). The pack is generated from a real library by
+`scripts/derive_patterns.py` rather than written by hand, which is what keeps it
+in step with the build.
+
 The section is then split into 4 MB chunks, one per Rayon worker. Chunks overlap
 by 32 bytes so a match straddling a boundary is still found, and duplicates
 introduced by the overlap are removed afterwards. An `AtomicBool` is checked
@@ -108,6 +115,12 @@ is kept only if the instructions look like a real function prologue, such as
 `STP x29, x30, [sp, #-N]!` or a `PACIBSP` frame. Matches that do not decode to
 a prologue are discarded and counted. This is what turns "these bytes appear" into
 "a function probably starts here."
+
+The check is a filter, not a veto. A leaf function has no frame to recognise —
+`isEduMode` is `mov w0, wzr; ret` — so a match the symbol table already confirmed
+is kept whatever its bytes look like. Only a match with nothing else to vouch for
+it is discarded, and a kept leaf carries no prologue form rather than a made-up
+one.
 
 ### 7. RTTI vtable resolution (Rust, `rtti.rs`)
 
@@ -126,6 +139,12 @@ tagged `VERIFIED`; a hit that disagrees is tagged `CONFLICT`; a hit with no
 symbol to compare against is `UNVERIFIED`. The confidence score is
 `verified / total`, and it is deliberately `0` when there is nothing to compare,
 so a stripped library reports no confidence rather than a misleading 100%.
+
+This runs *before* the prologue check, because that check discards candidates and
+a symbol-confirmed offset must not be thrown away first. A stripped library has
+no `Java_*` symbols at all, so every hit stays `UNVERIFIED` and the prologue
+check is the only filter — which is the honest answer for a library nothing
+independent can vouch for.
 
 ## The JNI boundary
 
