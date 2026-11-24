@@ -64,12 +64,12 @@ fun ScannerScreen(
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
+    modifier: Modifier = Modifier,
     onDownloadJni: () -> Unit = {},
     onDownloadInternal: () -> Unit = {},
     onRetryInternal: () -> Unit = {},
     internalBusy: Boolean = false,
-    onShareInternal: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    onShareInternal: (() -> Unit)? = null
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val availableWidth = maxWidth
