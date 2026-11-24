@@ -184,7 +184,11 @@ class OffsetExporterTest {
     @Test
     fun theBuildIdIsTheLastResort() {
         val name = OffsetExporter.jniFileName(
-            summary.copy(displayName = "minecraft.apk", apkVersion = "", buildId = "410ac215603eebd7")
+            summary.copy(
+                displayName = "minecraft.apk",
+                apkVersion = "",
+                buildId = "410ac215603eebd7"
+            )
         )
 
         assertEquals("JNI_OFFSETS_410ac215.json", name)
@@ -206,13 +210,25 @@ class OffsetExporterTest {
     fun theInternalDocumentStreamsTheTable() {
         val table = kotlin.io.path.createTempFile("internal", ".ndjson").toFile()
         table.deleteOnExit()
-        table.writeText(
-            listOf(
-                """{"type":"meta","schemaVersion":1,"kind":"internal_cpp","stats":{}}""",
-                """{"type":"class","class":{"name":"ClientInstance","mangled":"14ClientInstance","bases":[],"vtable":"0x403000","vtableOffset":"0x3000","typeInfo":"0x403080","slotCount":1,"slots":[{"slot":0,"offset":"0x0","address":"0x401000","fileOffset":"0x1000","size":4,"name":"ClientInstance::vfunc_0","kind":"virtual","overrides":false,"inherited":false,"status":"verified"}]}}""",
-                """{"type":"function","function":{"address":"0x401000","fileOffset":"0x1000","size":4,"name":"ClientInstance::vfunc_0","nameSource":"vtable","aliases":[],"kind":"function","status":"verified","prologueKind":"frame_push"}}"""
-            ).joinToString("\n")
-        )
+        val metaLine = """{"type":"meta","schemaVersion":1,"kind":"internal_cpp","stats":{}}"""
+        val classLine = listOf(
+            """{"type":"class","class":{"name":"ClientInstance",""",
+            """"mangled":"14ClientInstance","bases":[],""",
+            """"vtable":"0x403000","vtableOffset":"0x3000",""",
+            """"typeInfo":"0x403080","slotCount":1,"slots":[""",
+            """{"slot":0,"offset":"0x0","address":"0x401000",""",
+            """"fileOffset":"0x1000","size":4,""",
+            """"name":"ClientInstance::vfunc_0","kind":"virtual",""",
+            """"overrides":false,"inherited":false,"status":"verified"}]}}"""
+        ).joinToString("")
+        val functionLine = listOf(
+            """{"type":"function","function":{"address":"0x401000",""",
+            """"fileOffset":"0x1000","size":4,""",
+            """"name":"ClientInstance::vfunc_0","nameSource":"vtable",""",
+            """"aliases":[],"kind":"function","status":"verified",""",
+            """"prologueKind":"frame_push"}}"""
+        ).joinToString("")
+        table.writeText(listOf(metaLine, classLine, functionLine).joinToString("\n"))
         val internal = com.chimerateam.offsetextractor.data.native.InternalSummary(
             classes = 1,
             vtableSlots = 1,

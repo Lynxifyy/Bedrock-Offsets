@@ -67,8 +67,12 @@ class SettingsScreenTest {
         render(onTheme = { modes += it })
 
         composeTestRule.onNodeWithContentDescription("Dark mode").performScrollTo().performClick()
-        composeTestRule.onNodeWithContentDescription("Follow system").performScrollTo().performClick()
-        composeTestRule.onNodeWithContentDescription("Follow system").performScrollTo().performClick()
+        composeTestRule.onNodeWithContentDescription(
+            "Follow system"
+        ).performScrollTo().performClick()
+        composeTestRule.onNodeWithContentDescription(
+            "Follow system"
+        ).performScrollTo().performClick()
 
         assertEquals(listOf(ThemeMode.Dark, ThemeMode.System, ThemeMode.Light), modes)
     }

@@ -48,6 +48,10 @@ data class BatchSummary(
     /** One-line description of the run. */
     val message: String
         get() = "Processed $total APKs. $succeeded succeeded, $failed failed." +
-            if (files.isEmpty()) "" else "\n\nSaved ${files.size} files:\n" +
-                files.joinToString("\n")
+            if (files.isEmpty()) {
+                ""
+            } else {
+                "\n\nSaved ${files.size} files:\n" +
+                    files.joinToString("\n")
+            }
 }

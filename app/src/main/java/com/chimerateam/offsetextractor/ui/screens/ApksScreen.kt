@@ -78,7 +78,10 @@ object ApkCatalog {
     private val versionPattern = Regex("""(\d+)[-._](\d+)(?:[-._](\d+))?""")
     private val tagPattern = Regex("<[^>]+>")
     private val formPattern =
-        Regex("""<form[^>]+action="([^"]*show_file[^"]*)"[^>]*>(.*?)</form>""", RegexOption.DOT_MATCHES_ALL)
+        Regex(
+            """<form[^>]+action="([^"]*show_file[^"]*)"[^>]*>(.*?)</form>""",
+            RegexOption.DOT_MATCHES_ALL
+        )
     private val hiddenInputPattern =
         Regex("""<input[^>]+name="([^"]+)"[^>]+value="([^"]*)"""", RegexOption.DOT_MATCHES_ALL)
     private val apkUrlPattern =
@@ -184,11 +187,10 @@ object ApkCatalog {
             ?: throw java.io.IOException("The download page did not expose an APK link.")
     }
 
-    private fun directApk(html: String): String? =
-        apkUrlPattern.find(html)?.value
-            ?: anchorPattern.findAll(html)
-                .map { it.groupValues[1].trim() }
-                .firstOrNull { it.startsWith("http") && it.contains(".apk", ignoreCase = true) }
+    private fun directApk(html: String): String? = apkUrlPattern.find(html)?.value
+        ?: anchorPattern.findAll(html)
+            .map { it.groupValues[1].trim() }
+            .firstOrNull { it.startsWith("http") && it.contains(".apk", ignoreCase = true) }
 
     private fun readText(url: String, postBody: String? = null): String {
         val connection = open(url)
@@ -249,10 +251,7 @@ object ApkCatalog {
  * @param modifier layout modifier for the screen.
  */
 @Composable
-fun ApksScreen(
-    onExtract: (File) -> Unit,
-    modifier: Modifier = Modifier
-) {
+fun ApksScreen(onExtract: (File) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var offers by remember { mutableStateOf<List<ApkOffer>>(emptyList()) }
@@ -402,12 +401,7 @@ fun ApksScreen(
 }
 
 @Composable
-private fun ApkOfferRow(
-    offer: ApkOffer,
-    busy: Boolean,
-    progress: Int,
-    onExtract: () -> Unit
-) {
+private fun ApkOfferRow(offer: ApkOffer, busy: Boolean, progress: Int, onExtract: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),

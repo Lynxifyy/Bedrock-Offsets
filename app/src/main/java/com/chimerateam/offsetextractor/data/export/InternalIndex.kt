@@ -44,8 +44,16 @@ class InternalIndex(private val table: File?) {
                 if (rows.size >= limit) break
                 val root = parse(line) ?: continue
                 when (root.get("type")?.asString) {
-                    "function" -> functionRow(root.getAsJsonObject("function"), needle)?.let(rows::add)
-                    "class" -> classRows(root.getAsJsonObject("class"), needle, limit - rows.size, rows)
+                    "function" -> functionRow(
+                        root.getAsJsonObject("function"),
+                        needle
+                    )?.let(rows::add)
+                    "class" -> classRows(
+                        root.getAsJsonObject("class"),
+                        needle,
+                        limit - rows.size,
+                        rows
+                    )
                 }
             }
         }

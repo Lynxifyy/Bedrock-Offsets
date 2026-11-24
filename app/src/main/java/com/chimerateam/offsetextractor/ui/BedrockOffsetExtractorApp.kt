@@ -64,8 +64,8 @@ import com.chimerateam.offsetextractor.ui.screens.ApksScreen
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
-import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.Amber500
+import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.BrandBlue
 import com.chimerateam.offsetextractor.ui.theme.BrandPink
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode

@@ -11,9 +11,9 @@ import com.chimerateam.offsetextractor.data.native.InternalAnalysis
 import com.chimerateam.offsetextractor.data.native.InternalOptions
 import com.chimerateam.offsetextractor.data.native.InternalPatternSpec
 import com.chimerateam.offsetextractor.data.native.PatternSpec
-import com.chimerateam.offsetextractor.data.native.StringAnchorSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
+import com.chimerateam.offsetextractor.data.native.StringAnchorSpec
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
@@ -456,10 +456,7 @@ class MainViewModel(
      * @param uri destination document, or `null` when the dialog was dismissed.
      * @param kind which document to write.
      */
-    fun onExportDestinationChosen(
-        uri: android.net.Uri?,
-        kind: ExportKind = ExportKind.Jni
-    ) {
+    fun onExportDestinationChosen(uri: android.net.Uri?, kind: ExportKind = ExportKind.Jni) {
         if (uri == null) {
             emit(Logs.warn(TAG_UI, "Export cancelled."))
             return

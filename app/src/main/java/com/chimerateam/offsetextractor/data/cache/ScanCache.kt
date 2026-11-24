@@ -98,10 +98,9 @@ class ScanCache(private val root: File) {
     }
 
     /** Total size in bytes of everything in the cache. */
-    fun totalSizeBytes(): Long =
-        listFiles(libraryDir).sumOf { it.length() } +
-            listFiles(documentDir).sumOf { it.length() } +
-            listFiles(internalDir).sumOf { it.length() }
+    fun totalSizeBytes(): Long = listFiles(libraryDir).sumOf { it.length() } +
+        listFiles(documentDir).sumOf { it.length() } +
+        listFiles(internalDir).sumOf { it.length() }
 
     /**
      * Deletes every cached artefact.

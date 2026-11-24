@@ -84,6 +84,12 @@ object Logs {
 
     /** Mirrors a UI log line to logcat so field runs can be diagnosed off-device. */
     private fun mirror(tag: String, message: String) {
-        runCatching { android.util.Log.println(android.util.Log.INFO, "OffsetLog", "$tag: $message") }
+        runCatching {
+            android.util.Log.println(
+                android.util.Log.INFO,
+                "OffsetLog",
+                "$tag: $message"
+            )
+        }
     }
 }
