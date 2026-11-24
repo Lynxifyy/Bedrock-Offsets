@@ -11,6 +11,7 @@ pub mod android;
 pub mod elf;
 pub mod error;
 pub mod fd;
+pub mod internal;
 pub mod jni_bridge;
 pub mod memory;
 pub mod patterns;

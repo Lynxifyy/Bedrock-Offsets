@@ -44,6 +44,20 @@ interface SafApkAccess {
      * @return a success carrying an owned [ApkHandle], or a typed failure.
      */
     fun openApk(uri: Uri): ApkOpenResult
+
+    /**
+     * Opens an APK that is already a regular file in the app's own storage.
+     *
+     * Used by the APK catalogue tab, which downloads to the cache and then
+     * scans the file directly instead of round-tripping through a content URI.
+     * The default implementation reports that files are unsupported, so a test
+     * double keeps compiling.
+     *
+     * @param file APK on disk.
+     * @return a success carrying an owned [ApkHandle], or a typed failure.
+     */
+    fun openFile(file: File): ApkOpenResult =
+        ApkOpenResult.Failure(SafFailure.NotFound, "Opening local files is not supported.")
 }
 
 /**
@@ -103,6 +117,38 @@ class AndroidSafApkAccess(context: Context) : SafApkAccess {
         }
 
         return copyToCache(uri, metadata)
+    }
+
+    override fun openFile(file: File): ApkOpenResult {
+        if (!file.isFile) {
+            return ApkOpenResult.Failure(
+                SafFailure.NotFound,
+                "${file.name} is no longer on disk"
+            )
+        }
+        val metadata = ApkMetadata(
+            uri = Uri.fromFile(file),
+            displayName = file.name,
+            sizeBytes = file.length()
+        )
+        val descriptor = try {
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        } catch (io: IOException) {
+            return ApkOpenResult.Failure(
+                SafFailure.IoError,
+                "Could not open ${file.name}: ${io.message ?: "I/O error"}"
+            )
+        }
+        return ApkOpenResult.Success(
+            handle = ApkHandle(
+                metadata = metadata,
+                usedCacheCopy = false,
+                lengthBytes = file.length(),
+                descriptor = descriptor,
+                cacheFile = file
+            ),
+            usedCacheCopy = false
+        )
     }
 
     /** Tries the direct, zero-copy path. Returns `null` when it is unusable. */

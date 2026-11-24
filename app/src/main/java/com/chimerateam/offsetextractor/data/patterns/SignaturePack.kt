@@ -2,7 +2,9 @@ package com.chimerateam.offsetextractor.data.patterns
 
 import android.content.Context
 import android.util.Log
+import com.chimerateam.offsetextractor.data.native.InternalPatternSpec
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.StringAnchorSpec
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 
@@ -31,14 +33,22 @@ object SignaturePack {
      * @return the compiled patterns, or an empty list when the asset is
      *   unreadable or malformed.
      */
-    fun load(context: Context): List<PatternSpec> {
+    fun load(context: Context): List<PatternSpec> = loadDocument(context).patterns
+
+    /**
+     * Reads the whole pack, including the internal signatures and anchors.
+     *
+     * @param context context used to reach the assets.
+     * @return the pack, or an empty pack when the asset is unreadable.
+     */
+    fun loadDocument(context: Context): SignaturePackDocument {
         val json = runCatching {
             context.assets.open(PATTERNS_ASSET).bufferedReader().use { it.readText() }
         }.getOrElse { error ->
             Log.w(TAG, "cannot read $PATTERNS_ASSET: ${error.message}")
-            return emptyList()
+            return SignaturePackDocument()
         }
-        return parse(json)
+        return parseDocument(json)
     }
 
     /**
@@ -48,26 +58,53 @@ object SignaturePack {
      * @return the patterns it declares, or an empty list when the document is
      *   malformed or declares nothing usable.
      */
-    fun parse(json: String): List<PatternSpec> {
+    fun parse(json: String): List<PatternSpec> = parseDocument(json).patterns
+
+    /**
+     * Parses a whole signature pack document.
+     *
+     * @param json contents of a `patterns.json` file.
+     * @return the pack it declares, or an empty pack when malformed.
+     */
+    fun parseDocument(json: String): SignaturePackDocument {
         val document = runCatching { gson.fromJson(json, PackDocument::class.java) }
             .getOrElse { error ->
                 Log.w(TAG, "malformed signature pack: ${error.message}")
-                return emptyList()
-            }
+                return SignaturePackDocument()
+            } ?: return SignaturePackDocument()
 
-        val entries = document?.patterns ?: return emptyList()
+        val entries = document.patterns.orEmpty()
         val usable = entries.filter { entry ->
             entry.name.isNotBlank() && entry.pattern.isNotBlank()
         }
         if (usable.size != entries.size) {
             Log.w(TAG, "dropped ${entries.size - usable.size} incomplete signature entries")
         }
-        return usable.map { PatternSpec(name = it.name, pattern = it.pattern) }
+        val internal = document.internalPatterns.orEmpty().filter {
+            it.name.isNotBlank() && it.pattern.isNotBlank()
+        }
+        val anchors = document.stringAnchors.orEmpty().filter {
+            it.name.isNotBlank() && it.string.isNotBlank()
+        }
+        return SignaturePackDocument(
+            patterns = usable.map { PatternSpec(name = it.name, pattern = it.pattern) },
+            internalPatterns = internal.map {
+                InternalPatternSpec(
+                    name = it.name,
+                    pattern = it.pattern,
+                    resolve = it.resolve.ifBlank { "self" },
+                    offset = it.offset
+                )
+            },
+            stringAnchors = anchors.map { StringAnchorSpec(name = it.name, string = it.string) }
+        )
     }
 
     /** JSON shape of a signature pack document. */
     private data class PackDocument(
-        @SerializedName("patterns") val patterns: List<Entry>?
+        @SerializedName("patterns") val patterns: List<Entry>?,
+        @SerializedName("internalPatterns") val internalPatterns: List<InternalEntry>?,
+        @SerializedName("stringAnchors") val stringAnchors: List<AnchorEntry>?
     )
 
     /** One signature in the pack. */
@@ -75,4 +112,31 @@ object SignaturePack {
         @SerializedName("name") val name: String = "",
         @SerializedName("pattern") val pattern: String = ""
     )
+
+    /** One internal signature in the pack. */
+    private data class InternalEntry(
+        @SerializedName("name") val name: String = "",
+        @SerializedName("pattern") val pattern: String = "",
+        @SerializedName("resolve") val resolve: String = "self",
+        @SerializedName("offset") val offset: Int = 0
+    )
+
+    /** One string anchor in the pack. */
+    private data class AnchorEntry(
+        @SerializedName("name") val name: String = "",
+        @SerializedName("string") val string: String = ""
+    )
 }
+
+/**
+ * Everything a signature pack declares.
+ *
+ * @property patterns the JNI signatures the parallel scanner looks for.
+ * @property internalPatterns hand-maintained internal signatures.
+ * @property stringAnchors `.rodata` string anchors.
+ */
+data class SignaturePackDocument(
+    val patterns: List<PatternSpec> = emptyList(),
+    val internalPatterns: List<InternalPatternSpec> = emptyList(),
+    val stringAnchors: List<StringAnchorSpec> = emptyList()
+)

@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use goblin::container::{Container, Ctx, Endian};
 use goblin::elf::dynamic::{DT_NULL, DT_SONAME};
@@ -50,6 +51,34 @@ pub struct MappedLibrary {
 }
 
 impl MappedLibrary {
+    /// Maps the library at `path`, or returns the mapping already open for it.
+    ///
+    /// The scan, symbol, vtable and internal passes all run as separate JNI
+    /// calls. Mapping the same 378 MB library once per call multiplies its
+    /// resident pages by the number of calls, so one shared mapping is kept for
+    /// the most recently used file. A new path or hash replaces it.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the same failures as [`MappedLibrary::open`].
+    pub fn open_shared(path: &Path, sha256: String) -> CoreResult<Arc<Self>> {
+        type Cache = Mutex<Option<(String, Arc<MappedLibrary>)>>;
+        static CACHE: OnceLock<Cache> = OnceLock::new();
+        let key = format!("{}|{sha256}", path.display());
+        let cache = CACHE.get_or_init(|| Mutex::new(None));
+        let mut guard = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((cached_key, library)) = guard.as_ref() {
+            if *cached_key == key {
+                return Ok(Arc::clone(library));
+            }
+        }
+        let library = Arc::new(Self::open(path, sha256)?);
+        *guard = Some((key, Arc::clone(&library)));
+        Ok(library)
+    }
+
     /// Maps the library at `path` without reading it into memory.
     ///
     /// # Errors
@@ -57,11 +86,10 @@ impl MappedLibrary {
     /// Returns [`CoreError::Io`] when the file cannot be opened or mapped, and
     /// [`CoreError::InvalidElf`] when it is too small to hold a header.
     pub fn open(path: &Path, sha256: String) -> CoreResult<Self> {
-        let file = File::open(path)
-            .map_err(|error| CoreError::Io(format!("cannot open {}: {error}", path.display())))?;
+        let file = File::open(path).map_err(|error| io_error("cannot open", path, &error))?;
         let size = file
             .metadata()
-            .map_err(|error| CoreError::Io(format!("cannot stat {}: {error}", path.display())))?
+            .map_err(|error| io_error("cannot stat", path, &error))?
             .len();
 
         if (size as usize) < ELF_HEADER_SIZE {
@@ -74,8 +102,8 @@ impl MappedLibrary {
         // SAFETY: the mapping is read-only and the engine never executes the
         // file, it only inspects bytes. The file is not expected to change
         // while mapped: it is an immutable cache entry written by this engine.
-        let map = unsafe { Mmap::map(&file) }
-            .map_err(|error| CoreError::Io(format!("cannot mmap {}: {error}", path.display())))?;
+        let map =
+            unsafe { Mmap::map(&file) }.map_err(|error| io_error("cannot mmap", path, &error))?;
 
         Ok(Self {
             map,
@@ -197,6 +225,22 @@ fn page_size() -> usize {
     } else {
         value as usize
     }
+}
+
+/// Renders a filesystem failure with the OS error number.
+///
+/// `std::io::Error`'s `Display` output is often just the strerror text, which
+/// does not say *which* errno produced it. A user report of "cannot open
+/// /data/.../libminecraftpe.so" is not actionable without `NotFound (os error
+/// 2)` versus `TooManyOpenFiles (os error 24)`, so both the kind and the raw
+/// errno are always included.
+fn io_error(action: &str, path: &Path, error: &std::io::Error) -> CoreError {
+    CoreError::Io(format!(
+        "{action} {}: {:?} (os error {})",
+        path.display(),
+        error.kind(),
+        error.raw_os_error().unwrap_or(-1)
+    ))
 }
 
 /// Validates and lazily parses an in-memory ELF image.

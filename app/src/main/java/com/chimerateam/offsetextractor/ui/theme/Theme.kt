@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -65,7 +66,20 @@ val PanelCorner: Dp = 14.dp
 val PanelGap: Dp = 12.dp
 
 /**
- * Applies the Caramel/Honey colour scheme and the JetBrains Mono data styles.
+ * Blue → white → pink sweep used for the premium accent surfaces.
+ *
+ * A static brush rather than an infinite animation: an always-running
+ * animation would keep Compose's test clock busy and make every UI assertion
+ * wait for idle forever.
+ */
+val BrandGradient: Brush = Brush.linearGradient(
+    // White is the surface colour, not a gradient stop: white text on the
+    // app bar has to stay readable at every point of the sweep.
+    colors = listOf(BrandBlue, Amber500, BrandPink)
+)
+
+/**
+ * Applies the blue/white/pink colour scheme and the JetBrains Mono data styles.
  *
  * @param themeMode requested palette; [ThemeMode.System] follows the device.
  */

@@ -133,16 +133,28 @@ def parse_source(text: str) -> list[Entry]:
     return sorted(entries.values(), key=lambda entry: entry.name)
 
 
-def render(entries: list[Entry]) -> str:
+def render(
+    entries: list[Entry],
+    internal: list[dict[str, object]] | None = None,
+    anchors: list[dict[str, object]] | None = None,
+) -> str:
     """Render entries as the JSON document the app reads.
 
     Args:
         entries: compiled signatures.
+        internal: optional hand-maintained internal patterns, preserved as-is.
+        anchors: optional `.rodata` string anchors, preserved as-is.
 
     Returns:
         Pretty-printed JSON ending in a newline.
     """
-    document = {"patterns": [entry.as_json() for entry in entries]}
+    document: dict[str, object] = {
+        "patterns": [entry.as_json() for entry in entries]
+    }
+    if internal:
+        document["internalPatterns"] = internal
+    if anchors:
+        document["stringAnchors"] = anchors
     return json.dumps(document, indent=2) + "\n"
 
 
@@ -183,16 +195,37 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[generate_patterns] ERROR: {error}", file=sys.stderr)
         return 1
 
+    existing_document: dict[str, object] = {}
+    try:
+        existing_document = json.loads(args.output.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        existing_document = {}
+    internal = existing_document.get("internalPatterns")
+    anchors = existing_document.get("stringAnchors")
+    if isinstance(internal, list) or isinstance(anchors, list):
+        rendered = render(
+            parse_source(text),
+            internal if isinstance(internal, list) else None,
+            anchors if isinstance(anchors, list) else None,
+        )
+
     if args.check:
         try:
-            existing = args.output.read_text(encoding="utf-8")
+            existing = json.loads(args.output.read_text(encoding="utf-8"))
         except OSError as error:
             print(
                 f"[generate_patterns] ERROR: cannot read {args.output}: {error}",
                 file=sys.stderr,
             )
             return 2
-        if existing != rendered:
+        except ValueError as error:
+            print(
+                f"[generate_patterns] ERROR: {args.output} is not JSON: {error}",
+                file=sys.stderr,
+            )
+            return 1
+        expected = [entry.as_json() for entry in parse_source(text)]
+        if existing.get("patterns") != expected:
             print(
                 f"[generate_patterns] ERROR: {args.output} is out of date; "
                 "rerun without --check",

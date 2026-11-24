@@ -81,7 +81,18 @@ class ResultCacheTest {
                 binding = 1
             )
         ),
-        expectedPatterns = listOf("clientInstance")
+        expectedPatterns = listOf("clientInstance"),
+        vtablesResolved = true,
+        internalResolved = true,
+        internal = com.chimerateam.offsetextractor.data.native.InternalSummary(
+            classes = 1,
+            vtableSlots = 2,
+            functions = 3,
+            named = 1,
+            path = "/cache/internal/abc.ndjson"
+        ),
+        apkSizeBytes = 8192,
+        apkVersion = "1.21.50"
     )
 
     @Test
@@ -100,6 +111,11 @@ class ResultCacheTest {
         assertEquals(summary.vtables.entries.keys, loaded?.vtables?.entries?.keys)
         assertEquals(summary.symbols, loaded?.symbols)
         assertEquals(summary.expectedPatterns, loaded?.expectedPatterns)
+        assertEquals(true, loaded?.vtablesResolved)
+        assertEquals(true, loaded?.internalResolved)
+        assertEquals(summary.internal?.path, loaded?.internal?.path)
+        assertEquals(summary.apkSizeBytes, loaded?.apkSizeBytes)
+        assertEquals(summary.apkVersion, loaded?.apkVersion)
     }
 
     @Test

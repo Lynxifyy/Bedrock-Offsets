@@ -7,12 +7,17 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Settings
@@ -35,28 +40,42 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.chimerateam.offsetextractor.data.export.ExportKind
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
 import com.chimerateam.offsetextractor.ui.components.BatchProgressDialog
 import com.chimerateam.offsetextractor.ui.components.BatchSummaryDialog
 import com.chimerateam.offsetextractor.ui.components.LowMemoryDialog
 import com.chimerateam.offsetextractor.ui.log.LogTimestamp
+import com.chimerateam.offsetextractor.ui.screens.ApksScreen
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
+import com.chimerateam.offsetextractor.ui.theme.Amber500
+import com.chimerateam.offsetextractor.ui.theme.BrandBlue
+import com.chimerateam.offsetextractor.ui.theme.BrandPink
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
 import com.chimerateam.offsetextractor.util.formatBytes
+import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Root composable of the application.
@@ -70,13 +89,20 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
-    var themeMode by rememberSaveable { mutableStateOf(ThemeMode.System) }
+    val themeModeName by viewModel.themeMode.collectAsStateWithLifecycle()
+    val themeMode = remember(themeModeName) {
+        ThemeMode.values().firstOrNull { it.name == themeModeName } ?: ThemeMode.System
+    }
     var tab by rememberSaveable { mutableStateOf(AppTab.Scanner) }
+    var pendingExportKind by remember { mutableStateOf(ExportKind.Jni) }
 
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val forceRescan by viewModel.forceRescan.collectAsStateWithLifecycle()
     val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsStateWithLifecycle()
     val lastBuildId by viewModel.lastBuildId.collectAsStateWithLifecycle()
+    val includeAllFunctions by viewModel.includeAllFunctions.collectAsStateWithLifecycle()
+    val generateSignatures by viewModel.generateSignatures.collectAsStateWithLifecycle()
+    val maxSlotsPerClass by viewModel.maxSlotsPerClass.collectAsStateWithLifecycle()
     val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
 
     val picker = rememberLauncherForActivityResult(
@@ -109,7 +135,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     // read from the ViewModel at launch time.
     val saveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { uri: Uri? -> viewModel.onExportDestinationChosen(uri) }
+    ) { uri: Uri? -> viewModel.onExportDestinationChosen(uri, pendingExportKind) }
 
     state.batch?.let { batch ->
         BatchProgressDialog(
@@ -187,12 +213,95 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
         }
     }
     val saveJson = {
-        val name = viewModel.defaultExportFileName()
+        val name = viewModel.defaultExportFileName(ExportKind.Jni)
         if (name == null) {
             viewModel.onExportActionTaken("There is nothing to export yet.")
         } else {
+            pendingExportKind = ExportKind.Jni
             saveLauncher.launch(name)
         }
+    }
+    val downloadJni = {
+        val name = viewModel.defaultExportFileName(ExportKind.Jni)
+        if (name == null) {
+            viewModel.onExportActionTaken("There is nothing to export yet.")
+        } else {
+            pendingExportKind = ExportKind.Jni
+            saveLauncher.launch(name)
+        }
+    }
+    val downloadInternal = {
+        val name = viewModel.defaultExportFileName(ExportKind.Internal)
+        if (name == null) {
+            viewModel.onExportActionTaken("The internal offsets are not ready yet.")
+        } else {
+            pendingExportKind = ExportKind.Internal
+            saveLauncher.launch(name)
+        }
+    }
+    val shareScope = rememberCoroutineScope()
+    val shareInternal: () -> Unit = {
+        val result = state.result
+        if (result == null || !result.internalResolved) {
+            viewModel.onExportActionTaken("The internal offsets are not ready yet.")
+        } else {
+            shareScope.launch {
+                val outcome = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val directory = File(context.cacheDir, "exports").apply { mkdirs() }
+                        val file = File(
+                            directory,
+                            OffsetExporter.internalFileName(result)
+                        )
+                        file.bufferedWriter().use { writer ->
+                            OffsetExporter.writeInternal(result, writer)
+                        }
+                        FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            file
+                        )
+                    }
+                }
+                outcome.onSuccess { uri ->
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/json"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(
+                        Intent.createChooser(intent, "Share internal offsets")
+                    )
+                    viewModel.onExportActionTaken(
+                        "Internal offsets handed to the share sheet."
+                    )
+                }.onFailure {
+                    viewModel.onExportActionTaken(
+                        "Could not share the internal file: ${it.message}"
+                    )
+                }
+            }
+        }
+    }
+
+    // A finite sweep on tab change: it looks alive without an always-running
+    // animation that would keep Compose's test clock busy forever.
+    val sweepTarget = when (tab) {
+        AppTab.Scanner -> 0f
+        AppTab.Apks -> 1f
+        AppTab.Settings -> 2f
+    }
+    val sweep by animateFloatAsState(
+        targetValue = sweepTarget,
+        animationSpec = tween(650, easing = FastOutSlowInEasing),
+        label = "brand-sweep"
+    )
+    val topBarBrush = remember(sweep) {
+        Brush.linearGradient(
+            colors = listOf(BrandBlue, Amber500, BrandPink, BrandBlue),
+            start = Offset(-200f + sweep * 260f, 0f),
+            end = Offset(900f + sweep * 260f, 320f)
+        )
     }
 
     BedrockOffsetExtractorTheme(themeMode = themeMode) {
@@ -200,9 +309,11 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
             topBar = {
                 TopAppBar(
                     title = { Text("Bedrock Offset Extractor") },
+                    modifier = Modifier.background(topBarBrush),
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        titleContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary
                     ),
                     actions = {
                         IconButton(onClick = { viewModel.clearCache() }) {
@@ -267,6 +378,12 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         onSelect = { tab = AppTab.Scanner }
                     )
                     NavigationItem(
+                        tab = AppTab.Apks,
+                        selected = tab == AppTab.Apks,
+                        icon = Icons.Filled.Download,
+                        onSelect = { tab = AppTab.Apks }
+                    )
+                    NavigationItem(
                         tab = AppTab.Settings,
                         selected = tab == AppTab.Settings,
                         icon = Icons.Filled.Settings,
@@ -292,17 +409,35 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         onRetry = { viewModel.retry() },
                         onCopyJson = copyJson,
                         onShareJson = shareJson,
-                        onSaveJson = saveJson
+                        onSaveJson = saveJson,
+                        onDownloadJni = downloadJni,
+                        onDownloadInternal = downloadInternal,
+                        onRetryInternal = { viewModel.retryInternalExtraction() },
+                        internalBusy = false,
+                        onShareInternal = shareInternal
+                    )
+
+                    AppTab.Apks -> ApksScreen(
+                        onExtract = { file ->
+                            tab = AppTab.Scanner
+                            viewModel.onApkFileSelected(file)
+                        }
                     )
 
                     AppTab.Settings -> SettingsScreen(
                         themeMode = themeMode,
-                        onThemeModeChange = { themeMode = it },
+                        onThemeModeChange = { viewModel.setThemeMode(it.name) },
                         cacheSizeLabel = formatBytes(cacheSizeBytes),
                         forceRescan = forceRescan,
                         onForceRescanChange = { viewModel.setForceRescan(it) },
                         onClearCache = { viewModel.clearCache() },
-                        lastBuildId = lastBuildId
+                        lastBuildId = lastBuildId,
+                        includeAllFunctions = includeAllFunctions,
+                        generateSignatures = generateSignatures,
+                        maxSlotsPerClass = maxSlotsPerClass,
+                        onIncludeAllFunctionsChange = { viewModel.setIncludeAllFunctions(it) },
+                        onGenerateSignaturesChange = { viewModel.setGenerateSignatures(it) },
+                        onMaxSlotsPerClassChange = { viewModel.setMaxSlotsPerClass(it) }
                     )
                 }
             }

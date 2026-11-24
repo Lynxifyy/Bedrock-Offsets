@@ -143,6 +143,39 @@ object NativeLib {
         return resolveVtablesNative(path, sha256)
     }
 
+    /**
+     * Extracts every internal C++ function and virtual slot into an NDJSON file.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param optionsJson JSON options selecting the passes.
+     * @param outputDir cache directory that receives the NDJSON table.
+     * @param callback receives progress reports, or `null` to run silently.
+     * @return a JSON object with `internal` counts and `peak_resident_bytes`.
+     * @throws EngineFailure when the library cannot be parsed.
+     */
+    fun analyzeInternal(
+        path: String,
+        sha256: String,
+        optionsJson: String,
+        outputDir: String,
+        callback: ProgressCallback? = null
+    ): String {
+        ensureLoaded()
+        return analyzeInternalNative(path, sha256, optionsJson, outputDir, callback)
+    }
+
+    /**
+     * Reads `versionName` from the APK behind [fd].
+     *
+     * @param fd read-only descriptor owned by the caller.
+     * @return a JSON object with `versionName`, which may be `null`.
+     */
+    fun readApkVersion(fd: Int): String {
+        ensureLoaded()
+        return readApkVersionNative(fd)
+    }
+
     private fun ensureLoaded() {
         if (!isAvailable) {
             throw EngineFailure(
@@ -167,6 +200,16 @@ object NativeLib {
     ): String
 
     private external fun resolveVtablesNative(path: String, sha256: String): String
+
+    private external fun analyzeInternalNative(
+        path: String,
+        sha256: String,
+        optionsJson: String,
+        outputDir: String,
+        callback: ProgressCallback?
+    ): String
+
+    private external fun readApkVersionNative(fd: Int): String
 
     private external fun cancelScanNative()
 }

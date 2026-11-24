@@ -36,14 +36,18 @@ data class BatchProgress(
  * @property total number of APKs attempted.
  * @property succeeded APKs that produced a result.
  * @property failed APKs that raised an error.
+ * @property files documents written into the app cache for this run.
  */
 @Immutable
 data class BatchSummary(
     val total: Int,
     val succeeded: Int,
-    val failed: Int
+    val failed: Int,
+    val files: List<String> = emptyList()
 ) {
     /** One-line description of the run. */
     val message: String
-        get() = "Processed $total APKs. $succeeded succeeded, $failed failed."
+        get() = "Processed $total APKs. $succeeded succeeded, $failed failed." +
+            if (files.isEmpty()) "" else "\n\nSaved ${files.size} files:\n" +
+                files.joinToString("\n")
 }

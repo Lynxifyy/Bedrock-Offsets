@@ -46,6 +46,10 @@
     <init>(...);
     <fields>;
 }
+# Gson deserialises the nested entry types through a generic List, so R8 sees no
+# direct use of them and drops the classes even though the outer document is
+# kept. Keep the whole nested family explicitly.
+-keep class com.chimerateam.offsetextractor.data.patterns.SignaturePack$* { *; }
 -keep class com.chimerateam.offsetextractor.ui.state.** {
     <init>(...);
     <fields>;

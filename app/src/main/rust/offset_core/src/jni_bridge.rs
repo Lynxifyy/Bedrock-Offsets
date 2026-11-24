@@ -8,11 +8,13 @@ use jni::objects::{JObject, JString};
 use jni::sys::{jint, jstring};
 use jni::JNIEnv;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 use crate::android::{catch_panics, install};
 use crate::elf::MappedLibrary;
 use crate::error::{CoreError, CoreResult};
+use crate::internal::{analyze, InternalOptions, InternalSummary};
 use crate::memory::peak_resident_bytes;
 use crate::patterns::PatternSet;
 use crate::progress::JniProgressSink;
@@ -23,8 +25,8 @@ use crate::scanner::{
     ProgressSink, ScanOutcome,
 };
 use crate::sections::build_section_map;
-use crate::symbols::build_symbol_report;
-use crate::zip_extract::extract_so_from_zip;
+use crate::symbols::{build_symbol_report, read_named_symbols};
+use crate::zip_extract::{extract_so_from_zip, read_apk_version_name};
 
 /// Fully-qualified name of the Java exception raised for engine failures.
 const ENGINE_EXCEPTION_CLASS: &str = "com/chimerateam/offsetextractor/data/native/EngineFailure";
@@ -312,6 +314,115 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
     }
 }
 
+/// Extracts every internal C++ function and virtual slot into an NDJSON file.
+///
+/// The library is mapped once for sections, symbols, vtables and the internal
+/// passes, which removes the repeated open/mmap cycles that made the vtable
+/// pass fail with a stale path. Only counts and the file path cross the JNI
+/// boundary: the table itself can be tens of megabytes.
+///
+/// # Returns
+///
+/// A JSON object with `internal` (counts plus the NDJSON path) and
+/// `peak_resident_bytes`.
+///
+/// # Errors
+///
+/// Throws `EngineFailure` when the library cannot be mapped or the options are
+/// malformed, and `Cancelled` when the scan is cancelled.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_analyzeInternalNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    path: JString,
+    sha256: JString,
+    options_json: JString,
+    output_dir: JString,
+    callback: JObject,
+) -> jstring {
+    install();
+
+    let library_path = match read_jstring(&mut env, &path, "library path") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let library_hash = match read_jstring(&mut env, &sha256, "library hash") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let options = match read_jstring(&mut env, &options_json, "internal options") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let destination = match read_jstring(&mut env, &output_dir, "output directory") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+
+    let sink = if callback.is_null() {
+        None
+    } else {
+        match JniProgressSink::new(&mut env, &callback) {
+            Ok(sink) => Some(sink),
+            Err(detail) => {
+                throw_engine_failure(&mut env, "invalid_descriptor", &detail);
+                return std::ptr::null_mut();
+            }
+        }
+    };
+
+    let outcome = catch_panics("analyzing internal offsets", move || {
+        let sink: Option<&dyn ProgressSink> =
+            sink.as_ref().map(|sink| sink.as_ref() as &dyn ProgressSink);
+        analyze_internal_json(&library_path, &library_hash, &options, &destination, sink)
+    });
+
+    match outcome {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(string) => string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(core_error)) => {
+            throw_core_error(&mut env, &core_error);
+            std::ptr::null_mut()
+        }
+        Err(panic_message) => {
+            throw_engine_failure(&mut env, "unknown", &panic_message);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Reads `versionName` from the APK's binary manifest.
+///
+/// # Returns
+///
+/// A JSON object `{"versionName": "..."}`; the value is `null` when the
+/// manifest is absent or unreadable.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_readApkVersionNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    fd: jint,
+) -> jstring {
+    install();
+    let outcome = catch_panics("reading the APK version", move || read_apk_version_json(fd));
+    match outcome {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(string) => string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(core_error)) => {
+            throw_core_error(&mut env, &core_error);
+            std::ptr::null_mut()
+        }
+        Err(panic_message) => {
+            throw_engine_failure(&mut env, "unknown", &panic_message);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Scans the `.text` section of a library for the supplied patterns.
 ///
 /// # Returns
@@ -429,7 +540,7 @@ pub fn scan_text_json_with_progress(
     sink: Option<&dyn ProgressSink>,
 ) -> CoreResult<String> {
     let specs = parse_pattern_specs(patterns_json)?;
-    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let library = MappedLibrary::open_shared(std::path::Path::new(path), sha256.to_string())?;
     let map = build_section_map(library.bytes())?;
     let set = PatternSet::new(&specs)?;
 
@@ -439,8 +550,14 @@ pub fn scan_text_json_with_progress(
     let control = guard.control();
     // The mapping is offered wave by wave so the pages behind the scan can be
     // reclaimed; without it a 342 MB `.text` stays resident for the whole pass.
-    let outcome =
-        scan_section_releasing_pages(&map, library.bytes(), &set, control, sink, Some(&library))?;
+    let outcome = scan_section_releasing_pages(
+        &map,
+        library.bytes(),
+        &set,
+        control,
+        sink,
+        Some(library.as_ref()),
+    )?;
 
     // The library's own symbol table is an independent witness: when a
     // signature's name is also an exported symbol the two addresses can be
@@ -497,11 +614,89 @@ fn parse_pattern_specs(patterns_json: &str) -> CoreResult<Vec<(String, String)>>
 ///
 /// Propagates any mapping or vtable-resolution failure.
 pub fn resolve_vtables_json(path: &str, sha256: &str) -> CoreResult<String> {
-    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let library = MappedLibrary::open_shared(std::path::Path::new(path), sha256.to_string())?;
     // The mapping is its own page releaser, so the relocation tables are handed
     // back to the kernel as soon as the index has read them.
-    let map = resolve_vtables_with_releaser(library.bytes(), Some(&library))?;
+    let map = resolve_vtables_with_releaser(library.bytes(), Some(library.as_ref()))?;
+    // The type-info strings and `.data.rel.ro` slots are not needed after this
+    // call; dropping them keeps the next pass from starting with them resident.
+    library.advise_pages_droppable();
     Ok(serde_json::to_string(&map).unwrap_or_default())
+}
+
+/// Payload returned by the internal analysis entry point.
+#[derive(Debug, Serialize)]
+struct InternalPayload {
+    /// Counts and the NDJSON path.
+    internal: InternalSummary,
+    /// Peak resident set of the process after the pass.
+    peak_resident_bytes: Option<u64>,
+}
+
+/// Maps `path` once and runs the internal passes, exposed for host tests.
+///
+/// The NDJSON table is written to `output_dir/<sha256>.ndjson`. Only the counts
+/// and that path are returned, so a table of hundreds of thousands of functions
+/// never has to become a single JSON string.
+///
+/// # Errors
+///
+/// Propagates any mapping, section, vtable, symbol or I/O failure, and
+/// [`CoreError::Cancelled`] when the pass is cancelled.
+pub fn analyze_internal_json(
+    path: &str,
+    sha256: &str,
+    options_json: &str,
+    output_dir: &str,
+    sink: Option<&dyn ProgressSink>,
+) -> CoreResult<String> {
+    let options: InternalOptions = serde_json::from_str(options_json).map_err(|error| {
+        CoreError::InvalidPattern(format!("cannot parse the internal options: {error}"))
+    })?;
+    let library = MappedLibrary::open_shared(Path::new(path), sha256.to_string())?;
+    let map = build_section_map(library.bytes())?;
+    let vtables = resolve_vtables_with_releaser(library.bytes(), Some(library.as_ref()))?;
+    let symbols = read_named_symbols(library.bytes())?;
+
+    std::fs::create_dir_all(output_dir)?;
+    let target = Path::new(output_dir).join(format!("{sha256}.ndjson"));
+    let file = std::fs::File::create(&target)?;
+    let mut writer = BufWriter::new(file);
+
+    // Register the pass so a "Cancel" tap on another thread can reach it, the
+    // same contract the signature scan uses.
+    let guard = begin_scan();
+    let control = guard.control();
+    let mut summary = analyze(
+        library.bytes(),
+        &map,
+        &vtables,
+        &symbols,
+        &options,
+        control,
+        sink,
+        Some(library.as_ref()),
+        &mut writer,
+    )?;
+    writer.flush()?;
+    summary.path = target.to_string_lossy().into_owned();
+    library.advise_pages_droppable();
+
+    let payload = InternalPayload {
+        internal: summary,
+        peak_resident_bytes: peak_resident_bytes(),
+    };
+    Ok(serde_json::to_string(&payload).unwrap_or_default())
+}
+
+/// Reads `versionName` from the APK behind `fd`, exposed for host tests.
+///
+/// # Errors
+///
+/// Propagates a descriptor or archive failure.
+pub fn read_apk_version_json(fd: libc::c_int) -> CoreResult<String> {
+    let version = read_apk_version_name(fd)?;
+    Ok(serde_json::to_string(&serde_json::json!({ "versionName": version })).unwrap_or_default())
 }
 
 /// Maps `path` and serialises its symbols, exposed for host tests.
@@ -510,7 +705,7 @@ pub fn resolve_vtables_json(path: &str, sha256: &str) -> CoreResult<String> {
 ///
 /// Propagates any mapping, section or symbol failure.
 pub fn describe_symbols_json(path: &str, sha256: &str) -> CoreResult<String> {
-    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let library = MappedLibrary::open_shared(std::path::Path::new(path), sha256.to_string())?;
     let report = build_symbol_report(library.bytes())?;
     Ok(serde_json::to_string(&report).unwrap_or_default())
 }
@@ -521,7 +716,7 @@ pub fn describe_symbols_json(path: &str, sha256: &str) -> CoreResult<String> {
 ///
 /// Propagates any mapping or section-parsing failure.
 pub fn describe_sections_json(path: &str, sha256: &str) -> CoreResult<String> {
-    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let library = MappedLibrary::open_shared(std::path::Path::new(path), sha256.to_string())?;
     let map = build_section_map(library.bytes())?;
     Ok(serde_json::to_string(&map).unwrap_or_default())
 }
@@ -596,7 +791,7 @@ fn throw_engine_failure(env: &mut JNIEnv, kind: &str, detail: &str) {
 ///
 /// Propagates any mapping or parsing failure.
 pub fn map_library_json(path: &str, sha256: &str) -> CoreResult<String> {
-    let library = MappedLibrary::open(std::path::Path::new(path), sha256.to_string())?;
+    let library = MappedLibrary::open_shared(std::path::Path::new(path), sha256.to_string())?;
     let metadata = library.metadata()?;
     Ok(serde_json::to_string(&metadata).unwrap_or_default())
 }

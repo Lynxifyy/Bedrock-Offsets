@@ -5,8 +5,13 @@ import androidx.lifecycle.viewModelScope
 import com.chimerateam.offsetextractor.data.cache.ResultCache
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
+import com.chimerateam.offsetextractor.data.export.ExportKind
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
+import com.chimerateam.offsetextractor.data.native.InternalAnalysis
+import com.chimerateam.offsetextractor.data.native.InternalOptions
+import com.chimerateam.offsetextractor.data.native.InternalPatternSpec
 import com.chimerateam.offsetextractor.data.native.PatternSpec
+import com.chimerateam.offsetextractor.data.native.StringAnchorSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
@@ -14,6 +19,7 @@ import com.chimerateam.offsetextractor.data.native.VtableMap
 import com.chimerateam.offsetextractor.data.saf.ApkOpenResult
 import com.chimerateam.offsetextractor.data.saf.ApkSource
 import com.chimerateam.offsetextractor.data.saf.DocumentWriter
+import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.WriteResult
@@ -82,6 +88,8 @@ class MainViewModel(
     private val engine: OffsetEngine,
     private val cacheDir: File,
     private val patterns: List<PatternSpec> = emptyList(),
+    private val internalPatterns: List<InternalPatternSpec> = emptyList(),
+    private val stringAnchors: List<StringAnchorSpec> = emptyList(),
     private val writer: DocumentWriter = DocumentWriter { _, _ ->
         WriteResult.Failure("No document writer is configured.")
     },
@@ -119,8 +127,37 @@ class MainViewModel(
     /** Build identifier recorded by the most recent successful scan. */
     val lastBuildId: StateFlow<String> = _lastBuildId.asStateFlow()
 
+    private val _includeAllFunctions = MutableStateFlow(true)
+
+    /** Whether the internal pass enumerates every function. */
+    val includeAllFunctions: StateFlow<Boolean> = _includeAllFunctions.asStateFlow()
+
+    private val _generateSignatures = MutableStateFlow(true)
+
+    /** Whether auto-generated signatures are produced. */
+    val generateSignatures: StateFlow<Boolean> = _generateSignatures.asStateFlow()
+
+    private val _maxSlotsPerClass = MutableStateFlow(4096)
+
+    /** Maximum virtual slots read per class. */
+    val maxSlotsPerClass: StateFlow<Int> = _maxSlotsPerClass.asStateFlow()
+
+    private val _themeMode = MutableStateFlow("System")
+
+    /** Persisted theme mode name. */
+    val themeMode: StateFlow<String> = _themeMode.asStateFlow()
+
     private var activeApk: ApkSource? = null
     private var extractionJob: Job? = null
+
+    /** The library extracted for the current selection, kept for a Part 2 retry. */
+    private var lastExtracted: ExtractedNativeLibrary? = null
+
+    /** `versionName` read from the APK manifest, when it carried one. */
+    private var lastApkVersion: String = ""
+
+    /** Detail of the last failed internal pass, or `null`. */
+    private var lastInternalError: String? = null
 
     init {
         cache?.ensureDirectories()
@@ -131,6 +168,18 @@ class MainViewModel(
             }
             viewModelScope.launch(supervisor + ioDispatcher) {
                 store.lastBuildId.collect { buildId -> _lastBuildId.value = buildId }
+            }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.includeAllFunctions.collect { _includeAllFunctions.value = it }
+            }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.generateSignatures.collect { _generateSignatures.value = it }
+            }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.maxSlotsPerClass.collect { _maxSlotsPerClass.value = it }
+            }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.themeMode.collect { _themeMode.value = it }
             }
         }
     }
@@ -163,6 +212,63 @@ class MainViewModel(
 
         extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
             processApk(uri)
+        }
+    }
+
+    /**
+     * Scans an APK that the catalogue tab downloaded into the app cache.
+     *
+     * The file is opened directly, so this path does not need a content URI.
+     * Everything after opening is the same extraction and scan flow as a
+     * picker-selected APK.
+     *
+     * @param file downloaded APK on disk.
+     */
+    fun onApkFileSelected(file: File) {
+        extractionJob?.cancel()
+        _uiState.update {
+            it.copy(
+                phase = ScannerPhase.Extracting,
+                progress = 0,
+                progressTask = "Opening downloaded APK",
+                result = null,
+                error = null,
+                errorHint = null,
+                batch = null,
+                batchSummary = null
+            )
+        }
+        extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
+            when (val opened = safAccess.openFile(file)) {
+                is ApkOpenResult.Failure -> {
+                    val mapped = ErrorMapper.fromSaf(opened.reason, file.name)
+                    fail(mapped.message, mapped.hint, tag = TAG_SAF)
+                }
+
+                is ApkOpenResult.Success -> {
+                    releaseActiveApk()
+                    activeApk = opened.handle
+                    emit(
+                        Logs.info(
+                            TAG_SAF,
+                            "Opened downloaded ${file.name} (${opened.handle.lengthBytes} bytes)."
+                        )
+                    )
+                    _uiState.update {
+                        it.copy(
+                            phase = ScannerPhase.Extracting,
+                            progress = 0,
+                            progressTask = "Extracting native library",
+                            selectedApk = opened.handle.metadata,
+                            usedCacheCopy = opened.usedCacheCopy,
+                            result = null,
+                            error = null,
+                            errorHint = null
+                        )
+                    }
+                    extractNativeLibrary(opened.handle)
+                }
+            }
         }
     }
 
@@ -200,8 +306,17 @@ class MainViewModel(
             )
         }
 
+        val writtenFiles = mutableListOf<String>()
         val queue = BatchQueue(
-            process = { uri -> processApk(uri) },
+            process = { uri ->
+                val ok = processApk(uri)
+                if (ok) {
+                    _uiState.value.result?.let { result ->
+                        writtenFiles += saveBatchDocuments(result)
+                    }
+                }
+                ok
+            },
             onProgress = { progress ->
                 _uiState.update { it.copy(batch = progress) }
                 emit(Logs.info(TAG_UI, "Batch ${progress.position} of ${progress.total}."))
@@ -219,7 +334,7 @@ class MainViewModel(
         )
 
         extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
-            val summary = queue.run(uris)
+            val summary = queue.run(uris).copy(files = writtenFiles.toList())
             _uiState.update { it.copy(batch = null, batchSummary = summary) }
             emit(
                 Logs.info(
@@ -323,21 +438,28 @@ class MainViewModel(
     /**
      * Default file name offered by the save dialog.
      *
-     * @return the name keyed by build identifier, or `null` when no scan has
+     * @param kind which document is being exported.
+     * @return the name built from the APK version, or `null` when no scan has
      *   completed.
      */
-    fun defaultExportFileName(): String? = _uiState.value.result?.let(OffsetExporter::fileName)
+    fun defaultExportFileName(kind: ExportKind = ExportKind.Jni): String? =
+        _uiState.value.result?.let { OffsetExporter.fileNameFor(kind, it) }
 
     /**
      * Writes the current result to [uri].
      *
      * A `null` [uri] means the user dismissed the save dialog; that is a
      * normal outcome and only a log line is produced. The write runs on the
-     * I/O dispatcher and always closes the stream.
+     * I/O dispatcher and always closes the stream. Both documents are streamed;
+     * the internal table is never first built as one `String`.
      *
      * @param uri destination document, or `null` when the dialog was dismissed.
+     * @param kind which document to write.
      */
-    fun onExportDestinationChosen(uri: android.net.Uri?) {
+    fun onExportDestinationChosen(
+        uri: android.net.Uri?,
+        kind: ExportKind = ExportKind.Jni
+    ) {
         if (uri == null) {
             emit(Logs.warn(TAG_UI, "Export cancelled."))
             return
@@ -347,15 +469,21 @@ class MainViewModel(
             emit(Logs.warn(TAG_UI, "There is nothing to export yet."))
             return
         }
+        if (kind == ExportKind.Internal && (!result.internalResolved || result.internal == null)) {
+            emit(Logs.warn(TAG_UI, "The internal offsets are not ready yet."))
+            _uiState.update { it.copy(exportMessage = "Internal offsets are not ready.") }
+            return
+        }
 
         // Deliberately not assigned to `extractionJob`: the export is a side
         // action, so cancelling the scan must not cancel it, and vice versa.
         viewModelScope.launch(supervisor + ioDispatcher) {
-            val json = OffsetExporter.toJson(result)
-            when (val outcome = writer.writeText(uri, json)) {
+            val outcome = writeDocument(uri, kind, result)
+            when (outcome) {
                 is WriteResult.Success -> {
-                    emit(Logs.info(TAG_UI, "Exported offsets to $uri"))
-                    _uiState.update { it.copy(exportMessage = "Offsets exported.") }
+                    val name = OffsetExporter.fileNameFor(kind, result)
+                    emit(Logs.info(TAG_UI, "Saved $name"))
+                    _uiState.update { it.copy(exportMessage = "Saved $name") }
                 }
 
                 is WriteResult.Failure -> {
@@ -364,6 +492,68 @@ class MainViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * Writes [kind] to [uri], streaming in production and falling back to a
+     * single string only for a test double that cannot stream.
+     */
+    private fun writeDocument(
+        uri: android.net.Uri,
+        kind: ExportKind,
+        result: ScanResultSummary
+    ): WriteResult {
+        val streamed = writer.writeStream(uri) { out ->
+            when (kind) {
+                ExportKind.Jni -> OffsetExporter.writeJni(result, out)
+                ExportKind.Internal -> OffsetExporter.writeInternal(result, out)
+            }
+        }
+        if (streamed is WriteResult.Failure &&
+            streamed.message.contains("does not support streaming", ignoreCase = true)
+        ) {
+            val text = java.io.StringWriter().also { buffer ->
+                when (kind) {
+                    ExportKind.Jni -> OffsetExporter.writeJni(result, buffer)
+                    ExportKind.Internal -> OffsetExporter.writeInternal(result, buffer)
+                }
+            }.toString()
+            return writer.writeText(uri, text)
+        }
+        return streamed
+    }
+
+    /**
+     * Writes both documents for one batch item into the cache export directory.
+     *
+     * @param result the completed scan.
+     * @return the file names written, for the batch summary.
+     */
+    private fun saveBatchDocuments(result: ScanResultSummary): List<String> {
+        val directory = cache?.documentDir ?: File(cacheDir, "documents")
+        directory.mkdirs()
+        val written = mutableListOf<String>()
+        runCatching {
+            val name = OffsetExporter.jniFileName(result)
+            File(directory, name).bufferedWriter().use { writer ->
+                OffsetExporter.writeJni(result, writer)
+            }
+            written += name
+        }.onFailure {
+            emit(Logs.warn(TAG_UI, "Batch JNI export failed: ${it.message}"))
+        }
+        if (result.internalResolved) {
+            runCatching {
+                val name = OffsetExporter.internalFileName(result)
+                File(directory, name).bufferedWriter().use { writer ->
+                    OffsetExporter.writeInternal(result, writer)
+                }
+                written += name
+            }.onFailure {
+                emit(Logs.warn(TAG_UI, "Batch internal export failed: ${it.message}"))
+            }
+        }
+        return written
     }
 
     /** Clears the transient export message once it has been shown. */
@@ -416,6 +606,55 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Turns the "include all functions" setting on or off.
+     *
+     * @param include whether the internal pass enumerates every function.
+     */
+    fun setIncludeAllFunctions(include: Boolean) {
+        _includeAllFunctions.value = include
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setIncludeAllFunctions(include)
+        }
+    }
+
+    /**
+     * Turns auto-generated signatures on or off.
+     *
+     * @param generate whether signatures are produced.
+     */
+    fun setGenerateSignatures(generate: Boolean) {
+        _generateSignatures.value = generate
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setGenerateSignatures(generate)
+        }
+    }
+
+    /**
+     * Records the selected theme mode.
+     *
+     * @param mode one of `System`, `Light`, `Dark` or `Amoled`.
+     */
+    fun setThemeMode(mode: String) {
+        _themeMode.value = mode
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setThemeMode(mode)
+        }
+    }
+
+    /**
+     * Changes the per-class slot cap.
+     *
+     * @param slots maximum slots per class, clamped to the supported range.
+     */
+    fun setMaxSlotsPerClass(slots: Int) {
+        val clamped = slots.coerceIn(64, 4096)
+        _maxSlotsPerClass.value = clamped
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setMaxSlotsPerClass(clamped)
+        }
+    }
+
     /** Recomputes the reported cache size. */
     fun refreshCacheSize() {
         _cacheSizeBytes.value = cache?.totalSizeBytes() ?: 0L
@@ -454,15 +693,40 @@ class MainViewModel(
         }
     }
 
-    /** Returns the cached result for [buildId], or `null` when it must be rescanned. */
+    /**
+     * Returns the cached result for [buildId], or `null` when it must be rescanned.
+     *
+     * An entry whose vtable or internal pass did not finish is ignored: caching
+     * it would make every later scan of the same build reuse the failure and
+     * never retry.
+     */
     private fun cachedResultFor(buildId: String): ScanResultSummary? {
         if (_forceRescan.value) return null
-        return resultCache?.load(buildId)
+        val cached = resultCache?.load(buildId) ?: return null
+        if (!cached.vtablesResolved || !cached.internalResolved) {
+            emit(Logs.warn(TAG_CACHE, "Cached result was incomplete; scanning again."))
+            return null
+        }
+        val table = cached.internal?.path.orEmpty()
+        if (table.isNotBlank() && !File(table).isFile) {
+            emit(Logs.warn(TAG_CACHE, "Cached internal table is gone; scanning again."))
+            return null
+        }
+        return cached
     }
 
-    /** Stores [summary] as the cache entry for [buildId]. */
+    /**
+     * Stores [summary] as the cache entry for [buildId].
+     *
+     * Only a complete result is stored; a partial one would be reused forever
+     * and hide the failed pass.
+     */
     private fun rememberScan(buildId: String, summary: ScanResultSummary?) {
         if (summary == null) return
+        if (!summary.isComplete) {
+            emit(Logs.warn(TAG_CACHE, "Result not cached: an optional pass did not finish."))
+            return
+        }
         val stored = resultCache?.store(summary) ?: false
         if (stored) {
             refreshCacheSize()
@@ -499,18 +763,20 @@ class MainViewModel(
 
     private suspend fun extractNativeLibrary(source: ApkSource): Boolean {
         try {
-            val extracted = engine.extractNativeLibrary(source.rawFd, cacheDir)
+            var current = engine.extractNativeLibrary(source.rawFd, cacheDir)
+            lastExtracted = current
+            lastApkVersion = readApkVersion(source)
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Streaming extraction complete. Hash: ${extracted.sha256}"
+                    "Streaming extraction complete. Hash: ${current.sha256}"
                 )
             )
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Extracted ${extracted.path.substringAfterLast('/')} " +
-                        "(${extracted.sizeBytes} bytes)"
+                    "Extracted ${current.path.substringAfterLast('/')} " +
+                        "(${current.sizeBytes} bytes)"
                 )
             )
 
@@ -522,7 +788,8 @@ class MainViewModel(
                 )
             }
 
-            val mapped = engine.mapLibrary(extracted)
+            current = ensureExtractedFile(source, current)
+            val mapped = engine.mapLibrary(current)
             emit(
                 Logs.info(
                     TAG_RUST,
@@ -537,7 +804,8 @@ class MainViewModel(
                 )
             )
 
-            val sections = engine.describeSections(extracted)
+            current = ensureExtractedFile(source, current)
+            val sections = engine.describeSections(current)
             val text = sections.text
             emit(
                 Logs.info(
@@ -555,18 +823,19 @@ class MainViewModel(
                 )
             )
 
-            val symbols = engine.describeSymbols(extracted)
+            current = ensureExtractedFile(source, current)
+            val symbols = engine.describeSymbols(current)
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Build ID extracted. Found ${symbols.symbols.jni.size} dynamic symbols."
+                    "Build ID: ${symbols.identity.buildId} (from ${symbols.identity.source})"
                 )
             )
             emit(
                 Logs.info(
                     TAG_RUST,
-                    "Build ID ${symbols.identity.buildId} " +
-                        "(${symbols.identity.source}, ${symbols.symbols.defined} defined)"
+                    "Symbols: ${symbols.symbols.defined} defined, " +
+                        "${symbols.symbols.jni.size} JNI exports"
                 )
             )
 
@@ -579,8 +848,12 @@ class MainViewModel(
                         progressTask = "Loaded from cache",
                         result = cached.copy(
                             displayName = source.metadata.displayName,
-                            sizeBytes = extracted.sizeBytes,
-                            sha256 = extracted.sha256
+                            sizeBytes = current.sizeBytes,
+                            sha256 = current.sha256,
+                            apkSizeBytes = source.metadata.sizeBytes,
+                            apkVersion = lastApkVersion,
+                            textSection = cached.textSection ?: sections.text,
+                            imageBase = sections.imageBase
                         ),
                         error = null,
                         errorHint = null
@@ -589,41 +862,54 @@ class MainViewModel(
                 return true
             }
 
-            val scan = scanForOffsets(extracted)
-            val vtables = resolveVtables(extracted)
+            current = ensureExtractedFile(source, current)
+            val scan = scanForOffsets(current)
+            current = ensureExtractedFile(source, current)
+            val vtables = resolveVtables(current)
+            current = ensureExtractedFile(source, current)
+            val internal = analyzeInternal(current)
+
+            val summary = ScanResultSummary(
+                displayName = source.metadata.displayName,
+                sha256 = current.sha256,
+                sizeBytes = current.sizeBytes,
+                architecture = mapped.architecture,
+                entryPoint = mapped.entryPoint,
+                sectionCount = mapped.sectionCount,
+                textSection = text,
+                buildId = symbols.identity.buildId,
+                buildIdSource = symbols.identity.source,
+                jniSymbolCount = symbols.symbols.jni.size,
+                patternHits = scan?.hits.orEmpty(),
+                discardedMatches = scan?.discarded ?: 0,
+                peakResidentBytes = scan?.peakResidentBytes ?: internal?.peakResidentBytes,
+                vtables = vtables.map,
+                vtablesResolved = vtables.error == null,
+                vtableError = vtables.error,
+                internal = internal?.summary,
+                internalResolved = internal != null,
+                internalError = lastInternalError,
+                symbols = symbols.symbols.jni,
+                expectedPatterns = patterns.map { it.name },
+                verification = scan?.verification ?: VerificationSummary.NONE,
+                apkSizeBytes = source.metadata.sizeBytes,
+                apkVersion = lastApkVersion,
+                imageBase = sections.imageBase
+            )
 
             _uiState.update {
                 it.copy(
                     phase = ScannerPhase.Success,
                     progress = 100,
                     progressTask = "Mapping complete",
-                    result = ScanResultSummary(
-                        displayName = source.metadata.displayName,
-                        sha256 = extracted.sha256,
-                        sizeBytes = extracted.sizeBytes,
-                        architecture = mapped.architecture,
-                        entryPoint = mapped.entryPoint,
-                        sectionCount = mapped.sectionCount,
-                        textSection = text,
-                        buildId = symbols.identity.buildId,
-                        buildIdSource = symbols.identity.source,
-                        jniSymbolCount = symbols.symbols.jni.size,
-                        patternHits = scan?.hits.orEmpty(),
-                        discardedMatches = scan?.discarded ?: 0,
-                        peakResidentBytes = scan?.peakResidentBytes,
-                        vtables = vtables,
-                        symbols = symbols.symbols.jni,
-                        expectedPatterns = patterns.map { it.name },
-                        verification = scan?.verification ?: VerificationSummary.NONE
-                    ),
+                    result = summary,
                     error = null,
                     errorHint = null
                 )
             }
 
             reportVerification(scan?.verification)
-
-            rememberScan(symbols.identity.buildId, _uiState.value.result)
+            rememberScan(symbols.identity.buildId, summary)
             return true
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -635,17 +921,69 @@ class MainViewModel(
     }
 
     /**
-     * Resolves the RTTI vtables the library declares.
+     * Confirms the extracted file is still on disk at the recorded size.
      *
-     * A library with no C++ RTTI yields an empty map, which is reported rather
-     * than treated as a failure: the offset scan is still useful on its own.
-     *
-     * @param extracted the library to inspect.
-     * @return the resolved vtables, or an empty map when the pass fails.
+     * The cache can be cleared, or the file can be replaced, between two engine
+     * calls. Every call after extraction therefore checks first and re-extracts
+     * once from the still-open descriptor, which is what turns a transient
+     * `cannot open` into a successful pass instead of a silently skipped one.
      */
-    private suspend fun resolveVtables(
-        extracted: com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
-    ): VtableMap = try {
+    private suspend fun ensureExtractedFile(
+        source: ApkSource,
+        extracted: ExtractedNativeLibrary
+    ): ExtractedNativeLibrary {
+        val file = File(extracted.path)
+        if (file.isFile && file.length() == extracted.sizeBytes) {
+            return extracted
+        }
+        emit(
+            Logs.warn(
+                TAG_RUST,
+                "Extracted library is ${describeFile(file)}; re-extracting once."
+            )
+        )
+        val again = engine.extractNativeLibrary(source.rawFd, cacheDir)
+        lastExtracted = again
+        val check = File(again.path)
+        if (!check.isFile || check.length() != again.sizeBytes) {
+            throw com.chimerateam.offsetextractor.data.saf.EngineException(
+                com.chimerateam.offsetextractor.data.saf.EngineErrorKind.InvalidElf,
+                "the extracted library disappeared before it could be mapped"
+            )
+        }
+        emit(
+            Logs.info(
+                TAG_RUST,
+                "Re-extracted ${check.name} (${check.length()} bytes)."
+            )
+        )
+        return again
+    }
+
+    /** Describes a file for the re-extraction log line. */
+    private fun describeFile(file: File): String = when {
+        !file.exists() -> "missing"
+        file.length() != 0L -> "${file.length()} bytes"
+        else -> "empty"
+    }
+
+    /** Reads `versionName` from the APK manifest, tolerating a failure. */
+    private suspend fun readApkVersion(source: ApkSource): String = try {
+        engine.readApkVersion(source.rawFd).orEmpty()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (throwable: Throwable) {
+        emit(
+            Logs.warn(
+                TAG_RUST,
+                "APK version unavailable: ${throwable::class.simpleName}: ${throwable.message}"
+            )
+        )
+        ""
+    }
+
+    /** Resolves the RTTI vtables and records whether the pass completed. */
+    private suspend fun resolveVtables(extracted: ExtractedNativeLibrary): VtableResolution = try {
         // Logged before the call so a process death is pinned to this phase in
         // the live log rather than inferred from where the log stops.
         emit(Logs.info(TAG_RUST, "Resolving RTTI vtables..."))
@@ -668,16 +1006,117 @@ class MainViewModel(
                 )
             }
         }
-        map
+        VtableResolution(map, null)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (throwable: Throwable) {
         // The RTTI pass is the memory-hungry one, and a failure there is not
         // fatal: the offset scan is already complete and is reported on its own.
-        // Catching only EngineException would let an OutOfMemoryError discard a
-        // good scan, so every throwable is absorbed here.
-        emit(Logs.warn(TAG_RUST, "Vtable resolution skipped: ${throwable.message}"))
-        VtableMap.EMPTY
+        // The exception class and the full message are both logged, because the
+        // message alone hid an OS errno in the field.
+        val detail = "${throwable::class.simpleName}: ${throwable.message ?: "no detail"}"
+        emit(Logs.warn(TAG_RUST, "Vtable resolution skipped: $detail"))
+        VtableResolution(VtableMap.EMPTY, detail)
+    }
+
+    /**
+     * Runs the internal C++ extraction.
+     *
+     * A failure is reported and remembered, but it never discards the JNI scan
+     * that already finished.
+     */
+    private suspend fun analyzeInternal(extracted: ExtractedNativeLibrary): InternalAnalysis? {
+        lastInternalError = null
+        val options = InternalOptions(
+            includeAllFunctions = includeAllFunctions.value,
+            generateSignatures = generateSignatures.value,
+            maxSlotsPerClass = maxSlotsPerClass.value,
+            internalPatterns = internalPatterns,
+            stringAnchors = stringAnchors
+        )
+        val output = cache?.internalDir ?: File(cacheDir, "internal")
+        return try {
+            emit(Logs.info(TAG_RUST, "Extracting internal C++ offsets..."))
+            val lastStep = java.util.concurrent.atomic.AtomicReference("")
+            val reporter = ProgressCallback { percent, message ->
+                _uiState.update { it.copy(progress = percent, progressTask = message) }
+                runCatching { android.util.Log.i("OffsetProgress", "$percent% $message") }
+                if (lastStep.getAndSet(message) != message) {
+                    emit(Logs.info(TAG_RUST, message))
+                }
+            }
+            val analysis = engine.analyzeInternal(extracted, options, output, reporter)
+            val summary = analysis.summary
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Internal: ${summary.classes} classes, ${summary.vtableSlots} slots, " +
+                        "${summary.functions} functions (${summary.named} named, " +
+                        "${summary.autoNamed} sub_*)."
+                )
+            )
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Pass D/E: ${summary.verified} verified, ${summary.ambiguous} ambiguous, " +
+                        "${summary.notFound} not found; ${summary.signatures} signatures."
+                )
+            )
+            analysis
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (throwable: Throwable) {
+            val detail = "${throwable::class.simpleName}: ${throwable.message ?: "no detail"}"
+            lastInternalError = detail
+            emit(Logs.warn(TAG_RUST, "Internal extraction failed: $detail"))
+            null
+        }
+    }
+
+    /**
+     * Re-runs only Part 2, reusing the extracted library when it is still valid.
+     *
+     * This is what the "Internal extraction failed. Retry" button calls: the APK
+     * is not re-extracted unless its library is actually gone.
+     */
+    fun retryInternalExtraction() {
+        val result = _uiState.value.result
+        if (result == null) {
+            emit(Logs.warn(TAG_UI, "There is no scan to extend."))
+            return
+        }
+        val extracted = lastExtracted
+        if (extracted == null || !File(extracted.path).isFile) {
+            emit(Logs.warn(TAG_UI, "The extracted library is gone; select the APK again."))
+            _uiState.update { it.copy(exportMessage = "Select the APK again to retry.") }
+            return
+        }
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            _uiState.update { it.copy(progressTask = "Extracting internal offsets", progress = 0) }
+            val analysis = analyzeInternal(extracted)
+            val current = _uiState.value.result ?: return@launch
+            val updated = current.copy(
+                internal = analysis?.summary ?: current.internal,
+                internalResolved = analysis != null,
+                internalError = lastInternalError
+            )
+            _uiState.update {
+                it.copy(
+                    result = updated,
+                    progress = 100,
+                    progressTask = if (analysis != null) {
+                        "Internal offsets ready"
+                    } else {
+                        "Internal extraction failed"
+                    }
+                )
+            }
+            if (analysis != null) {
+                rememberScan(updated.buildId, updated)
+            } else {
+                _uiState.update { it.copy(exportMessage = "Internal extraction failed.") }
+            }
+        }
     }
 
     /**
@@ -701,6 +1140,7 @@ class MainViewModel(
         val lastStep = java.util.concurrent.atomic.AtomicReference("")
         val reporter = ProgressCallback { percent, message ->
             _uiState.update { it.copy(progress = percent, progressTask = message) }
+            runCatching { android.util.Log.i("OffsetProgress", "$percent% $message") }
             if (lastStep.getAndSet(message) != message) {
                 emit(Logs.info(TAG_RUST, message))
             }
@@ -811,6 +1251,9 @@ class MainViewModel(
         emit(Logs.info(TAG_UI, "Log cleared."))
     }
 
+    /** Result of the vtable pass: the map plus any failure detail. */
+    private data class VtableResolution(val map: VtableMap, val error: String?)
+
     /**
      * Creates the production ViewModel for an Activity or composable.
      *
@@ -837,12 +1280,16 @@ class MainViewModel(
             writer: DocumentWriter,
             cache: ScanCache,
             preferences: ScanPreferences,
-            patterns: List<PatternSpec> = emptyList()
+            patterns: List<PatternSpec> = emptyList(),
+            internalPatterns: List<InternalPatternSpec> = emptyList(),
+            stringAnchors: List<StringAnchorSpec> = emptyList()
         ): MainViewModel = MainViewModel(
             safAccess = safAccess,
             engine = engine,
             cacheDir = cacheDir,
             patterns = patterns,
+            internalPatterns = internalPatterns,
+            stringAnchors = stringAnchors,
             writer = writer,
             cache = cache,
             preferences = preferences

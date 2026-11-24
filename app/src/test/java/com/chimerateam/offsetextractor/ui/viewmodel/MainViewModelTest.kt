@@ -7,6 +7,9 @@ import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.native.BuildIdentity
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
+import com.chimerateam.offsetextractor.data.native.InternalAnalysis
+import com.chimerateam.offsetextractor.data.native.InternalOptions
+import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.PatternSpec
@@ -69,6 +72,16 @@ class MainViewModelTest {
         ApplicationProvider.getApplicationContext<Context>().cacheDir
     private val uri: Uri = Uri.parse("content://test.provider/minecraft.apk")
 
+    /** Creates a real extracted library so the file-integrity check passes. */
+    private fun library(sha: String, size: Long): ExtractedNativeLibrary {
+        val file = File(cacheDir, "test-$sha-$size.so").apply {
+            parentFile?.mkdirs()
+            writeBytes(ByteArray(size.toInt()))
+        }
+        file.deleteOnExit()
+        return ExtractedNativeLibrary(file.absolutePath, sha, size)
+    }
+
     @Before
     fun setUp() {
         kotlinx.coroutines.Dispatchers.setMain(dispatcher)
@@ -82,11 +95,7 @@ class MainViewModelTest {
     @Test
     fun successfulExtractionReachesSuccessWithResult() = runTest(dispatcher) {
         val engine = FakeEngine(
-            result = ExtractedNativeLibrary(
-                path = "/cache/libminecraftpe.so",
-                sha256 = "abc123",
-                sizeBytes = 4096
-            )
+            result = library(sha = "abc123", size = 4096)
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -349,7 +358,7 @@ class MainViewModelTest {
     @Test
     fun logsCarryTagsAndTheHashLineIsEmitted() = runTest(dispatcher) {
         val engine = FakeEngine(
-            result = ExtractedNativeLibrary("/cache/libminecraftpe.so", "deadbeef", 2048)
+            result = library(sha = "deadbeef", size = 2048)
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -375,7 +384,7 @@ class MainViewModelTest {
     @Test
     fun selectingAgainClearsTheStaleResultBeforeExtracting() = runTest(dispatcher) {
         val engine = FakeEngine(
-            result = ExtractedNativeLibrary("/cache/libminecraftpe.so", "hash", 128)
+            result = library(sha = "hash", size = 128)
         )
         val viewModel = newViewModel(engine = engine)
 
@@ -422,8 +431,8 @@ class MainViewModelTest {
 
         assertEquals(destination, writtenUri)
         assertTrue("expected the JSON document", writtenText.contains("schemaVersion"))
-        assertEquals("Offsets exported.", viewModel.uiState.value.exportMessage)
-        assertTrue(logs.any { it.message.startsWith("Exported offsets to") })
+        assertEquals("Saved JNI_OFFSETS_1.21.50.json", viewModel.uiState.value.exportMessage)
+        assertTrue(logs.any { it.message == "Saved JNI_OFFSETS_1.21.50.json" })
     }
 
     @Test
@@ -472,7 +481,7 @@ class MainViewModelTest {
 
         viewModel.onExportDestinationChosen(android.net.Uri.parse("content://x/y.json"))
         advanceUntilIdle()
-        assertEquals("Offsets exported.", viewModel.uiState.value.exportMessage)
+        assertEquals("Saved JNI_OFFSETS_1.21.50.json", viewModel.uiState.value.exportMessage)
 
         viewModel.onExportMessageShown()
         assertNull(viewModel.uiState.value.exportMessage)
@@ -486,7 +495,30 @@ class MainViewModelTest {
         viewModel.onApkSelected(uri)
         advanceUntilIdle()
 
-        assertEquals("offsets_abcdef0123456789.json", viewModel.defaultExportFileName())
+        assertEquals("JNI_OFFSETS_1.21.50.json", viewModel.defaultExportFileName())
+    }
+
+    @Test
+    fun aVanishedLibraryIsReExtractedBeforeTheNextEngineCall() = runTest(dispatcher) {
+        val first = library(sha = "vanish", size = 4096)
+        val second = library(sha = "retry", size = 4096)
+        val engine = FakeEngine(result = first)
+        engine.onMap = {
+            engine.resultOverride = second
+            File(first.path).delete()
+        }
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertTrue("the engine must re-extract", engine.calls >= 2)
+        assertEquals("retry", viewModel.uiState.value.result?.sha256)
+        assertTrue(
+            "the vanished file must be logged",
+            viewModel.logEntries.value.any { it.message.contains("re-extracting") }
+        )
     }
 
     @Test
@@ -855,7 +887,10 @@ class MainViewModelTest {
         assertEquals(3, summary?.total)
         assertEquals(2, summary?.succeeded)
         assertEquals(1, summary?.failed)
-        assertEquals("Processed 3 APKs. 2 succeeded, 1 failed.", summary?.message)
+        assertTrue(
+            "batch summary names the run",
+            summary!!.message.startsWith("Processed 3 APKs. 2 succeeded, 1 failed.")
+        )
         assertEquals(3, access.openCalls)
     }
 
@@ -1058,11 +1093,13 @@ private val RODATA = SectionInfo(
 
 /** Deterministic engine double with virtual-time delay and call counting. */
 private class FakeEngine(
-    private val result: ExtractedNativeLibrary = ExtractedNativeLibrary(
-        path = "/cache/libminecraftpe.so",
-        sha256 = "test",
-        sizeBytes = 1
-    ),
+    private val result: ExtractedNativeLibrary = run {
+        val file = File.createTempFile("libminecraftpe", ".so").apply {
+            writeBytes(ByteArray(1))
+            deleteOnExit()
+        }
+        ExtractedNativeLibrary(file.absolutePath, "test", 1)
+    },
     private val failure: Throwable? = null,
     private val delayMillis: Long = 0,
     /** Scan outcome the double returns; `null` builds the default outcome. */
@@ -1073,6 +1110,12 @@ private class FakeEngine(
 
     var calls = 0
         private set
+
+    /** Replacement returned by the next extraction, simulating a re-extract. */
+    var resultOverride: ExtractedNativeLibrary? = null
+
+    /** Hook run inside `mapLibrary`, used to delete the file mid-scan. */
+    var onMap: (() -> Unit)? = null
 
     /** Times the engine was asked to cancel the scan in flight. */
     var cancelCalls = 0
@@ -1091,7 +1134,7 @@ private class FakeEngine(
             delay(delayMillis)
         }
         failure?.let { throw it }
-        return result
+        return resultOverride ?: result
     }
 
     var sectionCalls = 0
@@ -1173,6 +1216,35 @@ private class FakeEngine(
         )
     )
 
+    /** Internal pass result the double returns. */
+    var internalResult: InternalSummary? = null
+
+    override suspend fun analyzeInternal(
+        library: ExtractedNativeLibrary,
+        options: InternalOptions,
+        outputDir: File,
+        progress: ProgressCallback?
+    ): InternalAnalysis {
+        if (delayMillis > 0) {
+            delay(delayMillis)
+        }
+        failure?.let { throw it }
+        val table = File.createTempFile("internal-", ".ndjson").apply {
+            writeText("""{"type":"meta","schemaVersion":1,"kind":"internal_cpp"}""" + "\n")
+            deleteOnExit()
+        }
+        val summary = internalResult ?: InternalSummary(
+            classes = 1,
+            vtableSlots = 1,
+            functions = 1,
+            named = 1,
+            path = table.absolutePath
+        )
+        return InternalAnalysis(summary = summary, peakResidentBytes = 1)
+    }
+
+    override suspend fun readApkVersion(rawFd: Int): String? = "1.21.50"
+
     override suspend fun resolveVtables(library: ExtractedNativeLibrary): VtableMap {
         vtableCalls++
         if (delayMillis > 0) {
@@ -1214,6 +1286,7 @@ private class FakeEngine(
 
     override suspend fun mapLibrary(library: ExtractedNativeLibrary): NativeLibraryMetadata {
         mapCalls++
+        onMap?.invoke()
         if (delayMillis > 0) {
             delay(delayMillis)
         }

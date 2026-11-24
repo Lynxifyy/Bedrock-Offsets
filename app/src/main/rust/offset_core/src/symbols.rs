@@ -281,6 +281,123 @@ pub fn read_dynamic_symbols(
     })
 }
 
+/// Upper bound on the number of named symbols kept for the internal table.
+///
+/// A Bedrock library exports tens of thousands of symbols. The cap only stops a
+/// corrupt `.dynsym` from allocating without limit.
+pub const MAX_NAMED_SYMBOLS: usize = 500_000;
+
+/// A defined dynamic symbol, with its Itanium-demangled name when possible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NamedSymbol {
+    /// Demangled name, or the raw name when it is not an Itanium symbol.
+    pub name: String,
+    /// Name exactly as it appears in `.dynstr`.
+    pub mangled: String,
+    /// Virtual address of the symbol.
+    pub address: u64,
+    /// Size recorded for the symbol, or zero when the linker omitted it.
+    pub size: u64,
+    /// `st_info` binding nibble.
+    pub binding: u8,
+}
+
+/// Reads every defined global or weak symbol that carries a name.
+///
+/// Unlike [`read_dynamic_symbols`], which keeps only `Java_` entry points, this
+/// is the naming source for the internal function table: every exported C++
+/// method and helper is a candidate name.
+///
+/// # Errors
+///
+/// Returns [`CoreError::InvalidElf`] when the symbol or string table cannot be
+/// read.
+pub fn read_named_symbols(image: &[u8]) -> CoreResult<Vec<NamedSymbol>> {
+    let map = build_section_map(image)?;
+    let Some(dynsym) = map.find(DYNSYM_SECTION) else {
+        return Ok(Vec::new());
+    };
+    if dynsym.size == 0 {
+        return Ok(Vec::new());
+    }
+
+    let context = section_context(image)?;
+    let dynsym_bytes = map.bytes_of(DYNSYM_SECTION, image);
+    let entry_size = Sym::size(context.container);
+    let count = (dynsym.size as usize) / entry_size;
+    let symbols = Sym::parse(dynsym_bytes, 0, count, context)
+        .map_err(|error| CoreError::InvalidElf(format!("cannot read {DYNSYM_SECTION}: {error}")))?;
+
+    let strings = map.bytes_of(DYNSTR_SECTION, image);
+    let table = goblin::strtab::Strtab::parse(strings, 0, strings.len(), 0x0)
+        .map_err(|error| CoreError::InvalidElf(format!("cannot read {DYNSTR_SECTION}: {error}")))?;
+
+    let mut named = Vec::new();
+    for symbol in &symbols {
+        if named.len() >= MAX_NAMED_SYMBOLS {
+            break;
+        }
+        let binding = symbol.st_bind();
+        if symbol.st_shndx == 0 || (binding != STB_GLOBAL && binding != STB_WEAK) {
+            continue;
+        }
+        let Some(name) = table.get_at(symbol.st_name) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        named.push(NamedSymbol {
+            name: demangle(name).unwrap_or_else(|| name.to_string()),
+            mangled: name.to_string(),
+            address: symbol.st_value,
+            size: symbol.st_size,
+            binding,
+        });
+    }
+    Ok(named)
+}
+
+/// Returns the address of the defined symbol named `name`, if it is exported.
+///
+/// Used to identify `__cxa_pure_virtual` without hard-coding an address.
+pub fn find_symbol_address(image: &[u8], name: &str) -> Option<u64> {
+    let map = build_section_map(image).ok()?;
+    let dynsym = map.find(DYNSYM_SECTION)?;
+    if dynsym.size == 0 {
+        return None;
+    }
+    let context = section_context(image).ok()?;
+    let dynsym_bytes = map.bytes_of(DYNSYM_SECTION, image);
+    let count = (dynsym.size as usize) / Sym::size(context.container);
+    let symbols = Sym::parse(dynsym_bytes, 0, count, context).ok()?;
+    let strings = map.bytes_of(DYNSTR_SECTION, image);
+    let table = goblin::strtab::Strtab::parse(strings, 0, strings.len(), 0x0).ok()?;
+    for symbol in &symbols {
+        if symbol.st_shndx == 0 {
+            continue;
+        }
+        if table.get_at(symbol.st_name) == Some(name) {
+            return Some(symbol.st_value);
+        }
+    }
+    None
+}
+
+/// Demangles an Itanium C++ symbol, returning `None` when it is not one.
+///
+/// A JNI export (`Java_...`) or a plain C symbol is not mangled, so it is left
+/// untouched by returning `None`; the caller keeps the original spelling.
+pub fn demangle(name: &str) -> Option<String> {
+    if !name.starts_with("_Z") {
+        return None;
+    }
+    let symbol = cpp_demangle::Symbol::new(name).ok()?;
+    symbol
+        .demangle(&cpp_demangle::DemangleOptions::default())
+        .ok()
+}
+
 /// Builds the container context of an ELF image.
 fn context(elf: &Elf<'_>) -> Ctx {
     let container = if elf.is_64 {

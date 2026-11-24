@@ -2,6 +2,7 @@ package com.chimerateam.offsetextractor.ui.state
 
 import androidx.compose.runtime.Immutable
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
+import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
@@ -72,10 +73,13 @@ enum class ScannerPhase {
  * @property displayName name of the APK the offsets came from.
  * @property sha256 hash of the extracted native library.
  * @property sizeBytes size of the extracted native library.
+ * @property apkSizeBytes size of the APK itself, when the provider reported it.
+ * @property apkVersion version label used in the exported file names.
  * @property architecture target architecture reported by the ELF header.
  * @property entryPoint entry point of the mapped library.
  * @property sectionCount number of section headers in the mapped library.
  * @property textSection the executable section, or `null` when unreadable.
+ * @property imageBase lowest load address of any allocated section.
  * @property buildId build identifier of the library, used as the cache key.
  * @property buildIdSource where the identifier came from.
  * @property jniSymbolCount number of `Java_` symbols exported by the library.
@@ -83,7 +87,13 @@ enum class ScannerPhase {
  * @property discardedMatches candidates the prologue check threw away.
  * @property peakResidentBytes peak resident set after the scan, when reported.
  * @property vtables RTTI vtables resolved from the library.
- * @property symbols exported JNI symbols, used for symbol cross-checking.
+ * @property vtablesResolved whether the vtable pass completed rather than being
+ *   skipped after an error.
+ * @property vtableError detail of a failed vtable pass, or `null`.
+ * @property internal counts of the internal C++ extraction, when it ran.
+ * @property internalResolved whether the internal pass completed.
+ * @property internalError detail of a failed internal pass, or `null`.
+ * @property symbols exported JNI symbols, used for symbol-cross checking.
  * @property expectedPatterns every signature the app looked for, so a missing
  *   one can be reported rather than silently omitted.
  */
@@ -103,7 +113,22 @@ data class ScanResultSummary(
     val discardedMatches: Int = 0,
     val peakResidentBytes: Long? = null,
     val vtables: VtableMap = VtableMap.EMPTY,
+    val vtablesResolved: Boolean = false,
+    val vtableError: String? = null,
+    val internal: InternalSummary? = null,
+    val internalResolved: Boolean = false,
+    val internalError: String? = null,
     val symbols: List<ExportedSymbol> = emptyList(),
     val expectedPatterns: List<String> = emptyList(),
-    val verification: VerificationSummary = VerificationSummary.NONE
-)
+    val verification: VerificationSummary = VerificationSummary.NONE,
+    val apkSizeBytes: Long = 0,
+    val apkVersion: String = "",
+    val imageBase: Long = 0
+) {
+    /**
+     * Whether every optional pass finished, so this result may be cached and
+     * reused without hiding a failure.
+     */
+    val isComplete: Boolean
+        get() = vtablesResolved && internalResolved
+}

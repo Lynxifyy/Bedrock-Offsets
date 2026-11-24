@@ -2,42 +2,57 @@ package com.chimerateam.offsetextractor.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Caramel / Honey palette.
+// Blue / white / pink palette.
+//
+// The token names predate the palette change and are kept so call sites and
+// previews do not churn; each name now carries its blue-family value.
 
-/** Deep caramel, used as the light-theme primary. */
-val Caramel600 = Color(0xFFB06A16)
+/** Brand blue, used as the light-theme primary. */
+val Caramel600 = Color(0xFF2563EB)
 
-/** Brighter caramel for dark-theme primary contrast. */
-val Caramel400 = Color(0xFFE39A45)
+/** Brighter blue for dark-theme primary contrast. */
+val Caramel400 = Color(0xFF7AA2FF)
 
-/** Honey highlight used for accents and the scanning glow. */
-val Honey300 = Color(0xFFFFD07A)
-val Honey100 = Color(0xFFFFE9C2)
+/** Pink highlight used for accents, badges and the scanning glow. */
+val Honey300 = Color(0xFFFF7EB6)
+val Honey100 = Color(0xFFFFD6E7)
 
-val Caramel900 = Color(0xFF5A3208)
-val Caramel800 = Color(0xFF7A4509)
-val Caramel100 = Color(0xFFFFE0BE)
-val Caramel50 = Color(0xFFFFF3E3)
+/** Deep navy for text on light surfaces. */
+val Caramel900 = Color(0xFF0B1F4B)
+val Caramel800 = Color(0xFF16357A)
+val Caramel100 = Color(0xFFDCE8FF)
+val Caramel50 = Color(0xFFF3F7FF)
 
-val Amber700 = Color(0xFF9A6B00)
-val Amber600 = Color(0xFFC08A00)
-val Amber500 = Color(0xFFE8A400)
-val Amber200 = Color(0xFFF6D48B)
-val Amber100 = Color(0xFFFFE7B8)
+/** Secondary blue family. */
+val Amber700 = Color(0xFF1D4ED8)
+val Amber600 = Color(0xFF3B82F6)
+val Amber500 = Color(0xFF60A5FA)
+val Amber200 = Color(0xFFBFDBFE)
+val Amber100 = Color(0xFFDBEAFE)
 
-val Neutral900 = Color(0xFF1C1A17)
-val Neutral800 = Color(0xFF2A2723)
-val Neutral100 = Color(0xFFF4EFE8)
-val Neutral50 = Color(0xFFFCF9F5)
+/** Neutral slate family. */
+val Neutral900 = Color(0xFF0E1526)
+val Neutral800 = Color(0xFF1B2740)
+val Neutral100 = Color(0xFFF4F7FF)
+val Neutral50 = Color(0xFFFBFCFE)
 
-val SurfaceDark = Color(0xFF141210)
+val SurfaceDark = Color(0xFF0B1220)
 
 /** Pure black used by the AMOLED theme. */
 val AmoledBlack = Color(0xFF000000)
 
+/** Pink used for the accent half of the brand gradient. */
+val BrandPink = Color(0xFFFF5C9E)
+
+/** Blue used for the primary half of the brand gradient. */
+val BrandBlue = Color(0xFF2563EB)
+
+/** White used for the highlight stop of the brand gradient. */
+val BrandWhite = Color(0xFFFFFFFF)
+
 // Log level accents.
-val LogRustPurple = Color(0xFFB39DDB)
-val LogUiBlue = Color(0xFF90CAF9)
-val LogErrorRed = Color(0xFFEF9A9A)
-val LogCacheTeal = Color(0xFF80CBC4)
-val LogSafGreen = Color(0xFFA5D6A7)
+val LogRustPurple = Color(0xFFC4B5FD)
+val LogUiBlue = Color(0xFF93C5FD)
+val LogErrorRed = Color(0xFFFCA5A5)
+val LogCacheTeal = Color(0xFF7DD3FC)
+val LogSafGreen = Color(0xFF86EFAC)

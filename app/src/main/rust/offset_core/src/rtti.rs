@@ -338,19 +338,92 @@ fn read_type_name(
         return None;
     }
 
-    let (length, digits) = read_length_prefix(&bytes[start..])?;
-    if length == 0 || length > MAX_TYPE_NAME_BYTES {
+    let end = bytes[start..]
+        .iter()
+        .position(|byte| *byte == 0)
+        .map(|offset| start + offset)?;
+    let mangled = std::str::from_utf8(&bytes[start..end]).ok()?;
+    if mangled.len() > MAX_TYPE_NAME_BYTES * 4 {
         return None;
     }
-    let name_start = start + digits;
-    let name_end = name_start.checked_add(length)?;
-    let raw = bytes.get(name_start..name_end)?;
-    if !raw.iter().all(|byte| is_name_byte(*byte)) {
-        return None;
+    let name = demangle_type_name(mangled)?;
+    Some((name, mangled.to_string()))
+}
+
+/// Demangles the type name a `type_info` object points at.
+///
+/// Two forms occur in practice: a simple `<length><name>` such as
+/// `14ClientInstance`, and the nested `N...E` form used by namespaced classes
+/// such as `N6icu_6913BreakIteratorE`. Rejecting the nested form silently
+/// dropped every namespaced class, which on a real library meant no vtables at
+/// all.
+fn demangle_type_name(text: &str) -> Option<String> {
+    if let Some(rest) = text.strip_prefix('N') {
+        let mut rest = rest;
+        let mut parts: Vec<&str> = Vec::new();
+        loop {
+            let bytes = rest.as_bytes();
+            let first = *bytes.first()?;
+            match first {
+                b'E' => break,
+                // Template arguments do not change the class name.
+                b'I' => break,
+                b'K' | b'V' | b'r' => rest = &rest[1..],
+                b'S' => {
+                    if let Some(after) = rest.strip_prefix("St") {
+                        parts.push("std");
+                        rest = after;
+                    } else {
+                        // Substitution: skip `S` and its one-character key.
+                        rest = &rest[1..];
+                        if let Some(next) = rest.as_bytes().first() {
+                            if next.is_ascii_alphanumeric() || *next == b'_' {
+                                rest = &rest[1..];
+                            }
+                        }
+                    }
+                }
+                b'0'..=b'9' => {
+                    let (length, digits) = read_length_prefix(bytes)?;
+                    if length == 0 || length > MAX_TYPE_NAME_BYTES || digits + length > rest.len() {
+                        return None;
+                    }
+                    let part = &rest[digits..digits + length];
+                    if !part.as_bytes().iter().all(|byte| is_name_byte(*byte)) {
+                        return None;
+                    }
+                    parts.push(part);
+                    rest = &rest[digits + length..];
+                }
+                _ => return None,
+            }
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("::"))
+        }
+    } else if let Some(rest) = text.strip_prefix("St") {
+        let (length, digits) = read_length_prefix(rest.as_bytes())?;
+        if length == 0 || length > MAX_TYPE_NAME_BYTES || digits + length > rest.len() {
+            return None;
+        }
+        let part = &rest[digits..digits + length];
+        if !part.as_bytes().iter().all(|byte| is_name_byte(*byte)) {
+            return None;
+        }
+        Some(format!("std::{part}"))
+    } else {
+        let (length, digits) = read_length_prefix(text.as_bytes())?;
+        if length == 0 || length > MAX_TYPE_NAME_BYTES || digits + length > text.len() {
+            return None;
+        }
+        let part = &text[digits..digits + length];
+        if !part.as_bytes().iter().all(|byte| is_name_byte(*byte)) {
+            return None;
+        }
+        Some(part.to_string())
     }
-    let name = String::from_utf8(raw.to_vec()).ok()?;
-    let mangled = format!("{length}{name}");
-    Some((name, mangled))
 }
 
 /// Reads the decimal length prefix of a mangled type name.
@@ -400,7 +473,7 @@ type SlotTarget = (u64, u64);
 /// real library — enough to kill the app on a device that is low on memory.
 /// This type is therefore built directly from a streaming pass over
 /// `.rela.dyn`, so only the sorted index is ever materialised.
-struct RelocationIndex {
+pub(crate) struct RelocationIndex {
     entries: Vec<SlotTarget>,
     /// Number of `.rela.dyn` entries the stream visited.
     examined: usize,
@@ -409,6 +482,19 @@ struct RelocationIndex {
     /// The tables are dead once the index is built, so the caller offers these
     /// for page release before the slot scan faults in `.data.rel.ro`.
     ranges: Vec<(usize, usize)>,
+}
+
+#[cfg(test)]
+impl RelocationIndex {
+    /// Builds a tiny index directly, for tests that only need slot targets.
+    pub(crate) fn for_tests(mut entries: Vec<(u64, u64)>) -> Self {
+        entries.sort_unstable();
+        Self {
+            entries,
+            examined: 0,
+            ranges: Vec::new(),
+        }
+    }
 }
 
 impl RelocationIndex {
@@ -429,7 +515,7 @@ impl RelocationIndex {
     ///
     /// Returns [`CoreError::OutOfMemory`] when the index cannot grow, rather
     /// than letting the allocator abort the process.
-    fn build(image: &[u8]) -> CoreResult<Self> {
+    pub(crate) fn build(image: &[u8]) -> CoreResult<Self> {
         let headers = crate::elf::parse_section_headers(image)?;
         // A supported relocation is one of two kinds out of many, so the index
         // is a fraction of the table; this is only a starting capacity, not a
@@ -502,7 +588,7 @@ impl RelocationIndex {
     /// # Returns
     ///
     /// The target, or `None` when the slot is not relocated by a supported kind.
-    fn target_of(&self, slot_address: u64) -> Option<u64> {
+    pub(crate) fn target_of(&self, slot_address: u64) -> Option<u64> {
         let index = self
             .entries
             .binary_search_by_key(&slot_address, |(offset, _)| *offset)
@@ -517,7 +603,7 @@ impl RelocationIndex {
     }
 
     /// Number of `.rela.dyn` entries the stream visited.
-    fn examined(&self) -> usize {
+    pub(crate) fn examined(&self) -> usize {
         self.examined
     }
 
@@ -533,7 +619,7 @@ impl RelocationIndex {
     }
 
     /// Whether the index holds nothing, which is the signal to direct-scan.
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 }
@@ -549,7 +635,7 @@ fn is_supported_relocation(kind: u32) -> bool {
 }
 
 /// Reads a little-endian `u64` at `offset`, or zero when it runs off the end.
-fn read_u64(bytes: &[u8], offset: usize) -> u64 {
+pub(crate) fn read_u64(bytes: &[u8], offset: usize) -> u64 {
     match bytes.get(offset..offset + 8) {
         Some(slice) => u64::from_le_bytes([
             slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
@@ -658,5 +744,41 @@ mod tests {
         assert_ne!(RELA_DYN_SECTION, TEXT_SECTION);
         assert_ne!(RELA_DYN_SECTION, RODATA_SECTION);
         assert_ne!(RELA_DYN_SECTION, DATA_REL_RO_SECTION);
+    }
+
+    #[test]
+    fn demangles_simple_and_nested_type_names() {
+        assert_eq!(
+            demangle_type_name("14ClientInstance").as_deref(),
+            Some("ClientInstance")
+        );
+        assert_eq!(
+            demangle_type_name("N6icu_6913BreakIteratorE").as_deref(),
+            Some("icu_69::BreakIterator")
+        );
+        assert_eq!(
+            demangle_type_name("N10__cxxabiv117__class_type_infoE").as_deref(),
+            Some("__cxxabiv1::__class_type_info")
+        );
+        assert_eq!(
+            demangle_type_name("St12length_error").as_deref(),
+            Some("std::length_error")
+        );
+    }
+
+    #[test]
+    fn template_arguments_are_dropped_from_the_class_name() {
+        assert_eq!(
+            demangle_type_name("NSt6__ndk19basic_iosIcNS_11char_traitsIcEEEE").as_deref(),
+            Some("std::__ndk1::basic_ios")
+        );
+    }
+
+    #[test]
+    fn malformed_type_names_are_rejected() {
+        assert!(demangle_type_name("").is_none());
+        assert!(demangle_type_name("0").is_none());
+        assert!(demangle_type_name("99short").is_none());
+        assert!(demangle_type_name("N6icu_69").is_none());
     }
 }

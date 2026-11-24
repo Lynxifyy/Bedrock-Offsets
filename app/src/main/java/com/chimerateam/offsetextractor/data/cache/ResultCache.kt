@@ -62,6 +62,6 @@ class ResultCache(private val cache: ScanCache) {
 
     private companion object {
         /** Bumped whenever [ScanResultSummary] gains a field a hit must carry. */
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 3
     }
 }

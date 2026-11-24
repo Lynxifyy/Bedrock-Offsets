@@ -1,3 +1,25 @@
+## v1.0.7
+
+### Features
+
+- extract every internal C++ function and vtable slot from `.eh_frame` and RTTI, streamed to a file
+- name internal functions from symbols, vtables, signatures and string anchors, with generated signatures
+- export `JNI_OFFSETS_<version>.json` and `INTERNALCPP_OFFSETS_<version>.json` with version-aware names
+- download both documents from a pinned bar on the Scanner tab
+- add an APKs tab that lists Minecraft Bedrock downloads from mcpedl.org, newest first, with an Extract action
+- blue, white and pink theme with animated surfaces, and working Settings toggles
+
+### Bug Fixes
+
+- preserve the OS error kind and errno when a mapping fails
+- extract each library to a per-hash directory and re-extract once if the file vanishes mid-scan
+- never cache a result whose vtable or internal pass failed
+- keep the offset list, search box and download buttons on screen on wide layouts
+- middle-ellipsize long symbol names and copy the full name on long press
+- show the APK size separately from the library size
+- report the ABI list when the arm64 library is missing from an APK
+- show "none (shared object)" instead of `0x0` for a shared object entry point
+
 ## v1.0.0
 
 ### Features

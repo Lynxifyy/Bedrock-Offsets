@@ -10,7 +10,7 @@ Checks:
     * the engine and the native shim are packaged for arm64-v8a,
     * the R8-processed classes are present and no debug-only class survived,
     * every Gson model still has a constructor after shrinking,
-    * the manifest does not request INTERNET.
+    * the manifest declares INTERNET, which the APK catalogue needs.
 
 Exit codes:
     0  every check passed.
@@ -79,6 +79,13 @@ GSON_MODEL_CLASSES = (
     "Lcom/chimerateam/offsetextractor/data/native/VtableMapPayload;",
     "Lcom/chimerateam/offsetextractor/data/native/VtableMap;",
     "Lcom/chimerateam/offsetextractor/data/native/TypeVTable;",
+    "Lcom/chimerateam/offsetextractor/data/native/InternalSummary;",
+    "Lcom/chimerateam/offsetextractor/data/native/InternalFunction;",
+    "Lcom/chimerateam/offsetextractor/data/native/VtableSlot;",
+    "Lcom/chimerateam/offsetextractor/data/native/ClassInfo;",
+    "Lcom/chimerateam/offsetextractor/data/native/InternalAnalysisPayload;",
+    "Lcom/chimerateam/offsetextractor/data/native/InternalPatternSpec;",
+    "Lcom/chimerateam/offsetextractor/data/native/StringAnchorSpec;",
     # data/export -- the exported offsets document.
     "Lcom/chimerateam/offsetextractor/data/export/OffsetDocument;",
     "Lcom/chimerateam/offsetextractor/data/export/SourceInfo;",
@@ -89,6 +96,8 @@ GSON_MODEL_CLASSES = (
     # data/patterns -- the bundled signature pack.
     "Lcom/chimerateam/offsetextractor/data/patterns/SignaturePack$PackDocument;",
     "Lcom/chimerateam/offsetextractor/data/patterns/SignaturePack$Entry;",
+    "Lcom/chimerateam/offsetextractor/data/patterns/SignaturePack$InternalEntry;",
+    "Lcom/chimerateam/offsetextractor/data/patterns/SignaturePack$AnchorEntry;",
     # ui/state -- the cached summary's own models.
     "Lcom/chimerateam/offsetextractor/ui/state/ScanResultSummary;",
     "Lcom/chimerateam/offsetextractor/ui/state/ScannerUiState;",
@@ -349,9 +358,9 @@ def check_manifest(apk: Path) -> CheckResult:
     permission = "android.permission.INTERNET".encode("utf-16-le")
     present = permission in manifest
     return CheckResult(
-        name="no INTERNET permission",
-        passed=not present,
-        detail="absent" if not present else "the manifest requests INTERNET",
+        name="network access",
+        passed=present,
+        detail="declared" if present else "the manifest does not request INTERNET",
     )
 
 

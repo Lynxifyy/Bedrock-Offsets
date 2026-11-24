@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
                 // The extracted library must live inside the managed cache, or
                 // "Clear cache" never frees the largest file the app creates.
                 val scanCache = ScanCache(File(cacheDir, "scan-cache").apply { mkdirs() })
+                val pack = SignaturePack.loadDocument(applicationContext)
                 MainViewModel.create(
                     safAccess = AndroidSafApkAccess(applicationContext),
                     engine = JniOffsetEngine(),
@@ -44,7 +45,9 @@ class MainActivity : ComponentActivity() {
                     writer = AndroidDocumentWriter(applicationContext),
                     cache = scanCache,
                     preferences = scanPreferences(this@MainActivity),
-                    patterns = SignaturePack.load(applicationContext)
+                    patterns = pack.patterns,
+                    internalPatterns = pack.internalPatterns,
+                    stringAnchors = pack.stringAnchors
                 )
             }
         }

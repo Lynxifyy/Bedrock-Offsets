@@ -17,7 +17,7 @@
 
 use std::time::Instant;
 
-use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, AhoCorasickKind, MatchKind};
 use serde::Serialize;
 
 use crate::error::{CoreError, CoreResult};
@@ -82,6 +82,25 @@ impl Pattern {
             runs.push((start, current));
         }
         runs
+    }
+
+    /// Length of the longest run of fixed bytes.
+    ///
+    /// Signature generation uses this as a cheap uniqueness proxy: a pattern
+    /// whose fixed bytes are only one or two long matches almost everywhere and
+    /// would flood the matcher.
+    pub fn longest_literal_run(&self) -> usize {
+        let mut longest = 0usize;
+        let mut current = 0usize;
+        for wildcard in &self.wildcards {
+            if *wildcard {
+                current = 0;
+            } else {
+                current += 1;
+                longest = longest.max(current);
+            }
+        }
+        longest
     }
 
     /// Whether the pattern spans no bytes at all.
@@ -211,8 +230,43 @@ impl PatternSet {
             }
         }
 
-        let automaton = build_automaton(&runs)?;
+        let automaton = build_automaton(&runs, AhoCorasickKind::ContiguousNFA)?;
 
+        Ok(Self {
+            patterns,
+            runs,
+            automaton,
+            compile_micros: started.elapsed().as_micros(),
+        })
+    }
+
+    /// Compiles a small set with a DFA, which trades memory for scan speed.
+    ///
+    /// The signature pass checks a few hundred short patterns against every
+    /// function prefix; a DFA is several times faster there and, with byte
+    /// classes, stays within a few megabytes. Large pattern packs keep using
+    /// the packed NFA through [`PatternSet::new`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`PatternSet::new`].
+    pub fn new_fast(specs: &[(String, String)]) -> CoreResult<Self> {
+        let started = Instant::now();
+        let mut patterns = Vec::with_capacity(specs.len());
+        for (name, source) in specs {
+            patterns.push(compile(name, source)?);
+        }
+        let mut runs = Vec::new();
+        for (index, pattern) in patterns.iter().enumerate() {
+            for (pattern_offset, bytes) in pattern.literal_runs() {
+                runs.push(LiteralRun {
+                    pattern_index: index,
+                    pattern_offset,
+                    bytes,
+                });
+            }
+        }
+        let automaton = build_automaton(&runs, AhoCorasickKind::DFA)?;
         Ok(Self {
             patterns,
             runs,
@@ -234,6 +288,81 @@ impl PatternSet {
     /// Whether the set holds no patterns, so matching is a no-op.
     pub fn is_empty(&self) -> bool {
         self.patterns.is_empty()
+    }
+
+    /// Counts matches per pattern, capped at two, without building a hit list.
+    ///
+    /// Signature uniqueness only needs "zero, one, or more than one", so the
+    /// whole-window hit vector that [`PatternSet::find_all`] allocates is not
+    /// needed. This keeps the signature pass's memory proportional to the
+    /// number of signatures rather than to the number of matches.
+    ///
+    /// Only matches that start before `limit` are counted, which excludes the
+    /// overlap bytes at the end of a window.
+    pub fn count_matches(&self, data: &[u8], limit: usize, counts: &mut [u8]) {
+        let Some(automaton) = self.automaton.as_ref() else {
+            return;
+        };
+        if data.is_empty() {
+            return;
+        }
+        for found in automaton.find_overlapping_iter(data) {
+            if found.start() >= limit {
+                continue;
+            }
+            let Some(run) = self.runs.get(found.pattern().as_usize()) else {
+                continue;
+            };
+            let Some(pattern) = self.patterns.get(run.pattern_index) else {
+                continue;
+            };
+            let Some(start) = found.start().checked_sub(run.pattern_offset) else {
+                continue;
+            };
+            if pattern.matches_at(data, start) {
+                if let Some(count) = counts.get_mut(run.pattern_index) {
+                    if *count < 2 {
+                        *count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Counts matches that begin on a `stride` boundary, capped at two.
+    ///
+    /// Signature uniqueness is checked against function starts only, so the
+    /// caller packs one function prefix per stride and this method ignores
+    /// matches inside a prefix. Scanning a few tens of megabytes of prefixes is
+    /// far cheaper than scanning the whole `.text` once per signature.
+    pub fn count_matches_at(&self, data: &[u8], stride: usize, counts: &mut [u8]) {
+        let Some(automaton) = self.automaton.as_ref() else {
+            return;
+        };
+        if data.is_empty() || stride == 0 {
+            return;
+        }
+        for found in automaton.find_overlapping_iter(data) {
+            let Some(run) = self.runs.get(found.pattern().as_usize()) else {
+                continue;
+            };
+            let Some(pattern) = self.patterns.get(run.pattern_index) else {
+                continue;
+            };
+            let Some(start) = found.start().checked_sub(run.pattern_offset) else {
+                continue;
+            };
+            if start % stride != 0 {
+                continue;
+            }
+            if pattern.matches_at(data, start) {
+                if let Some(count) = counts.get_mut(run.pattern_index) {
+                    if *count < 2 {
+                        *count += 1;
+                    }
+                }
+            }
+        }
     }
 
     /// Finds every occurrence of every pattern in `data`.
@@ -282,14 +411,17 @@ impl PatternSet {
 ///
 /// Runs are matched independently, so the automaton is left in standard (not
 /// leftmost) mode and overlapping matches are reported.
-fn build_automaton(runs: &[LiteralRun]) -> CoreResult<Option<AhoCorasick>> {
+fn build_automaton(runs: &[LiteralRun], kind: AhoCorasickKind) -> CoreResult<Option<AhoCorasick>> {
     if runs.is_empty() {
         return Ok(None);
     }
 
     let literals: Vec<&[u8]> = runs.iter().map(|run| run.bytes.as_slice()).collect();
 
+    // A DFA over tens of thousands of long signatures would need hundreds of
+    // megabytes; the packed NFA is a few megabytes and fast enough here.
     AhoCorasickBuilder::new()
+        .kind(Some(kind))
         .match_kind(MatchKind::Standard)
         .build(literals)
         .map(Some)

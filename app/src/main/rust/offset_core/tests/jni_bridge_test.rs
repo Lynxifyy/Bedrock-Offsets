@@ -109,3 +109,26 @@ fn the_engine_failure_constructor_is_kept_from_shrinking() {
         "proguard-rules.pro must keep EngineFailure's single-String constructor:\n{rules}"
     );
 }
+
+#[test]
+fn resolving_vtables_on_a_deleted_path_reports_the_os_error() {
+    let dir = temp_dir("deleted");
+    let path = dir.join("gone.so");
+    fs::write(&path, b"not an elf").expect("write placeholder");
+    fs::remove_file(&path).expect("delete placeholder");
+
+    let error =
+        offset_core::jni_bridge::resolve_vtables_json(path.to_str().expect("utf-8 path"), "sha")
+            .expect_err("a deleted path must fail");
+
+    let text = error.to_string();
+    assert!(
+        text.contains("NotFound"),
+        "expected the error kind, got {text}"
+    );
+    assert!(
+        text.contains("os error 2"),
+        "expected the errno, got {text}"
+    );
+    assert!(text.contains("gone.so"), "expected the path, got {text}");
+}

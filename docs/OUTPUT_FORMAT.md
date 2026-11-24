@@ -172,3 +172,91 @@ python3 scripts/verify_offsets.py offsets_1.21.0.json offsets_1.21.50.json
 
 Exit codes: `0` when every offset matches, `1` when something changed, `2` when
 an input cannot be read. Use it before shipping a signature pack for a new build.
+
+## Internal C++ document
+
+The internal extraction writes a second document next to the JNI one. It is
+named `INTERNALCPP_OFFSETS_<version>.json` (for example
+`INTERNALCPP_OFFSETS_26.66.json`) and has its own `kind`.
+
+```json
+{
+  "schemaVersion": 1,
+  "generatedBy": "BedrockOffsetExtractor",
+  "kind": "internal_cpp",
+  "source": {
+    "apk": "minecraft-26-66.apk",
+    "apkVersion": "26.66",
+    "architecture": "AArch64",
+    "librarySha256": "...",
+    "buildId": "...",
+    "imageBase": "0x0",
+    "textAddress": "0x...",
+    "textSize": 0,
+    "textDelta": "0x0"
+  },
+  "stats": {
+    "classes": 0,
+    "vtableSlots": 0,
+    "functions": 0,
+    "named": 0,
+    "autoNamed": 0,
+    "verified": 0,
+    "ambiguous": 0,
+    "notFound": 0,
+    "signatures": 0
+  },
+  "classes": {
+    "ClientInstance": {
+      "mangled": "14ClientInstance",
+      "bases": ["..."],
+      "vtable": "0x...",
+      "typeInfo": "0x...",
+      "slotCount": 0,
+      "slots": [
+        {
+          "slot": 0,
+          "offset": "0x0",
+          "address": "0x...",
+          "fileOffset": "0x...",
+          "size": 0,
+          "name": "ClientInstance::~ClientInstance",
+          "kind": "virtual",
+          "overrides": true,
+          "inherited": false,
+          "status": "verified",
+          "signature": "FD 7B ?? A9 ...",
+          "signatureUnique": true
+        }
+      ]
+    }
+  },
+  "functions": [
+    {
+      "address": "0x...",
+      "fileOffset": "0x...",
+      "size": 0,
+      "name": "...",
+      "nameSource": "eh_frame|symbol|vtable|signature|string|auto",
+      "aliases": [],
+      "kind": "function|thunk|pure_virtual",
+      "status": "verified|fde_only|suspect|ambiguous|not_found",
+      "signature": null
+    }
+  ],
+  "offsets": {
+    "ClientInstance::vfunc_12": "0x...",
+    "sub_1d0a4c8": "0x1d0a4c8"
+  }
+}
+```
+
+`classes` and `functions` are streamed: the Rust engine writes them to an
+NDJSON table in the app cache, and the exporter copies them through a
+`JsonWriter` so a 340 MB library never has to become one giant `String`.
+
+Addresses are image-relative virtual addresses, the same convention as the JNI
+document. `offsets` is the stable surface: it maps the best name for every
+function and every virtual slot to its address. Slot indices are stable across
+game updates, so prefer a `Class::vfunc_N` key over a byte signature when a
+client needs a virtual function.

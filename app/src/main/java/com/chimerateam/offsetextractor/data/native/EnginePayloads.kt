@@ -60,6 +60,11 @@ private data class ElfMetadataPayload(
     val soname: String?
 )
 
+/** Wire model for the APK-version payload; field names match the Rust output. */
+private data class ApkVersionPayload(
+    val versionName: String?
+)
+
 /**
  * Translates the engine's JSON payloads and error kinds into Kotlin types.
  *
@@ -255,6 +260,44 @@ object EnginePayloads {
             relocationsExamined = payload.relocationsExamined ?: 0,
             entries = payload.entries ?: emptyMap()
         )
+    }
+
+    /**
+     * Parses the payload returned by the internal-analysis entry point.
+     *
+     * @param json raw payload from the engine.
+     * @return the counts and the NDJSON path.
+     * @throws EngineException when the payload is missing or malformed.
+     */
+    fun parseInternalAnalysis(json: String?): InternalAnalysis {
+        val payload = decode(json, InternalAnalysisPayload::class.java, "internal analysis")
+        val summary = payload.internal
+            ?: throw EngineException(
+                kind = EngineErrorKind.Unknown,
+                message = "the engine returned an internal analysis without a summary"
+            )
+        return InternalAnalysis(summary = summary, peakResidentBytes = payload.peakResidentBytes)
+    }
+
+    /**
+     * Serialises the internal-analysis options for the engine.
+     *
+     * @param options options selected by the user.
+     * @return the JSON object the Rust side deserialises.
+     */
+    fun encodeInternalOptions(options: InternalOptions): String = gson.toJson(options)
+
+    /**
+     * Parses the payload returned by the APK-version entry point.
+     *
+     * @param json raw payload from the engine.
+     * @return the `versionName`, or `null` when the manifest did not carry one.
+     */
+    fun parseApkVersion(json: String?): String? {
+        if (json.isNullOrBlank()) return null
+        return runCatching {
+            gson.fromJson(json, ApkVersionPayload::class.java)?.versionName
+        }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
     private fun <T> decode(json: String?, type: Class<T>, what: String): T {

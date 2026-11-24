@@ -133,3 +133,25 @@ fn streamed_buffer_stays_at_the_documented_size() {
     // Guards the memory contract: the constant must not grow silently.
     assert_eq!(offset_core::zip_extract::STREAM_BUFFER_BYTES, 64 * 1024);
 }
+
+#[test]
+fn reports_the_abi_list_when_the_arm64_entry_is_missing() {
+    let dir = temp_dir("v7a_only");
+    let archive_path = dir.join("armeabi.apk");
+    write_zip(
+        &archive_path,
+        &[
+            ("AndroidManifest.xml", b"<manifest/>"),
+            ("lib/armeabi-v7a/libminecraftpe.so", b"not-really-an-elf"),
+        ],
+    );
+
+    let archive = fs::File::open(&archive_path).expect("open archive");
+    let error = extract_so_from_zip(archive.as_raw_fd(), &dir.join("out"))
+        .expect_err("a 32-bit-only APK must fail");
+
+    let text = error.to_string();
+    assert!(text.contains("armeabi-v7a"), "{text}");
+    assert!(text.contains("arm64-v8a"), "{text}");
+    assert!(text.contains("split APK"), "{text}");
+}

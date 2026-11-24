@@ -80,11 +80,22 @@ object ErrorMapper {
      */
     fun fromEngine(exception: EngineException, subject: String): UserFacingError =
         when (exception.kind) {
-            EngineErrorKind.MissingSoFile -> UserFacingError(
-                message = "$subject does not contain libminecraftpe.so.",
-                hint = "This looks like the Java Edition or a bundle without " +
-                    "arm64-v8a natives."
-            )
+            EngineErrorKind.MissingSoFile -> {
+                // The engine lists the ABIs the archive actually carries, which
+                // is the only actionable part of this failure. Fall back to the
+                // generic wording when an older engine sends no detail.
+                val detail = exception.message.orEmpty()
+                val message = if (detail.contains("libminecraftpe.so")) {
+                    detail
+                } else {
+                    "$subject does not contain libminecraftpe.so."
+                }
+                UserFacingError(
+                    message = message,
+                    hint = "Minecraft Bedrock ships AArch64 (arm64-v8a) native code. " +
+                        "If this is a split APK, select the base + arm64 config APK."
+                )
+            }
 
             EngineErrorKind.InvalidApk -> UserFacingError(
                 message = "$subject could not be parsed as an APK.",

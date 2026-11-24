@@ -1,5 +1,7 @@
 package com.chimerateam.offsetextractor.data.saf
 
+import com.chimerateam.offsetextractor.data.native.InternalAnalysis
+import com.chimerateam.offsetextractor.data.native.InternalOptions
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
@@ -100,6 +102,35 @@ interface OffsetEngine {
      * @throws EngineException when the library cannot be parsed.
      */
     suspend fun resolveVtables(library: ExtractedNativeLibrary): VtableMap
+
+    /**
+     * Extracts every internal C++ function and virtual slot.
+     *
+     * The full table is streamed to [outputDir]; only counts and the file path
+     * are returned, so a library with hundreds of thousands of functions does
+     * not have to cross the JNI boundary as one string.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @param options which passes to run and their limits.
+     * @param outputDir cache directory that receives the NDJSON table.
+     * @param progress receives progress reports, or `null` to run silently.
+     * @return counts and the NDJSON path.
+     * @throws EngineException when the library cannot be parsed.
+     */
+    suspend fun analyzeInternal(
+        library: ExtractedNativeLibrary,
+        options: InternalOptions,
+        outputDir: File,
+        progress: ProgressCallback? = null
+    ): InternalAnalysis
+
+    /**
+     * Reads `versionName` from the APK's binary manifest.
+     *
+     * @param rawFd read-only descriptor owned by the caller.
+     * @return the version string, or `null` when the manifest does not carry one.
+     */
+    suspend fun readApkVersion(rawFd: Int): String?
 }
 
 /**

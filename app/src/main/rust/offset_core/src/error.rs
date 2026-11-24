@@ -54,7 +54,13 @@ pub type CoreResult<T> = Result<T, CoreError>;
 
 impl From<std::io::Error> for CoreError {
     fn from(value: std::io::Error) -> Self {
-        CoreError::Io(value.to_string())
+        // Keep the errno so a failure that crosses the JNI boundary names the
+        // OS condition rather than only its human-readable text.
+        CoreError::Io(format!(
+            "{:?} (os error {}): {value}",
+            value.kind(),
+            value.raw_os_error().unwrap_or(-1)
+        ))
     }
 }
 

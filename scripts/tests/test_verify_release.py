@@ -228,12 +228,12 @@ class CheckTests(unittest.TestCase):
         apk = build_apk(self.root, dex=b"...android/util/Log->i(...")
         self.assertTrue(verify_release.check_no_debug_logging(apk).passed)
 
-    def test_a_manifest_without_internet_passes(self) -> None:
-        apk = build_apk(self.root)
+    def test_a_manifest_with_internet_passes(self) -> None:
+        apk = build_apk(self.root, manifest_permission=True)
         self.assertTrue(verify_release.check_manifest(apk).passed)
 
-    def test_a_manifest_with_internet_fails(self) -> None:
-        apk = build_apk(self.root, manifest_permission=True)
+    def test_a_manifest_without_internet_fails(self) -> None:
+        apk = build_apk(self.root)
         result = verify_release.check_manifest(apk)
         self.assertFalse(result.passed)
         self.assertIn("INTERNET", result.detail)
@@ -408,7 +408,7 @@ class CliTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_a_clean_apk_exits_zero(self) -> None:
-        apk = build_apk(self.root)
+        apk = build_apk(self.root, manifest_permission=True)
         self.assertEqual(0, verify_release.main([str(apk)]))
 
     def test_an_apk_with_a_missing_engine_exits_one(self) -> None:
@@ -418,11 +418,11 @@ class CliTests(unittest.TestCase):
     def test_the_apk_can_be_named_with_a_flag(self) -> None:
         # CI and the docs call the script both ways; the flag form must resolve
         # the same file as the positional form.
-        apk = build_apk(self.root)
+        apk = build_apk(self.root, manifest_permission=True)
         self.assertEqual(0, verify_release.main(["--apk", str(apk)]))
 
     def test_the_flag_overrides_the_positional_argument(self) -> None:
-        chosen = build_apk(self.root, name="chosen.apk")
+        chosen = build_apk(self.root, name="chosen.apk", manifest_permission=True)
         other = build_apk(self.root, name="other.apk")
         os.utime(chosen, (1_000_000, 1_000_000))
         os.utime(other, (2_000_000, 2_000_000))

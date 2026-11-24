@@ -2,8 +2,10 @@ package com.chimerateam.offsetextractor.ui.screens
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.chimerateam.offsetextractor.data.native.PatternHit
@@ -100,9 +102,13 @@ class ResultsScreenTest {
     fun rendersMatchedAndMissingRows() {
         content()
 
+        composeTestRule.onNodeWithTag(RESULTS_LIST_TAG)
+            .performScrollToNode(hasText("clientInstance"))
         composeTestRule.onNodeWithText("clientInstance").assertExists()
         composeTestRule.onNodeWithText("0x401000").assertExists()
         // The signature that did not match is still listed.
+        composeTestRule.onNodeWithTag(RESULTS_LIST_TAG)
+            .performScrollToNode(hasText("absentSignature"))
         composeTestRule.onNodeWithText("absentSignature").assertExists()
         composeTestRule.onNodeWithText("3 of 3 entries").assertExists()
     }
@@ -122,19 +128,29 @@ class ResultsScreenTest {
     fun exportActionsArePresent() {
         content()
 
-        composeTestRule.onNodeWithText("Copy JSON").assertExists()
-        composeTestRule.onNodeWithText("Share JSON").assertExists()
-        composeTestRule.onNodeWithText("Save JSON").assertExists()
+        composeTestRule.onNodeWithText("Copy").assertExists()
+        composeTestRule.onNodeWithText("Share").assertExists()
+        composeTestRule.onNodeWithText("Save").assertExists()
         composeTestRule.onNodeWithText("Start new scan").assertExists()
+        composeTestRule
+            .onNodeWithText("Download JNI_OFFSETS_deadbeef.json")
+            .assertExists()
+        composeTestRule
+            .onNodeWithText("Download INTERNALCPP_OFFSETS_deadbeef.json")
+            .assertExists()
     }
 
     @Test
     fun aVerifiedOffsetShowsAShieldAndAConflictingOneAWarning() {
         content()
 
+        composeTestRule.onNodeWithTag(RESULTS_LIST_TAG)
+            .performScrollToNode(hasText("clientInstance"))
         composeTestRule
             .onNodeWithContentDescription("Verified against the symbol table")
             .assertExists()
+        composeTestRule.onNodeWithTag(RESULTS_LIST_TAG)
+            .performScrollToNode(hasText("driftedTarget"))
         composeTestRule
             .onNodeWithContentDescription("Conflicts with the symbol table")
             .assertExists()

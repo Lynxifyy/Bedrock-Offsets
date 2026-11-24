@@ -381,6 +381,19 @@ class JniOffsetEngineTest {
             return vtables
         }
 
+        override fun analyzeInternal(
+            path: String,
+            sha256: String,
+            optionsJson: String,
+            outputDir: String,
+            callback: ProgressCallback?
+        ): String {
+            failure?.let { throw it }
+            return "{}"
+        }
+
+        override fun readApkVersion(fd: Int): String = "{\"versionName\":null}"
+
         override fun extractNativeLibrary(fd: Int, destinationDir: String): String {
             failure?.let { throw it }
             return extraction

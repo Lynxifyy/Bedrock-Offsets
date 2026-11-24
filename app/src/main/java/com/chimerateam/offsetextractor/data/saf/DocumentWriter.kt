@@ -36,6 +36,21 @@ fun interface DocumentWriter {
      * @return whether the document was written.
      */
     fun writeText(uri: Uri, text: String): WriteResult
+
+    /**
+     * Streams a document into [uri] through [block].
+     *
+     * The default implementation reports a failure so a test double that only
+     * implements [writeText] keeps compiling; the Android writer overrides it.
+     * Production uses this for both documents so a large result is never built
+     * as one `String`.
+     *
+     * @param uri destination document returned by the create-document picker.
+     * @param block receives a writer for the destination.
+     * @return whether the document was written.
+     */
+    fun writeStream(uri: Uri, block: (java.io.Writer) -> Unit): WriteResult =
+        WriteResult.Failure("This writer does not support streaming.")
 }
 
 /**
@@ -54,6 +69,21 @@ class AndroidDocumentWriter(context: Context) : DocumentWriter {
             val stream = resolver.openOutputStream(uri, "wt")
                 ?: return WriteResult.Failure("The provider returned no output stream.")
             stream.bufferedWriter().use { writer -> writer.write(text) }
+            WriteResult.Success
+        } catch (security: SecurityException) {
+            WriteResult.Failure("Write access was denied for the chosen location.")
+        } catch (io: IOException) {
+            WriteResult.Failure("Could not write the file: ${io.message ?: "I/O error"}")
+        } catch (illegal: IllegalArgumentException) {
+            WriteResult.Failure("The chosen location is not writable.")
+        }
+    }
+
+    override fun writeStream(uri: Uri, block: (java.io.Writer) -> Unit): WriteResult {
+        return try {
+            val stream = resolver.openOutputStream(uri, "wt")
+                ?: return WriteResult.Failure("The provider returned no output stream.")
+            stream.bufferedWriter().use(block)
             WriteResult.Success
         } catch (security: SecurityException) {
             WriteResult.Failure("Write access was denied for the chosen location.")

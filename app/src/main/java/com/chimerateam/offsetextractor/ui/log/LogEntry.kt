@@ -60,7 +60,7 @@ object Logs {
      * @param nowMillis timestamp override, primarily for tests.
      */
     fun info(tag: String, message: String, nowMillis: Long = System.currentTimeMillis()) =
-        LogEntry(nowMillis, LogLevel.Info, tag, message)
+        LogEntry(nowMillis, LogLevel.Info, tag, message).also { mirror(tag, message) }
 
     /**
      * Creates a warning entry.
@@ -70,7 +70,7 @@ object Logs {
      * @param nowMillis timestamp override, primarily for tests.
      */
     fun warn(tag: String, message: String, nowMillis: Long = System.currentTimeMillis()) =
-        LogEntry(nowMillis, LogLevel.Warning, tag, message)
+        LogEntry(nowMillis, LogLevel.Warning, tag, message).also { mirror(tag, message) }
 
     /**
      * Creates an error entry.
@@ -80,5 +80,10 @@ object Logs {
      * @param nowMillis timestamp override, primarily for tests.
      */
     fun error(tag: String, message: String, nowMillis: Long = System.currentTimeMillis()) =
-        LogEntry(nowMillis, LogLevel.Error, tag, message)
+        LogEntry(nowMillis, LogLevel.Error, tag, message).also { mirror(tag, message) }
+
+    /** Mirrors a UI log line to logcat so field runs can be diagnosed off-device. */
+    private fun mirror(tag: String, message: String) {
+        runCatching { android.util.Log.println(android.util.Log.INFO, "OffsetLog", "$tag: $message") }
+    }
 }

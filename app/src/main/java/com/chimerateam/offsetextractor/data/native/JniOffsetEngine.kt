@@ -125,6 +125,45 @@ class JniOffsetEngine(
         return EnginePayloads.parseVtableMap(json)
     }
 
+    /**
+     * Extracts every internal C++ function and virtual slot.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @param options which passes to run and their limits.
+     * @param outputDir cache directory that receives the NDJSON table.
+     * @param progress receives progress reports, or `null` to run silently.
+     * @return counts and the NDJSON path.
+     * @throws EngineException when the library cannot be parsed.
+     */
+    override suspend fun analyzeInternal(
+        library: ExtractedNativeLibrary,
+        options: InternalOptions,
+        outputDir: File,
+        progress: ProgressCallback?
+    ): InternalAnalysis {
+        val json = call("analyzing internal offsets") {
+            nativeLibrary.analyzeInternal(
+                library.path,
+                library.sha256,
+                EnginePayloads.encodeInternalOptions(options),
+                outputDir.absolutePath,
+                progress
+            )
+        }
+        return EnginePayloads.parseInternalAnalysis(json)
+    }
+
+    /**
+     * Reads `versionName` from the APK's binary manifest.
+     *
+     * @param rawFd read-only descriptor owned by the caller.
+     * @return the version string, or `null` when the manifest does not carry one.
+     */
+    override suspend fun readApkVersion(rawFd: Int): String? {
+        val json = call("reading the APK version") { nativeLibrary.readApkVersion(rawFd) }
+        return EnginePayloads.parseApkVersion(json)
+    }
+
     private inline fun call(what: String, block: () -> String): String = try {
         block()
     } catch (failure: EngineFailure) {
@@ -213,6 +252,32 @@ interface NativeLibrary {
      * @throws EngineFailure when the library cannot be parsed.
      */
     fun resolveVtables(path: String, sha256: String): String
+
+    /**
+     * Extracts every internal C++ function and virtual slot.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param optionsJson JSON options selecting the passes.
+     * @param outputDir cache directory that receives the NDJSON table.
+     * @param callback receives progress reports, or `null` to run silently.
+     * @return a JSON payload with `internal` counts and `peak_resident_bytes`.
+     */
+    fun analyzeInternal(
+        path: String,
+        sha256: String,
+        optionsJson: String,
+        outputDir: String,
+        callback: ProgressCallback? = null
+    ): String
+
+    /**
+     * Reads `versionName` from the APK behind `fd`.
+     *
+     * @param fd read-only descriptor owned by the caller.
+     * @return a JSON payload with `versionName`.
+     */
+    fun readApkVersion(fd: Int): String
 }
 
 /** Production bindings, backed by [NativeLib]. */
@@ -241,4 +306,14 @@ object JniNativeLibrary : NativeLibrary {
 
     override fun resolveVtables(path: String, sha256: String): String =
         NativeLib.resolveVtables(path, sha256)
+
+    override fun analyzeInternal(
+        path: String,
+        sha256: String,
+        optionsJson: String,
+        outputDir: String,
+        callback: ProgressCallback?
+    ): String = NativeLib.analyzeInternal(path, sha256, optionsJson, outputDir, callback)
+
+    override fun readApkVersion(fd: Int): String = NativeLib.readApkVersion(fd)
 }

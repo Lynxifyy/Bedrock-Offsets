@@ -12,11 +12,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.ui.components.SectionPanel
@@ -46,7 +49,13 @@ fun SettingsScreen(
     onForceRescanChange: (Boolean) -> Unit,
     onClearCache: () -> Unit,
     modifier: Modifier = Modifier,
-    lastBuildId: String = ""
+    lastBuildId: String = "",
+    includeAllFunctions: Boolean = true,
+    generateSignatures: Boolean = true,
+    maxSlotsPerClass: Int = 4096,
+    onIncludeAllFunctionsChange: (Boolean) -> Unit = {},
+    onGenerateSignaturesChange: (Boolean) -> Unit = {},
+    onMaxSlotsPerClassChange: (Int) -> Unit = {}
 ) {
     Column(
         modifier = modifier
@@ -58,7 +67,7 @@ fun SettingsScreen(
         SectionPanel(title = "Appearance") {
             SettingToggleRow(
                 title = "Dark mode",
-                subtitle = "Use the caramel dark palette",
+                subtitle = "Use the deep blue dark palette",
                 checked = themeMode == ThemeMode.Dark || themeMode == ThemeMode.Amoled,
                 onCheckedChange = { dark ->
                     onThemeModeChange(if (dark) ThemeMode.Dark else ThemeMode.Light)
@@ -77,9 +86,40 @@ fun SettingsScreen(
                 subtitle = "Match the device light/dark setting",
                 checked = themeMode == ThemeMode.System,
                 onCheckedChange = { follow ->
-                    if (follow) onThemeModeChange(ThemeMode.System)
+                    onThemeModeChange(if (follow) ThemeMode.System else ThemeMode.Light)
                 }
             )
+        }
+
+        SectionPanel(title = "Internal C++ extraction") {
+            SettingToggleRow(
+                title = "Include all functions",
+                subtitle = "Enumerate every .eh_frame function (large file)",
+                checked = includeAllFunctions,
+                onCheckedChange = onIncludeAllFunctionsChange
+            )
+            SettingToggleRow(
+                title = "Generate signatures",
+                subtitle = "Adds a full extra pass so offsets survive an update",
+                checked = generateSignatures,
+                onCheckedChange = onGenerateSignaturesChange
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Max slots per class: $maxSlotsPerClass",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(256, 1024, 4096).forEach { slots ->
+                    OutlinedButton(
+                        onClick = { onMaxSlotsPerClassChange(slots) },
+                        enabled = slots != maxSlotsPerClass
+                    ) {
+                        Text(slots.toString())
+                    }
+                }
+            }
         }
 
         SectionPanel(title = "Storage") {
@@ -137,7 +177,11 @@ private fun SettingToggleRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.semantics { contentDescription = title }
+        )
     }
 }
 

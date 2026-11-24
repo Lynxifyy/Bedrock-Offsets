@@ -64,6 +64,11 @@ fun ScannerScreen(
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
+    onDownloadJni: () -> Unit = {},
+    onDownloadInternal: () -> Unit = {},
+    onRetryInternal: () -> Unit = {},
+    internalBusy: Boolean = false,
+    onShareInternal: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -96,7 +101,12 @@ fun ScannerScreen(
                         onRetry = onRetry,
                         onCopyJson = onCopyJson,
                         onShareJson = onShareJson,
-                        onSaveJson = onSaveJson
+                        onSaveJson = onSaveJson,
+                        onDownloadJni = onDownloadJni,
+                        onDownloadInternal = onDownloadInternal,
+                        onRetryInternal = onRetryInternal,
+                        internalBusy = internalBusy,
+                        onShareInternal = onShareInternal
                     )
                 }
                 LiveLogPane(
@@ -124,7 +134,12 @@ fun ScannerScreen(
                     onRetry = onRetry,
                     onCopyJson = onCopyJson,
                     onShareJson = onShareJson,
-                    onSaveJson = onSaveJson
+                    onSaveJson = onSaveJson,
+                    onDownloadJni = onDownloadJni,
+                    onDownloadInternal = onDownloadInternal,
+                    onRetryInternal = onRetryInternal,
+                    internalBusy = internalBusy,
+                    onShareInternal = onShareInternal
                 )
                 LiveLogPane(
                     entries = entries,
@@ -149,7 +164,12 @@ private fun ControlsPane(
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
-    onSaveJson: () -> Unit
+    onSaveJson: () -> Unit,
+    onDownloadJni: () -> Unit,
+    onDownloadInternal: () -> Unit,
+    onRetryInternal: () -> Unit,
+    internalBusy: Boolean,
+    onShareInternal: (() -> Unit)?
 ) {
     // AnimatedContent keeps the state change visible rather than instantaneous:
     // a fade and a small slide make it obvious which pane replaced which.
@@ -171,7 +191,12 @@ private fun ControlsPane(
             onRetry = onRetry,
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
-            onSaveJson = onSaveJson
+            onSaveJson = onSaveJson,
+            onDownloadJni = onDownloadJni,
+            onDownloadInternal = onDownloadInternal,
+            onRetryInternal = onRetryInternal,
+            internalBusy = internalBusy,
+            onShareInternal = onShareInternal
         )
     }
 }
@@ -187,7 +212,12 @@ private fun PhasePane(
     onRetry: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
-    onSaveJson: () -> Unit
+    onSaveJson: () -> Unit,
+    onDownloadJni: () -> Unit,
+    onDownloadInternal: () -> Unit,
+    onRetryInternal: () -> Unit,
+    internalBusy: Boolean,
+    onShareInternal: (() -> Unit)?
 ) {
     when (phase) {
         ScannerPhase.Extracting, ScannerPhase.Scanning -> LoadingScreen(
@@ -201,7 +231,12 @@ private fun PhasePane(
             onStartNewScan = onCancelSelection,
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
-            onSaveJson = onSaveJson
+            onSaveJson = onSaveJson,
+            onDownloadJni = onDownloadJni,
+            onDownloadInternal = onDownloadInternal,
+            onRetryInternal = onRetryInternal,
+            internalBusy = internalBusy,
+            onShareInternal = onShareInternal
         )
 
         ScannerPhase.Error -> ErrorPane(
@@ -231,25 +266,31 @@ private fun SuccessPane(
     onStartNewScan: () -> Unit,
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
-    onSaveJson: () -> Unit
+    onSaveJson: () -> Unit,
+    onDownloadJni: () -> Unit,
+    onDownloadInternal: () -> Unit,
+    onRetryInternal: () -> Unit,
+    internalBusy: Boolean,
+    onShareInternal: (() -> Unit)?
 ) {
     val result = state.result ?: return
-    // When the pane owns the full height, the summary stays pinned and the list
-    // scrolls in whatever space is left. Otherwise the pane is content-sized and
-    // the list scrolls within the height its parent already bounds.
-    Column(modifier = if (fillHeight) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
-        ResultsPanel(result = result)
-        Spacer(Modifier.height(PanelGap))
-        ResultsScreen(
-            result = result,
-            fillHeight = fillHeight,
-            onCopyJson = onCopyJson,
-            onShareJson = onShareJson,
-            onSaveJson = onSaveJson,
-            onStartNewScan = onStartNewScan,
-            modifier = if (fillHeight) Modifier.weight(1f) else Modifier
-        )
-    }
+    // One scroll container: the summary is the first item of the list and the
+    // offset rows follow. The export buttons are outside the list, so they stay
+    // pinned no matter how long the list grows.
+    ResultsScreen(
+        result = result,
+        fillHeight = fillHeight,
+        header = { ResultsPanel(result = result) },
+        onCopyJson = onCopyJson,
+        onShareJson = onShareJson,
+        onSaveJson = onSaveJson,
+        onStartNewScan = onStartNewScan,
+        onDownloadJni = onDownloadJni,
+        onDownloadInternal = onDownloadInternal,
+        onRetryInternal = onRetryInternal,
+        internalBusy = internalBusy,
+        onShareInternal = onShareInternal
+    )
 }
 
 @Composable

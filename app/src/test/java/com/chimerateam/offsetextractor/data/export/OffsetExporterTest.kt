@@ -146,16 +146,101 @@ class OffsetExporterTest {
     }
 
     @Test
-    fun theFileNameIsKeyedByBuildId() {
-        assertEquals("offsets_410ac215603eebd7.json", OffsetExporter.fileName(summary))
+    fun theJniFileNameUsesTheVersionFromTheApkName() {
+        assertEquals("JNI_OFFSETS_1.21.50.json", OffsetExporter.jniFileName(summary))
+        assertEquals(
+            "INTERNALCPP_OFFSETS_1.21.50.json",
+            OffsetExporter.internalFileName(summary)
+        )
     }
 
     @Test
-    fun theFileNameFallsBackToTheHashWhenThereIsNoBuildId() {
-        val name = OffsetExporter.fileName(summary.copy(buildId = ""))
+    fun aTwoPartVersionIsJoinedWithDots() {
+        val name = OffsetExporter.jniFileName(
+            summary.copy(displayName = "minecraft-26-66.apk")
+        )
 
-        assertEquals("offsets_0123456789abcdef.json", name)
+        assertEquals("JNI_OFFSETS_26.66.json", name)
+    }
+
+    @Test
+    fun aThreePartVersionIsKept() {
+        val name = OffsetExporter.jniFileName(
+            summary.copy(displayName = "minecraft-1-16-221.apk")
+        )
+
+        assertEquals("JNI_OFFSETS_1.16.221.json", name)
+    }
+
+    @Test
+    fun theManifestVersionIsTheSecondChoice() {
+        val name = OffsetExporter.jniFileName(
+            summary.copy(displayName = "minecraft.apk", apkVersion = "1.20.80")
+        )
+
+        assertEquals("JNI_OFFSETS_1.20.80.json", name)
+    }
+
+    @Test
+    fun theBuildIdIsTheLastResort() {
+        val name = OffsetExporter.jniFileName(
+            summary.copy(displayName = "minecraft.apk", apkVersion = "", buildId = "410ac215603eebd7")
+        )
+
+        assertEquals("JNI_OFFSETS_410ac215.json", name)
+    }
+
+    @Test
+    fun unsafeCharactersAreRemovedFromTheVersion() {
+        val name = OffsetExporter.jniFileName(
+            summary.copy(displayName = "minecraft-26-66 (beta!).apk")
+        )
+
+        assertEquals("JNI_OFFSETS_26.66.json", name)
+        assertFalse(name.contains("("))
+        assertFalse(name.contains("!"))
         assertFalse(name.contains("/"))
+    }
+
+    @Test
+    fun theInternalDocumentStreamsTheTable() {
+        val table = kotlin.io.path.createTempFile("internal", ".ndjson").toFile()
+        table.deleteOnExit()
+        table.writeText(
+            listOf(
+                """{"type":"meta","schemaVersion":1,"kind":"internal_cpp","stats":{}}""",
+                """{"type":"class","class":{"name":"ClientInstance","mangled":"14ClientInstance","bases":[],"vtable":"0x403000","vtableOffset":"0x3000","typeInfo":"0x403080","slotCount":1,"slots":[{"slot":0,"offset":"0x0","address":"0x401000","fileOffset":"0x1000","size":4,"name":"ClientInstance::vfunc_0","kind":"virtual","overrides":false,"inherited":false,"status":"verified"}]}}""",
+                """{"type":"function","function":{"address":"0x401000","fileOffset":"0x1000","size":4,"name":"ClientInstance::vfunc_0","nameSource":"vtable","aliases":[],"kind":"function","status":"verified","prologueKind":"frame_push"}}"""
+            ).joinToString("\n")
+        )
+        val internal = com.chimerateam.offsetextractor.data.native.InternalSummary(
+            classes = 1,
+            vtableSlots = 1,
+            functions = 1,
+            named = 1,
+            path = table.absolutePath
+        )
+        val writer = java.io.StringWriter()
+
+        OffsetExporter.writeInternal(summary.copy(internal = internal), writer)
+
+        val root = JsonParser.parseString(writer.toString()).asJsonObject
+        assertEquals("internal_cpp", root.get("kind").asString)
+        assertEquals(1, root.getAsJsonObject("stats").get("functions").asInt)
+        assertEquals(
+            "0x401000",
+            root.getAsJsonObject("classes")
+                .getAsJsonObject("ClientInstance")
+                .getAsJsonArray("slots")[0].asJsonObject.get("address").asString
+        )
+        assertEquals(
+            "0x401000",
+            root.getAsJsonObject("offsets").get("ClientInstance::vfunc_0").asString
+        )
+        assertEquals(
+            1,
+            root.getAsJsonArray("functions").size()
+        )
     }
 
     @Test

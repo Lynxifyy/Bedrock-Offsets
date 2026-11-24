@@ -1,7 +1,10 @@
 package com.chimerateam.offsetextractor.ui.screens
 
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.chimerateam.offsetextractor.data.native.PatternHit
@@ -103,8 +106,35 @@ class ScannerScreenWideLayoutTest {
         )
 
         composeTestRule.onNodeWithText("Offsets").assertExists()
-        // The target appears in both the summary panel and the results list.
-        composeTestRule.onAllNodesWithText("clientInstance")[0].assertExists()
+        composeTestRule.onNodeWithTag(SEARCH_FIELD_TAG).assertExists()
+        composeTestRule.onNodeWithTag(DOWNLOAD_JNI_TAG).assertExists()
+        composeTestRule.onNodeWithTag(DOWNLOAD_INTERNAL_TAG).assertExists()
+        composeTestRule.onNodeWithTag(RESULTS_LIST_TAG)
+            .performScrollToNode(hasText("clientInstance"))
+        composeTestRule.onNodeWithText("clientInstance").assertExists()
+    }
+
+    @Test
+    @Config(sdk = [34], qualifiers = "w1920dp-h1200dp-land")
+    fun aLandscapeTabletKeepsTheSearchFieldAndBothDownloadsVisible() {
+        renderWide(
+            ScannerUiState(
+                phase = ScannerPhase.Success,
+                progress = 100,
+                progressTask = "Mapping complete",
+                result = summary
+            )
+        )
+
+        composeTestRule.onNodeWithTag(SEARCH_FIELD_TAG).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(DOWNLOAD_JNI_TAG).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(DOWNLOAD_INTERNAL_TAG).assertIsDisplayed()
+        composeTestRule
+            .onNodeWithText("Download JNI_OFFSETS_deadbeef.json")
+            .assertIsDisplayed()
+        composeTestRule
+            .onNodeWithText("Download INTERNALCPP_OFFSETS_deadbeef.json")
+            .assertIsDisplayed()
     }
 
     @Test

@@ -364,5 +364,19 @@
       "name": "Java_com_mojang_minecraftpe_store_NativeStoreListener_onStoreInitialized",
       "pattern": "FF C3 01 D1 FD 7B 05 A9 F4 4F 06 A9 FD 43 01 91 54 D0 3B D5 E0 03 02 AA 69 E0 04 B0"
     }
+  ],
+  "internalPatterns": [
+    {
+      "name": "GameActivity::initializeNativeCode",
+      "pattern": "FD 7B BB A9 FA 67 01 A9 F8 5F 02 A9 F6 57 03 A9 F4 4F 04 A9 FD 03 00 91 F3 03 07 AA F4 03 06 AA",
+      "resolve": "self",
+      "offset": 0
+    },
+    {
+      "name": "SwappyDisplayManager::nOnRefreshPeriodChanged",
+      "pattern": "FF 03 01 D1 FD 7B 02 A9 F3 1B 00 F9 FD 83 00 91 53 D0 3B D5 68 16 40 F9 A8 83 1F F8 E3 13 00 A9",
+      "resolve": "self",
+      "offset": 0
+    }
   ]
 }

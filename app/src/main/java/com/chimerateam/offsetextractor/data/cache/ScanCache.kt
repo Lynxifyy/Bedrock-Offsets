@@ -19,10 +19,14 @@ class ScanCache(private val root: File) {
     /** Directory that receives exported offset documents. */
     val documentDir: File = File(root, "documents")
 
+    /** Directory that receives the streamed internal C++ tables. */
+    val internalDir: File = File(root, "internal")
+
     /** Creates the cache directories, ignoring a failure to do so. */
     fun ensureDirectories() {
         runCatching { libraryDir.mkdirs() }
         runCatching { documentDir.mkdirs() }
+        runCatching { internalDir.mkdirs() }
     }
 
     /**
@@ -95,7 +99,9 @@ class ScanCache(private val root: File) {
 
     /** Total size in bytes of everything in the cache. */
     fun totalSizeBytes(): Long =
-        listFiles(libraryDir).sumOf { it.length() } + listFiles(documentDir).sumOf { it.length() }
+        listFiles(libraryDir).sumOf { it.length() } +
+            listFiles(documentDir).sumOf { it.length() } +
+            listFiles(internalDir).sumOf { it.length() }
 
     /**
      * Deletes every cached artefact.
@@ -111,7 +117,8 @@ class ScanCache(private val root: File) {
     fun clear(): Boolean {
         val librariesCleared = clearDirectory(libraryDir)
         val documentsCleared = clearDirectory(documentDir)
-        return librariesCleared && documentsCleared
+        val internalCleared = clearDirectory(internalDir)
+        return librariesCleared && documentsCleared && internalCleared
     }
 
     private fun listFiles(directory: File): List<File> =

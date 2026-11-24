@@ -12,7 +12,13 @@ enum class OffsetCategory {
     Pattern,
 
     /** An exported dynamic symbol. */
-    Symbol
+    Symbol,
+
+    /** An internal C++ function recovered from the binary. */
+    InternalCpp,
+
+    /** A virtual function slot of an RTTI class. */
+    VirtualSlot
 }
 
 /**

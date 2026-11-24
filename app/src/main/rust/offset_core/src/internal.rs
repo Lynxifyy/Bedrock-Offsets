@@ -1,0 +1,2183 @@
+//! Complete internal C++ extraction: every vtable slot and every function.
+//!
+//! The library is stripped, so most functions have no name in the binary. This
+//! module therefore recovers *addresses* completely and names whatever the
+//! binary still lets it derive:
+//!
+//! * **Pass A** reads every slot of every resolved RTTI vtable through the
+//!   relocation table, and parses the `type_info` object for base classes.
+//! * **Pass B** parses `.eh_frame` (and `.eh_frame_hdr`) into the authoritative
+//!   function list, falling back to a prologue walk when the tables are absent.
+//! * **Pass C** merges symbols, JNI exports, vtable slots, signatures and string
+//!   anchors into one address-keyed table, choosing the best name per address.
+//! * **Pass D** applies hand-maintained internal signatures with wildcard
+//!   support and the `self`/`bl_target`/`adrp_add`/`prologue_back` resolvers.
+//! * **Pass E** resolves `.rodata` string anchors through `ADRP`+`ADD`/`LDR`
+//!   cross-references.
+//!
+//! Results are streamed as NDJSON so a table of several hundred thousand
+//! functions never has to be materialised as one JSON string.
+
+use std::collections::{BTreeSet, HashMap};
+use std::io::Write;
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{CoreError, CoreResult};
+use crate::patterns::PatternSet;
+use crate::prologue::{PrologueKind, PrologueVerifier};
+use crate::rtti::{read_u64, RelocationIndex, VtableMap};
+use crate::scanner::{scan_section_releasing_pages, PageReleaser, ProgressSink, ScanControl};
+use crate::sections::{SectionMap, RODATA_SECTION, TEXT_SECTION};
+use crate::symbols::{find_symbol_address, NamedSymbol};
+
+/// Hard sanity limit on the slots read for one class.
+pub const MAX_SLOTS_PER_CLASS: usize = 4096;
+
+/// Bytes sampled from a function when auto-generating a signature.
+pub const MAX_SIGNATURE_BYTES: usize = 48;
+
+/// Default cap on auto-generated signatures.
+pub const DEFAULT_MAX_SIGNATURES: usize = 256;
+
+/// Number of bytes before a vtable's first function pointer.
+const VTABLE_PREFIX_BYTES: u64 = 16;
+
+/// Signature-generation options and the hand-maintained packs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct InternalOptions {
+    /// Whether to enumerate every function from `.eh_frame`.
+    pub include_all_functions: bool,
+    /// Whether to generate and verify a signature per named function.
+    pub generate_signatures: bool,
+    /// Hard cap on slots read for one class.
+    pub max_slots_per_class: usize,
+    /// Cap on auto-generated signatures.
+    pub max_signatures: usize,
+    /// Hand-maintained internal signatures.
+    pub internal_patterns: Vec<InternalPattern>,
+    /// `.rodata` string anchors.
+    pub string_anchors: Vec<StringAnchor>,
+}
+
+impl Default for InternalOptions {
+    fn default() -> Self {
+        Self {
+            include_all_functions: true,
+            generate_signatures: true,
+            max_slots_per_class: MAX_SLOTS_PER_CLASS,
+            max_signatures: DEFAULT_MAX_SIGNATURES,
+            internal_patterns: Vec::new(),
+            string_anchors: Vec::new(),
+        }
+    }
+}
+
+/// One hand-maintained internal signature.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InternalPattern {
+    /// Name reported for the resolved address.
+    pub name: String,
+    /// Space-separated hex bytes with `??` wildcards.
+    pub pattern: String,
+    /// How the match is turned into an address.
+    #[serde(default = "default_resolve")]
+    pub resolve: String,
+    /// Byte adjustment applied to a `self` match.
+    #[serde(default)]
+    pub offset: i64,
+}
+
+/// One `.rodata` string anchor.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StringAnchor {
+    /// Name reported for the enclosing function.
+    pub name: String,
+    /// Unique string whose address the function materialises.
+    pub string: String,
+}
+
+fn default_resolve() -> String {
+    "self".to_string()
+}
+
+/// Counts and the path of the streamed table.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InternalSummary {
+    /// Number of RTTI classes.
+    pub classes: usize,
+    /// Number of virtual slots across every class.
+    pub vtable_slots: usize,
+    /// Number of functions in the table.
+    pub functions: usize,
+    /// Functions with a derived name.
+    pub named: usize,
+    /// Functions named `sub_<hex>`.
+    pub auto_named: usize,
+    /// Functions confirmed by a second source.
+    pub verified: usize,
+    /// Signatures or anchors with more than one candidate.
+    pub ambiguous: usize,
+    /// Signatures or anchors with no candidate.
+    pub not_found: usize,
+    /// Auto-generated signatures.
+    pub signatures: usize,
+    /// Whether the signature cap truncated generation.
+    pub truncated_signatures: bool,
+    /// Absolute path of the NDJSON table, filled in by the JNI layer.
+    pub path: String,
+}
+
+/// One virtual slot.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotRecord {
+    /// Slot index.
+    pub slot: usize,
+    /// Byte offset of the slot from the first function pointer.
+    #[serde(serialize_with = "hex_u64")]
+    pub offset: u64,
+    /// Virtual address of the function.
+    #[serde(serialize_with = "hex_u64")]
+    pub address: u64,
+    /// File offset of the function.
+    #[serde(serialize_with = "hex_u64")]
+    pub file_offset: u64,
+    /// Function size when known.
+    pub size: u64,
+    /// Slot name.
+    pub name: String,
+    /// `virtual`, `pure_virtual`, or `thunk`.
+    pub kind: String,
+    /// Whether the slot differs from the first base's slot.
+    pub overrides: bool,
+    /// Whether the slot is identical to the first base's slot.
+    pub inherited: bool,
+    /// Verification status.
+    pub status: String,
+    /// Auto-generated signature, when one was produced.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Whether the signature matched exactly once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_unique: Option<bool>,
+}
+
+/// One RTTI class and its slots.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassRecord {
+    /// Demangled class name.
+    pub name: String,
+    /// Mangled name.
+    pub mangled: String,
+    /// Base classes, most-derived first.
+    pub bases: Vec<String>,
+    /// Virtual address of the vtable header.
+    #[serde(serialize_with = "hex_u64")]
+    pub vtable: u64,
+    /// Offset of the vtable from the image base.
+    #[serde(serialize_with = "hex_u64")]
+    pub vtable_offset: u64,
+    /// Virtual address of the `type_info` object.
+    #[serde(serialize_with = "hex_u64")]
+    pub type_info: u64,
+    /// Number of slots.
+    pub slot_count: usize,
+    /// The slots themselves.
+    pub slots: Vec<SlotRecord>,
+}
+
+/// One function in the merged table.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionRecord {
+    /// Virtual address.
+    #[serde(serialize_with = "hex_u64")]
+    pub address: u64,
+    /// File offset.
+    #[serde(serialize_with = "hex_u64")]
+    pub file_offset: u64,
+    /// Size in bytes.
+    pub size: u64,
+    /// Best name.
+    pub name: String,
+    /// Where the name came from.
+    pub name_source: String,
+    /// Other names for the same address.
+    pub aliases: Vec<String>,
+    /// `function`, `thunk`, or `pure_virtual`.
+    pub kind: String,
+    /// Verification status.
+    pub status: String,
+    /// Which prologue form was recognised, or `leaf`/`none`.
+    pub prologue_kind: String,
+    /// Mangled name when the best name is demangled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mangled: Option<String>,
+    /// Tail-call target for a thunk.
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "hex_option")]
+    pub target: Option<u64>,
+    /// Auto-generated signature.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Whether the signature matched exactly once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_unique: Option<bool>,
+}
+
+/// A named address and its provenance.
+#[derive(Debug, Clone)]
+struct NamedEntry {
+    name: String,
+    source: &'static str,
+    aliases: Vec<String>,
+    kind: &'static str,
+    mangled: Option<String>,
+    status: Option<&'static str>,
+}
+
+/// Slots of one class, kept until inheritance flags can be compared.
+struct ClassSlots {
+    record: ClassRecord,
+    addresses: Vec<u64>,
+}
+
+/// Reads every slot of every vtable and every function the binary exposes.
+///
+/// # Errors
+///
+/// Returns [`CoreError::Cancelled`] when `control` is cancelled, and any ELF or
+/// I/O failure from the individual passes.
+#[allow(clippy::too_many_arguments)]
+pub fn analyze(
+    image: &[u8],
+    map: &SectionMap,
+    vtables: &VtableMap,
+    named_symbols: &[NamedSymbol],
+    options: &InternalOptions,
+    control: &ScanControl,
+    sink: Option<&dyn ProgressSink>,
+    releaser: Option<&dyn PageReleaser>,
+    out: &mut dyn Write,
+) -> CoreResult<InternalSummary> {
+    report(sink, 0, "Pass A: reading vtable slots");
+    let relocation = RelocationIndex::build(image)?;
+    let pure_virtual = find_symbol_address(image, "__cxa_pure_virtual");
+    let mut classes = collect_class_slots(
+        map,
+        image,
+        vtables,
+        &relocation,
+        pure_virtual,
+        options.max_slots_per_class,
+        control,
+    )?;
+
+    report(sink, 15, "Pass A: resolving base classes");
+    let bases = resolve_bases(map, image, &relocation, vtables);
+    apply_inheritance(&mut classes, &bases);
+
+    check_cancelled(control)?;
+    report(sink, 30, "Pass B: reading .eh_frame");
+    let (mut functions, function_source) = if options.include_all_functions {
+        collect_functions(map, image, control)?
+    } else {
+        (Vec::new(), "prologue_scan")
+    };
+    // `.eh_frame` records are not guaranteed to be in address order. Sorting
+    // here makes every later pass (signature scan, merge, write) walk `.text`
+    // from low to high, which is what lets the page releaser actually drop the
+    // pages behind the cursor instead of re-faulting the whole library.
+    functions.sort_unstable_by_key(|(address, _)| *address);
+    report(
+        sink,
+        45,
+        &format!("Pass B: {} functions ({function_source})", functions.len()),
+    );
+
+    check_cancelled(control)?;
+    report(sink, 50, "Pass C: merging names");
+    let mut names: HashMap<u64, NamedEntry> = HashMap::new();
+    insert_symbol_names(&mut names, named_symbols);
+    insert_slot_names(&mut names, &classes);
+
+    check_cancelled(control)?;
+    report(sink, 60, "Pass D/E: internal signatures and string anchors");
+    let mut ambiguous = 0usize;
+    let mut not_found = 0usize;
+    apply_internal_patterns(
+        map,
+        image,
+        options,
+        control,
+        sink,
+        releaser,
+        &functions,
+        &mut names,
+        &mut ambiguous,
+        &mut not_found,
+    )?;
+    apply_string_anchors(
+        map,
+        image,
+        options,
+        &functions,
+        &mut names,
+        &mut ambiguous,
+        &mut not_found,
+        releaser,
+    );
+
+    check_cancelled(control)?;
+    if let Some(releaser) = releaser {
+        // Pass D/E walked `.text` and the vtable pass touched `.data.rel.ro`.
+        // Drop everything before the signature pass faults it back in, so the
+        // two scans do not stack their resident pages.
+        releaser.release(0, usize::MAX);
+    }
+    report(sink, 80, "Signatures: generating");
+    let (signatures, truncated_signatures) = if options.generate_signatures {
+        generate_signatures(
+            map,
+            image,
+            &names,
+            &functions,
+            options.max_signatures,
+            control,
+            sink,
+            releaser,
+        )?
+    } else {
+        (HashMap::new(), false)
+    };
+
+    check_cancelled(control)?;
+    if let Some(releaser) = releaser {
+        // The signature pass walked the whole `.text`; drop those pages before
+        // the write pass faults them back in one function at a time.
+        releaser.release(0, usize::MAX);
+    }
+    report(sink, 90, "Writing the internal table");
+    let (addresses, suspect) = merge_addresses(&functions, &names);
+    const RELEASE_WINDOW: usize = 4 * 1024 * 1024;
+    let fde_sizes: HashMap<u64, u64> = functions.iter().copied().collect();
+    drop(functions);
+    let verifier = PrologueVerifier::new()?;
+
+    let mut stats = InternalSummary {
+        classes: classes.len(),
+        vtable_slots: classes.iter().map(|class| class.record.slot_count).sum(),
+        functions: addresses.len(),
+        named: 0,
+        auto_named: 0,
+        verified: 0,
+        ambiguous,
+        not_found,
+        signatures: signatures.len(),
+        truncated_signatures,
+        path: String::new(),
+    };
+
+    writeln!(
+        out,
+        "{}",
+        serde_json::json!({
+            "type": "meta",
+            "schemaVersion": 1,
+            "kind": "internal_cpp",
+            "stats": stats,
+        })
+    )?;
+
+    for class in &classes {
+        let mut record = class.record.clone();
+        for (index, slot) in record.slots.iter_mut().enumerate() {
+            if let Some((signature, unique)) = signatures.get(&class.addresses[index]) {
+                slot.signature = Some(signature.clone());
+                slot.signature_unique = Some(*unique);
+            }
+        }
+        writeln!(
+            out,
+            "{}",
+            serde_json::json!({ "type": "class", "class": record })
+        )?;
+    }
+
+    // The function loop walks `.text` from low to high, so pages behind the
+    // current address are never read again. Hand them back as the loop
+    // advances; otherwise a 340 MB library stays resident for the whole write.
+    let mut released_to = 0usize;
+    for address in &addresses {
+        let entry = names.get(address);
+        let size = fde_sizes.get(address).copied().unwrap_or_else(|| {
+            entry
+                .and_then(|entry| named_size(named_symbols, *address, &entry.name))
+                .unwrap_or(0)
+        });
+        let file_offset = file_offset_of(map, *address).unwrap_or(0);
+        if let Some(releaser) = releaser {
+            let current = file_offset as usize;
+            if current > released_to + RELEASE_WINDOW {
+                let end = current.saturating_sub(RELEASE_WINDOW / 2);
+                releaser.release(released_to, end);
+                released_to = end;
+            }
+        }
+        let (prologue_kind, thunk_target) = classify_function(map, image, *address, &verifier);
+        let from_fde = fde_sizes.contains_key(address);
+
+        let (name, source, aliases, kind, mangled, status) = match entry {
+            Some(entry) => {
+                let status = entry.status.unwrap_or_else(|| {
+                    if entry.source != "auto" && (from_fde || prologue_kind != "none") {
+                        "verified"
+                    } else if from_fde {
+                        "fde_only"
+                    } else {
+                        "suspect"
+                    }
+                });
+                (
+                    entry.name.clone(),
+                    entry.source,
+                    entry.aliases.clone(),
+                    entry.kind,
+                    entry.mangled.clone(),
+                    status,
+                )
+            }
+            None => (
+                format!("sub_{:x}", address.saturating_sub(map.image_base)),
+                "auto",
+                Vec::new(),
+                "function",
+                None,
+                if from_fde { "fde_only" } else { "suspect" },
+            ),
+        };
+        let status = if suspect.contains(address) {
+            "suspect"
+        } else {
+            status
+        };
+        if source == "auto" {
+            stats.auto_named += 1;
+        } else {
+            stats.named += 1;
+        }
+        if status == "verified" {
+            stats.verified += 1;
+        }
+        if status == "ambiguous" {
+            stats.ambiguous += 1;
+        }
+
+        let (signature, signature_unique) = signatures
+            .get(address)
+            .map(|(signature, unique)| (Some(signature.clone()), Some(*unique)))
+            .unwrap_or((None, None));
+
+        let kind = if thunk_target.is_some() {
+            "thunk"
+        } else {
+            kind
+        };
+        let record = FunctionRecord {
+            address: *address,
+            file_offset,
+            size,
+            name,
+            name_source: source.to_string(),
+            aliases,
+            kind: kind.to_string(),
+            status: status.to_string(),
+            prologue_kind,
+            mangled,
+            target: thunk_target,
+            signature,
+            signature_unique,
+        };
+        writeln!(
+            out,
+            "{}",
+            serde_json::json!({ "type": "function", "function": record })
+        )?;
+    }
+
+    if let Some(releaser) = releaser {
+        // Nothing after this point reads the library, so release every page
+        // the passes faulted in before reporting the peak.
+        releaser.release(0, usize::MAX);
+    }
+    stats.named = stats.named.min(stats.functions);
+    if let Some(peak) = peak_resident_mb() {
+        report(
+            sink,
+            100,
+            &format!("Internal extraction complete, peak resident {peak} MB"),
+        );
+    } else {
+        report(sink, 100, "Internal extraction complete");
+    }
+    Ok(stats)
+}
+
+/// Reports progress to an optional sink.
+fn report(sink: Option<&dyn ProgressSink>, percent: u32, message: &str) {
+    let rss = current_resident_mb()
+        .map(|mb| format!(" [rss {mb} MB]"))
+        .unwrap_or_default();
+    log::info!("internal {percent}%: {message}{rss}");
+    if let Some(sink) = sink {
+        sink.report(percent, &format!("{message}{rss}"));
+    }
+}
+
+/// Current resident set size of the process, in MiB.
+fn current_resident_mb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+    let kilobytes: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kilobytes / 1024)
+}
+
+/// Returns [`CoreError::Cancelled`] when the user has cancelled.
+fn check_cancelled(control: &ScanControl) -> CoreResult<()> {
+    if control.is_cancelled() {
+        return Err(CoreError::Cancelled);
+    }
+    Ok(())
+}
+
+/// Reads every slot of every vtable.
+fn collect_class_slots(
+    map: &SectionMap,
+    image: &[u8],
+    vtables: &VtableMap,
+    relocation: &RelocationIndex,
+    pure_virtual: Option<u64>,
+    max_slots: usize,
+    control: &ScanControl,
+) -> CoreResult<Vec<ClassSlots>> {
+    let limit = max_slots.min(MAX_SLOTS_PER_CLASS);
+    let mut ordered: Vec<_> = vtables.entries.values().collect();
+    ordered.sort_by_key(|vtable| vtable.vtable_address);
+
+    let mut classes = Vec::with_capacity(ordered.len());
+    for (index, vtable) in ordered.iter().enumerate() {
+        check_cancelled(control)?;
+        let next_header = ordered.get(index + 1).map(|next| next.vtable_address);
+        let first_slot = vtable.vtable_address + VTABLE_PREFIX_BYTES;
+        let mut addresses = Vec::new();
+        for slot in 0..limit {
+            let slot_address = first_slot + (slot as u64) * 8;
+            if let Some(next) = next_header {
+                if slot_address >= next {
+                    break;
+                }
+            }
+            let Some(raw) = read_at(map, image, slot_address) else {
+                break;
+            };
+            let target = relocation.target_of(slot_address).unwrap_or(raw);
+            if target == 0 || !is_executable(map, target) {
+                break;
+            }
+            addresses.push(target);
+        }
+
+        let mut names = Vec::with_capacity(addresses.len());
+        let mut kinds = Vec::with_capacity(addresses.len());
+        let destructor_pair = addresses.len() >= 2
+            && (addresses[0] == addresses[1]
+                || is_thunk_to(map, image, addresses[1], addresses[0]));
+        for (slot, address) in addresses.iter().enumerate() {
+            let (name, kind) = if destructor_pair && slot == 0 {
+                (format!("{}::~{}", vtable.name, vtable.name), "virtual")
+            } else if destructor_pair && slot == 1 {
+                (
+                    format!("{}::~{}_deleting", vtable.name, vtable.name),
+                    "virtual",
+                )
+            } else {
+                (format!("{}::vfunc_{slot}", vtable.name), "virtual")
+            };
+            let kind = if pure_virtual == Some(*address) {
+                "pure_virtual"
+            } else {
+                kind
+            };
+            names.push(name);
+            kinds.push(kind);
+        }
+
+        let slots: Vec<SlotRecord> = addresses
+            .iter()
+            .enumerate()
+            .map(|(slot, address)| SlotRecord {
+                slot,
+                offset: (slot as u64) * 8,
+                address: *address,
+                file_offset: file_offset_of(map, *address).unwrap_or(0),
+                size: 0,
+                name: names[slot].clone(),
+                kind: kinds[slot].to_string(),
+                overrides: false,
+                inherited: false,
+                status: "verified".to_string(),
+                signature: None,
+                signature_unique: None,
+            })
+            .collect();
+
+        classes.push(ClassSlots {
+            record: ClassRecord {
+                name: vtable.name.clone(),
+                mangled: vtable.mangled.clone(),
+                bases: Vec::new(),
+                vtable: vtable.vtable_address,
+                vtable_offset: vtable.vtable_offset,
+                type_info: vtable.type_info_address,
+                slot_count: slots.len(),
+                slots,
+            },
+            addresses,
+        });
+    }
+    Ok(classes)
+}
+
+/// Reads the `type_info` inheritance chain for every resolved class.
+fn resolve_bases(
+    map: &SectionMap,
+    image: &[u8],
+    relocation: &RelocationIndex,
+    vtables: &VtableMap,
+) -> HashMap<String, Vec<String>> {
+    let type_info_to_name: HashMap<u64, String> = vtables
+        .entries
+        .values()
+        .map(|vtable| (vtable.type_info_address, vtable.name.clone()))
+        .collect();
+    let mut bases = HashMap::new();
+    for vtable in vtables.entries.values() {
+        let mut found = Vec::new();
+        // Single-inheritance (`__si_class_type_info`) has one base pointer at
+        // type_info + 16.
+        if let Some(pointer) = read_pointer(map, image, relocation, vtable.type_info_address + 16) {
+            if let Some(name) = type_info_to_name.get(&pointer) {
+                if name != &vtable.name {
+                    found.push(name.clone());
+                }
+            }
+        }
+        // Virtual/multiple inheritance (`__vmi_class_type_info`) stores a count
+        // and then 16-byte (base, offset/flags) pairs.
+        if found.is_empty() {
+            if let Some(count_raw) = read_at(map, image, vtable.type_info_address + 20) {
+                let count = (count_raw & 0xffff_ffff) as usize;
+                if count > 0 && count < 256 {
+                    for index in 0..count {
+                        let at = vtable.type_info_address + 24 + (index as u64) * 16;
+                        if let Some(pointer) = read_pointer(map, image, relocation, at) {
+                            if let Some(name) = type_info_to_name.get(&pointer) {
+                                if name != &vtable.name && !found.contains(name) {
+                                    found.push(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        bases.insert(vtable.name.clone(), found);
+    }
+    bases
+}
+
+/// Fills the `overrides`/`inherited` flags against the first base class.
+fn apply_inheritance(classes: &mut [ClassSlots], bases: &HashMap<String, Vec<String>>) {
+    let by_name: HashMap<String, Vec<u64>> = classes
+        .iter()
+        .map(|class| (class.record.name.clone(), class.addresses.clone()))
+        .collect();
+    for class in classes.iter_mut() {
+        let Some(first_base) = bases
+            .get(&class.record.name)
+            .and_then(|list| list.first())
+            .cloned()
+        else {
+            continue;
+        };
+        class.record.bases = bases.get(&class.record.name).cloned().unwrap_or_default();
+        let Some(base_slots) = by_name.get(&first_base) else {
+            continue;
+        };
+        for (index, slot) in class.record.slots.iter_mut().enumerate() {
+            if let Some(base_address) = base_slots.get(index) {
+                let same = *base_address == class.addresses[index];
+                slot.inherited = same;
+                slot.overrides = !same;
+            }
+        }
+    }
+}
+
+/// Inserts the exported symbol names into the table.
+fn insert_symbol_names(names: &mut HashMap<u64, NamedEntry>, symbols: &[NamedSymbol]) {
+    for symbol in symbols {
+        let source = if symbol.name.starts_with("Java_") {
+            "jni"
+        } else {
+            "symbol"
+        };
+        insert_name(
+            names,
+            symbol.address,
+            symbol.name.clone(),
+            source,
+            "function",
+            Some(symbol.mangled.clone()),
+            None,
+        );
+    }
+}
+
+/// Inserts every vtable slot name into the table.
+fn insert_slot_names(names: &mut HashMap<u64, NamedEntry>, classes: &[ClassSlots]) {
+    for class in classes {
+        for slot in &class.record.slots {
+            insert_name(
+                names,
+                slot.address,
+                slot.name.clone(),
+                "vtable",
+                if slot.kind == "pure_virtual" {
+                    "pure_virtual"
+                } else {
+                    "function"
+                },
+                None,
+                None,
+            );
+        }
+    }
+}
+
+/// Adds a name, keeping the highest-priority one and recording the rest.
+fn insert_name(
+    names: &mut HashMap<u64, NamedEntry>,
+    address: u64,
+    name: String,
+    source: &'static str,
+    kind: &'static str,
+    mangled: Option<String>,
+    status: Option<&'static str>,
+) {
+    if address == 0 {
+        return;
+    }
+    match names.get_mut(&address) {
+        Some(existing) => {
+            if rank(source) < rank(existing.source) {
+                if existing.name != name {
+                    existing.aliases.push(existing.name.clone());
+                }
+                existing.name = name;
+                existing.source = source;
+                existing.kind = kind;
+                existing.mangled = mangled;
+                existing.status = status;
+            } else if existing.name != name && !existing.aliases.contains(&name) {
+                existing.aliases.push(name);
+            }
+        }
+        None => {
+            names.insert(
+                address,
+                NamedEntry {
+                    name,
+                    source,
+                    aliases: Vec::new(),
+                    kind,
+                    mangled,
+                    status,
+                },
+            );
+        }
+    }
+}
+
+/// Priority of a name source; lower is better.
+fn rank(source: &str) -> u8 {
+    match source {
+        "symbol" => 1,
+        "jni" => 2,
+        "vtable" => 3,
+        "signature" => 4,
+        "string" => 5,
+        _ => 6,
+    }
+}
+
+/// Applies the hand-maintained internal signatures.
+#[allow(clippy::too_many_arguments)]
+fn apply_internal_patterns(
+    map: &SectionMap,
+    image: &[u8],
+    options: &InternalOptions,
+    control: &ScanControl,
+    sink: Option<&dyn ProgressSink>,
+    releaser: Option<&dyn PageReleaser>,
+    functions: &[(u64, u64)],
+    names: &mut HashMap<u64, NamedEntry>,
+    ambiguous: &mut usize,
+    not_found: &mut usize,
+) -> CoreResult<()> {
+    if options.internal_patterns.is_empty() {
+        return Ok(());
+    }
+    let specs: Vec<(String, String)> = options
+        .internal_patterns
+        .iter()
+        .map(|pattern| (pattern.name.clone(), pattern.pattern.clone()))
+        .collect();
+    let set = PatternSet::new(&specs)?;
+    let outcome = scan_section_releasing_pages(map, image, &set, control, sink, releaser)?;
+
+    for pattern in &options.internal_patterns {
+        check_cancelled(control)?;
+        let hits: Vec<_> = outcome
+            .hits
+            .iter()
+            .filter(|hit| hit.name == pattern.name)
+            .collect();
+        let mut resolved = Vec::new();
+        for hit in &hits {
+            if let Some(address) =
+                resolve_pattern_hit(image, hit, &pattern.resolve, pattern.offset, functions)
+            {
+                resolved.push(address);
+            }
+        }
+        resolved.sort_unstable();
+        resolved.dedup();
+        match resolved.len() {
+            0 => *not_found += 1,
+            1 => insert_name(
+                names,
+                resolved[0],
+                pattern.name.clone(),
+                "signature",
+                "function",
+                None,
+                None,
+            ),
+            _ => {
+                *ambiguous += 1;
+                for address in resolved {
+                    insert_name(
+                        names,
+                        address,
+                        pattern.name.clone(),
+                        "signature",
+                        "function",
+                        None,
+                        Some("ambiguous"),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Turns a pattern hit into the address its `resolve` mode selects.
+fn resolve_pattern_hit(
+    image: &[u8],
+    hit: &crate::scanner::PatternHit,
+    resolve: &str,
+    offset: i64,
+    functions: &[(u64, u64)],
+) -> Option<u64> {
+    match resolve {
+        "bl_target" => bl_target(image, hit.file_offset),
+        "adrp_add" => adrp_add_target(image, hit.file_offset, hit.address),
+        "prologue_back" => enclosing_function(functions, hit.address).map(|(start, _)| start),
+        _ => Some((hit.address as i64 + offset).max(0) as u64),
+    }
+}
+
+/// Decodes the first `BL` in the bytes at `file_offset` and returns its target.
+fn bl_target(image: &[u8], file_offset: u64) -> Option<u64> {
+    let start = file_offset as usize;
+    for index in 0..4 {
+        let at = start + index * 4;
+        let bytes = image.get(at..at + 4)?;
+        let word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        if word & 0xFC00_0000 == 0x9400_0000 {
+            let immediate = sign_extend((word & 0x03FF_FFFF) as i64, 26) << 2;
+            return Some((at as i64 + immediate) as u64);
+        }
+    }
+    None
+}
+
+/// Decodes an `ADRP`+`ADD` pair at `file_offset` and returns the global address.
+fn adrp_add_target(image: &[u8], file_offset: u64, address: u64) -> Option<u64> {
+    let at = file_offset as usize;
+    let first = image.get(at..at + 4)?;
+    let second = image.get(at + 4..at + 8)?;
+    let adrp = u32::from_le_bytes([first[0], first[1], first[2], first[3]]);
+    let add = u32::from_le_bytes([second[0], second[1], second[2], second[3]]);
+    if adrp & 0x9F00_0000 != 0x9000_0000 || add & 0xFF80_0000 != 0x9100_0000 {
+        return None;
+    }
+    let page = adrp_page(address, adrp);
+    let immediate = ((add >> 10) & 0xFFF) as u64;
+    let shift = ((add >> 22) & 0x3) as u64;
+    Some(page.wrapping_add(immediate << (12 * shift)))
+}
+
+/// Computes the page an `ADRP` instruction materialises.
+fn adrp_page(pc: u64, word: u32) -> u64 {
+    let immhi = ((word >> 5) & 0x7_FFFF) as i64;
+    let immlo = ((word >> 29) & 0x3) as i64;
+    let immediate = sign_extend((immhi << 2) | immlo, 21) << 12;
+    ((pc as i64 & !0xFFF).wrapping_add(immediate)) as u64
+}
+
+/// Applies the `.rodata` string anchors.
+#[allow(clippy::too_many_arguments)]
+fn apply_string_anchors(
+    map: &SectionMap,
+    image: &[u8],
+    options: &InternalOptions,
+    functions: &[(u64, u64)],
+    names: &mut HashMap<u64, NamedEntry>,
+    ambiguous: &mut usize,
+    not_found: &mut usize,
+    releaser: Option<&dyn PageReleaser>,
+) {
+    if options.string_anchors.is_empty() {
+        return;
+    }
+    let rodata = map.find(RODATA_SECTION);
+    for anchor in &options.string_anchors {
+        let Some(section) = rodata else {
+            *not_found += 1;
+            continue;
+        };
+        let bytes = map.bytes_of(&section.name, image);
+        let needle = anchor.string.as_bytes();
+        if needle.is_empty() {
+            *not_found += 1;
+            continue;
+        }
+        let mut occurrences = BTreeSet::new();
+        for (index, window) in bytes.windows(needle.len()).enumerate() {
+            if window == needle {
+                occurrences.insert(section.address + index as u64);
+            }
+        }
+        if occurrences.is_empty() {
+            *not_found += 1;
+            continue;
+        }
+        let mut references = BTreeSet::new();
+        find_string_xrefs(map, image, &occurrences, &mut references, releaser);
+        let mut targets: BTreeSet<u64> = BTreeSet::new();
+        for reference in references {
+            if let Some((start, _)) = enclosing_function(functions, reference) {
+                targets.insert(start);
+            }
+        }
+        match targets.len() {
+            0 => *not_found += 1,
+            1 => insert_name(
+                names,
+                *targets.iter().next().expect("one target"),
+                anchor.name.clone(),
+                "string",
+                "function",
+                None,
+                None,
+            ),
+            _ => {
+                *ambiguous += 1;
+                for address in targets {
+                    insert_name(
+                        names,
+                        address,
+                        anchor.name.clone(),
+                        "string",
+                        "function",
+                        None,
+                        Some("ambiguous"),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Finds every `ADRP`+`ADD`/`LDR` pair that materialises one of `occurrences`.
+fn find_string_xrefs(
+    map: &SectionMap,
+    image: &[u8],
+    occurrences: &BTreeSet<u64>,
+    out: &mut BTreeSet<u64>,
+    releaser: Option<&dyn PageReleaser>,
+) {
+    const RELEASE_EVERY: usize = 4 * 1024 * 1024;
+    let text = map.bytes_of(TEXT_SECTION, image);
+    let mut adrp: [Option<(u64, u64)>; 32] = [None; 32];
+    for (index, chunk) in text.as_chunks::<4>().0.iter().enumerate() {
+        let pc = map.text.address + (index as u64) * 4;
+        if let Some(releaser) = releaser {
+            if index % RELEASE_EVERY == 0 && index > 0 {
+                let current = map.text.offset as usize + index * 4;
+                releaser.release(current.saturating_sub(RELEASE_EVERY * 4), current);
+            }
+        }
+        let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        if word & 0x9F00_0000 == 0x9000_0000 {
+            let destination = (word & 31) as usize;
+            adrp[destination] = Some((pc, adrp_page(pc, word)));
+        } else if word & 0xFF80_0000 == 0x9100_0000 {
+            let source = ((word >> 5) & 31) as usize;
+            let destination = (word & 31) as usize;
+            if let Some((adrp_pc, page)) = adrp[source] {
+                if pc.saturating_sub(adrp_pc) <= 16 {
+                    let immediate = ((word >> 10) & 0xFFF) as u64;
+                    let shift = ((word >> 22) & 0x3) as u64;
+                    let target = page.wrapping_add(immediate << (12 * shift));
+                    if occurrences.contains(&target) {
+                        out.insert(pc);
+                    }
+                    adrp[destination] = Some((pc, page));
+                }
+            }
+        } else if word & 0xFFC0_0000 == 0xF940_0000 {
+            let source = ((word >> 5) & 31) as usize;
+            if let Some((adrp_pc, page)) = adrp[source] {
+                if pc.saturating_sub(adrp_pc) <= 16 {
+                    let immediate = ((word >> 10) & 0xFFF) as u64;
+                    let target = page.wrapping_add(immediate * 8);
+                    if occurrences.contains(&target) {
+                        out.insert(pc);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Generates a wildcarded signature per named function and checks uniqueness.
+type SignatureMap = HashMap<u64, (String, bool)>;
+
+#[allow(clippy::too_many_arguments)]
+fn generate_signatures(
+    map: &SectionMap,
+    image: &[u8],
+    names: &HashMap<u64, NamedEntry>,
+    functions: &[(u64, u64)],
+    max_signatures: usize,
+    control: &ScanControl,
+    sink: Option<&dyn ProgressSink>,
+    releaser: Option<&dyn PageReleaser>,
+) -> CoreResult<(SignatureMap, bool)> {
+    let text = map.bytes_of(TEXT_SECTION, image);
+    if text.is_empty() {
+        return Ok((HashMap::new(), false));
+    }
+    let mut addresses: Vec<u64> = names
+        .iter()
+        .filter(|(_, entry)| entry.source != "auto")
+        .map(|(address, _)| *address)
+        .collect();
+    addresses.sort_unstable();
+    let limit = max_signatures.min(DEFAULT_MAX_SIGNATURES);
+    let truncated = addresses.len() > limit;
+    addresses.truncate(limit);
+
+    let mut specs: Vec<(u64, String)> = Vec::new();
+    for address in addresses {
+        if control.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        let Some(file_offset) = file_offset_of(map, address) else {
+            continue;
+        };
+        let Some(pattern) = wildcard_signature(map, image, file_offset) else {
+            continue;
+        };
+        // A signature whose longest fixed run is tiny matches thousands of
+        // functions; checking it would flood the automaton and can exhaust the
+        // process on a 340 MB library. Such a signature cannot be unique in
+        // practice, so it is not emitted.
+        let Ok(compiled) = crate::patterns::compile(&address.to_string(), &pattern) else {
+            continue;
+        };
+        if compiled.longest_literal_run() < MIN_SIGNATURE_RUN {
+            continue;
+        }
+        specs.push((address, pattern));
+    }
+    if specs.is_empty() {
+        return Ok((HashMap::new(), truncated));
+    }
+
+    let compiled: Vec<(String, String)> = specs
+        .iter()
+        .enumerate()
+        .map(|(index, (_, pattern))| (index.to_string(), pattern.clone()))
+        .collect();
+    report(
+        sink,
+        81,
+        &format!("Signatures: {} candidates, building matcher", specs.len()),
+    );
+    let set = PatternSet::new(&compiled)?;
+    report(
+        sink,
+        82,
+        "Signatures: matcher built, scanning function starts",
+    );
+
+    let mut counts = vec![0u8; specs.len()];
+    // Uniqueness is measured against function starts, not every byte: a
+    // signature only has to identify a function. Packing one 48-byte prefix per
+    // 64-byte stride keeps the scan around 25 MB for 400k functions instead of
+    // the whole 241 MB `.text`, and it removes the millions of mid-function
+    // false candidates that made the pass crawl on a phone.
+    const STRIDE: usize = 64;
+    const PREFIX: usize = 48;
+    const CHUNK: usize = 4096;
+    let mut buffer: Vec<u8> = Vec::with_capacity(CHUNK * STRIDE);
+    for chunk in functions.chunks(CHUNK) {
+        if control.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        buffer.clear();
+        for (address, _) in chunk {
+            let offset = address.saturating_sub(map.text.address) as usize;
+            let end = (offset + PREFIX).min(text.len());
+            if offset < end {
+                buffer.extend_from_slice(&text[offset..end]);
+            }
+            buffer.resize(buffer.len().next_multiple_of(STRIDE), 0);
+        }
+        set.count_matches_at(&buffer, STRIDE, &mut counts);
+        if let Some(releaser) = releaser {
+            if let (Some((first, _)), Some((last, _))) = (chunk.first(), chunk.last()) {
+                let start = first.saturating_sub(map.text.address) as usize;
+                let end = last
+                    .saturating_sub(map.text.address)
+                    .saturating_add(PREFIX as u64) as usize;
+                releaser.release(
+                    map.text.offset as usize + start,
+                    map.text.offset as usize + end,
+                );
+            }
+        }
+    }
+    report(sink, 85, &format!("Signatures: {} candidates", specs.len()));
+
+    let mut signatures = HashMap::new();
+    for (index, (address, pattern)) in specs.into_iter().enumerate() {
+        let unique = counts.get(index).copied().unwrap_or(0) == 1;
+        signatures.insert(address, (pattern, unique));
+    }
+    Ok((signatures, truncated))
+}
+
+/// Peak resident set size of the process, in MiB, when the OS exposes it.
+fn peak_resident_mb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|line| line.starts_with("VmHWM:"))?;
+    let kilobytes: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kilobytes / 1024)
+}
+
+/// Shortest fixed run a generated signature must contain.
+const MIN_SIGNATURE_RUN: usize = 10;
+
+/// Builds a wildcarded hex signature from the first bytes of a function.
+fn wildcard_signature(map: &SectionMap, image: &[u8], file_offset: u64) -> Option<String> {
+    let text_offset = (file_offset.saturating_sub(map.text.offset)) as usize;
+    let text = map.bytes_of(TEXT_SECTION, image);
+    let available = text.len().saturating_sub(text_offset);
+    if available < 4 {
+        return None;
+    }
+    let length = available.min(MAX_SIGNATURE_BYTES);
+    let bytes = &text[text_offset..text_offset + length];
+    let mut tokens = Vec::with_capacity(length);
+    let mut index = 0usize;
+    let mut wildcards = 0usize;
+    while index + 4 <= bytes.len() {
+        let word = u32::from_le_bytes([
+            bytes[index],
+            bytes[index + 1],
+            bytes[index + 2],
+            bytes[index + 3],
+        ]);
+        let operand_bytes = is_relocatable_operand(word);
+        for byte in 0..4 {
+            if operand_bytes && byte > 0 {
+                tokens.push("??".to_string());
+                wildcards += 1;
+            } else {
+                tokens.push(format!("{:02X}", bytes[index + byte]));
+            }
+        }
+        index += 4;
+    }
+    for byte in bytes.iter().skip(index) {
+        tokens.push(format!("{byte:02X}"));
+    }
+    if wildcards == tokens.len() {
+        return None;
+    }
+    Some(tokens.join(" "))
+}
+
+/// Whether an instruction carries a relocatable immediate in bytes 1..4.
+fn is_relocatable_operand(word: u32) -> bool {
+    // ADRP, ADR, B, BL, LDR literal, ADD/SUB immediate.
+    word & 0x9F00_0000 == 0x9000_0000
+        || word & 0x9F00_0000 == 0x1000_0000
+        || word & 0x7C00_0000 == 0x1400_0000
+        || word & 0xFF00_0000 == 0x5800_0000
+        || word & 0xFF80_0000 == 0x9100_0000
+        || word & 0xFF80_0000 == 0xD100_0000
+}
+
+/// Merges the FDE and named addresses, and flags overlapping functions.
+fn merge_addresses(
+    functions: &[(u64, u64)],
+    names: &HashMap<u64, NamedEntry>,
+) -> (Vec<u64>, BTreeSet<u64>) {
+    let mut addresses: BTreeSet<u64> = functions.iter().map(|(start, _)| *start).collect();
+    addresses.extend(names.keys().copied());
+    let mut suspect = BTreeSet::new();
+    for pair in functions.windows(2) {
+        let (start, size) = pair[0];
+        let (next_start, _) = pair[1];
+        if size > 0 && start.saturating_add(size) > next_start {
+            suspect.insert(start);
+            suspect.insert(next_start);
+        }
+    }
+    (addresses.into_iter().collect(), suspect)
+}
+
+/// Finds the size recorded for a named symbol.
+fn named_size(symbols: &[NamedSymbol], address: u64, name: &str) -> Option<u64> {
+    symbols
+        .iter()
+        .find(|symbol| symbol.address == address && symbol.name == name)
+        .map(|symbol| symbol.size)
+        .filter(|size| *size > 0)
+}
+
+/// Classifies a function's prologue and detects a simple tail-call thunk.
+fn classify_function(
+    map: &SectionMap,
+    image: &[u8],
+    address: u64,
+    verifier: &PrologueVerifier,
+) -> (String, Option<u64>) {
+    let Some(file_offset) = file_offset_of(map, address) else {
+        return ("none".to_string(), None);
+    };
+    let text_offset = (file_offset.saturating_sub(map.text.offset)) as usize;
+    let text = map.bytes_of(TEXT_SECTION, image);
+    if text_offset >= text.len() {
+        return ("none".to_string(), None);
+    }
+    let verdict = verifier.verify(text, text_offset);
+    let kind = if verdict.accepted {
+        prologue_name(verdict.kind)
+    } else {
+        "leaf".to_string()
+    };
+    let target = thunk_target(text, text_offset, address);
+    (kind, target)
+}
+
+/// Detects an unconditional `b <target>` tail call at the start of a function.
+fn thunk_target(text: &[u8], offset: usize, address: u64) -> Option<u64> {
+    let bytes = text.get(offset..offset + 4)?;
+    let word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    if word & 0xFC00_0000 == 0x1400_0000 {
+        let immediate = sign_extend((word & 0x03FF_FFFF) as i64, 26) << 2;
+        return Some((address as i64 + immediate) as u64);
+    }
+    None
+}
+
+/// Whether the function at `from` is a `b <to>` thunk.
+fn is_thunk_to(map: &SectionMap, image: &[u8], from: u64, to: u64) -> bool {
+    let Some(file_offset) = file_offset_of(map, from) else {
+        return false;
+    };
+    let text_offset = (file_offset.saturating_sub(map.text.offset)) as usize;
+    let text = map.bytes_of(TEXT_SECTION, image);
+    thunk_target(text, text_offset, from) == Some(to)
+}
+
+/// Maps a prologue kind onto the JSON spelling.
+fn prologue_name(kind: PrologueKind) -> String {
+    match kind {
+        PrologueKind::FramePush => "frame_push",
+        PrologueKind::RegisterSave => "register_save",
+        PrologueKind::StackAllocation => "stack_allocation",
+        PrologueKind::FramePointerSetup => "frame_pointer_setup",
+        PrologueKind::PointerAuthentication => "pointer_authentication",
+        PrologueKind::OffsetFramePush => "offset_frame_push",
+        PrologueKind::BranchTargetLanding => "branch_target_landing",
+        PrologueKind::NotAPrologue => "none",
+    }
+    .to_string()
+}
+
+/// Finds the function containing `address`.
+fn enclosing_function(functions: &[(u64, u64)], address: u64) -> Option<(u64, u64)> {
+    let index = functions.partition_point(|(start, _)| *start <= address);
+    let (start, size) = *functions.get(index.checked_sub(1)?)?;
+    if size == 0 || address < start.saturating_add(size) {
+        Some((start, size))
+    } else {
+        None
+    }
+}
+
+/// Reads a little-endian `u64` at a virtual address.
+fn read_at(map: &SectionMap, image: &[u8], address: u64) -> Option<u64> {
+    let section = map.sections.iter().find(|section| {
+        section.occupies_file
+            && address >= section.address
+            && address.saturating_add(8) <= section.address.saturating_add(section.size)
+    })?;
+    let bytes = map.bytes_of(&section.name, image);
+    let offset = (address - section.address) as usize;
+    bytes.get(offset..offset + 8).map(|slice| {
+        u64::from_le_bytes([
+            slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
+        ])
+    })
+}
+
+/// Reads a relocated pointer at a virtual address.
+fn read_pointer(
+    map: &SectionMap,
+    image: &[u8],
+    relocation: &RelocationIndex,
+    address: u64,
+) -> Option<u64> {
+    let raw = read_at(map, image, address)?;
+    let target = relocation.target_of(address).unwrap_or(raw);
+    if target == 0 {
+        None
+    } else {
+        Some(target)
+    }
+}
+
+/// Converts a virtual address to a file offset.
+fn file_offset_of(map: &SectionMap, address: u64) -> Option<u64> {
+    let section = map.sections.iter().find(|section| {
+        section.occupies_file
+            && address >= section.address
+            && address < section.address.saturating_add(section.size)
+    })?;
+    Some(address.wrapping_sub(section.delta))
+}
+
+/// Whether `address` lies inside an executable section.
+fn is_executable(map: &SectionMap, address: u64) -> bool {
+    map.sections.iter().any(|section| {
+        section.executable
+            && address >= section.address
+            && address < section.address.saturating_add(section.size)
+    })
+}
+
+/// Sign-extends the low `bits` of `value`.
+fn sign_extend(value: i64, bits: u32) -> i64 {
+    let shift = 64 - bits;
+    (value << shift) >> shift
+}
+
+/// Serialises a `u64` as a `0x`-prefixed hex string.
+fn hex_u64<S: serde::Serializer>(value: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&format!("0x{value:x}"))
+}
+
+/// Serialises an optional address as a hex string.
+fn hex_option<S: serde::Serializer>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(value) => serializer.serialize_str(&format!("0x{value:x}")),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Reads the DWARF length field, returning `(length, header bytes)`.
+fn read_length(bytes: &[u8], offset: usize) -> (usize, usize) {
+    let first = read_u32(bytes, offset);
+    if first == 0xffff_ffff {
+        (read_u64(bytes, offset + 4) as usize, 12)
+    } else {
+        (first as usize, 4)
+    }
+}
+
+/// Reads a little-endian `u32`, or zero when it runs off the end.
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    match bytes.get(offset..offset + 4) {
+        Some(slice) => u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]),
+        None => 0,
+    }
+}
+
+/// A parsed CIE, reduced to what an FDE needs.
+struct Cie {
+    fde_encoding: u8,
+    has_augmentation_length: bool,
+}
+
+/// Parses `.eh_frame` into `(start, size)` function ranges.
+fn parse_eh_frame(map: &SectionMap, image: &[u8]) -> CoreResult<Vec<(u64, u64)>> {
+    let Some(section) = map.find(".eh_frame") else {
+        return Ok(Vec::new());
+    };
+    let bytes = map.bytes_of(&section.name, image);
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let datarel_base = map
+        .find(".eh_frame_hdr")
+        .map(|header| header.address)
+        .unwrap_or(section.address);
+    let mut cies: HashMap<usize, Cie> = HashMap::new();
+    let mut functions = Vec::new();
+    let mut position = 0usize;
+    while position + 4 <= bytes.len() {
+        let record_start = position;
+        let (length, header_len) = read_length(bytes, position);
+        if length == 0 {
+            break;
+        }
+        let content_start = position + header_len;
+        let content_end = match content_start.checked_add(length) {
+            Some(end) if end <= bytes.len() => end,
+            _ => break,
+        };
+        let id = read_u32(bytes, content_start);
+        if id == 0 {
+            if let Some(cie) = parse_cie(bytes, content_start + 4, content_end) {
+                cies.insert(record_start, cie);
+            }
+        } else {
+            let cie_start = content_start.saturating_sub(id as usize);
+            if let Some(cie) = cies.get(&cie_start) {
+                if let Some(range) = parse_fde(
+                    bytes,
+                    content_start + 4,
+                    content_end,
+                    section.address,
+                    datarel_base,
+                    cie,
+                ) {
+                    if range.1 > 0 {
+                        functions.push(range);
+                    }
+                }
+            }
+        }
+        position = content_end;
+    }
+    functions.retain(|(start, _)| is_executable(map, *start));
+    functions.sort_unstable();
+    functions.dedup();
+    Ok(functions)
+}
+
+/// Parses a CIE record body.
+fn parse_cie(bytes: &[u8], mut position: usize, end: usize) -> Option<Cie> {
+    if position >= end {
+        return None;
+    }
+    let _version = bytes[position];
+    position += 1;
+    let augmentation_start = position;
+    while position < end && bytes[position] != 0 {
+        position += 1;
+    }
+    let augmentation = bytes.get(augmentation_start..position)?;
+    position += 1;
+    let _code_align = read_uleb(bytes, &mut position)?;
+    let _data_align = read_sleb(bytes, &mut position)?;
+    let _return_register = read_uleb(bytes, &mut position)?;
+
+    let has_augmentation_length = augmentation.first() == Some(&b'z');
+    let mut fde_encoding = 0u8;
+    if has_augmentation_length {
+        let augmentation_length = read_uleb(bytes, &mut position)? as usize;
+        let augmentation_end = position.saturating_add(augmentation_length).min(end);
+        for &character in augmentation.iter().skip(1) {
+            match character {
+                b'R' => {
+                    fde_encoding = *bytes.get(position)?;
+                    position += 1;
+                }
+                b'L' => {
+                    position += 1;
+                }
+                b'P' => {
+                    let encoding = *bytes.get(position)?;
+                    position += 1;
+                    skip_encoded(bytes, &mut position, encoding, 0, 0)?;
+                }
+                _ => {}
+            }
+            if position > augmentation_end {
+                break;
+            }
+        }
+        let _ = augmentation_end;
+    }
+    Some(Cie {
+        fde_encoding,
+        has_augmentation_length,
+    })
+}
+
+/// Parses an FDE record body into a `(start, size)` range.
+fn parse_fde(
+    bytes: &[u8],
+    mut position: usize,
+    end: usize,
+    section_address: u64,
+    datarel_base: u64,
+    cie: &Cie,
+) -> Option<(u64, u64)> {
+    let initial = read_encoded(
+        bytes,
+        &mut position,
+        cie.fde_encoding,
+        section_address,
+        datarel_base,
+    )?;
+    let range = read_encoded(
+        bytes,
+        &mut position,
+        cie.fde_encoding & 0x0f,
+        section_address,
+        datarel_base,
+    )?;
+    if cie.has_augmentation_length {
+        let _augmentation_length = read_uleb(bytes, &mut position)?;
+    }
+    if position > end || initial == 0 || range == 0 || initial % 4 != 0 {
+        return None;
+    }
+    Some((initial, range))
+}
+
+/// Reads an encoded DWARF pointer.
+fn read_encoded(
+    bytes: &[u8],
+    position: &mut usize,
+    encoding: u8,
+    section_address: u64,
+    datarel_base: u64,
+) -> Option<u64> {
+    if encoding == 0 {
+        return None;
+    }
+    let format = encoding & 0x0f;
+    let application = encoding & 0x70;
+    let field_address = section_address.wrapping_add(*position as u64);
+    let value = read_format(bytes, position, format)?;
+    let base = match application {
+        0x10 => field_address as i128,
+        0x30 => datarel_base as i128,
+        _ => 0,
+    };
+    Some((value + base) as u64)
+}
+
+/// Skips an encoded pointer without returning it.
+fn skip_encoded(
+    bytes: &[u8],
+    position: &mut usize,
+    encoding: u8,
+    section_address: u64,
+    datarel_base: u64,
+) -> Option<()> {
+    read_encoded(bytes, position, encoding, section_address, datarel_base)?;
+    Some(())
+}
+
+/// Reads one DWARF-encoded value, returning it sign-extended into `i128`.
+fn read_format(bytes: &[u8], position: &mut usize, format: u8) -> Option<i128> {
+    match format {
+        0x00 => {
+            let value = read_u64(bytes, *position);
+            *position += 8;
+            Some(value as i128)
+        }
+        0x01 => {
+            let value = read_uleb(bytes, position)?;
+            Some(value as i128)
+        }
+        0x02 => {
+            let value = read_u16(bytes, *position)?;
+            *position += 2;
+            Some(value as i128)
+        }
+        0x03 => {
+            let value = read_u32(bytes, *position);
+            *position += 4;
+            Some(value as i128)
+        }
+        0x04 => {
+            let value = read_u64(bytes, *position);
+            *position += 8;
+            Some(value as i128)
+        }
+        0x09 => {
+            let value = read_sleb(bytes, position)?;
+            Some(value as i128)
+        }
+        0x0a => {
+            let value = read_u16(bytes, *position)? as i16 as i128;
+            *position += 2;
+            Some(value)
+        }
+        0x0b => {
+            let value = read_u32(bytes, *position) as i32 as i128;
+            *position += 4;
+            Some(value)
+        }
+        0x0c => {
+            let value = read_u64(bytes, *position) as i64 as i128;
+            *position += 8;
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
+/// Reads a little-endian `u16`, or `None` when it runs off the end.
+fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    bytes
+        .get(offset..offset + 2)
+        .map(|slice| u16::from_le_bytes([slice[0], slice[1]]))
+}
+
+/// Reads an unsigned LEB128 value.
+fn read_uleb(bytes: &[u8], position: &mut usize) -> Option<u64> {
+    let mut result = 0u64;
+    let mut shift = 0u32;
+    loop {
+        let byte = *bytes.get(*position)?;
+        *position += 1;
+        result |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some(result);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
+}
+
+/// Reads a signed LEB128 value.
+fn read_sleb(bytes: &[u8], position: &mut usize) -> Option<i64> {
+    let mut result = 0i64;
+    let mut shift = 0u32;
+    let mut byte;
+    loop {
+        byte = *bytes.get(*position)?;
+        *position += 1;
+        result |= i64::from(byte & 0x7f) << shift;
+        shift += 7;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        if shift >= 64 {
+            return None;
+        }
+    }
+    if shift < 64 && byte & 0x40 != 0 {
+        result |= !0i64 << shift;
+    }
+    Some(result)
+}
+
+/// Falls back to a prologue walk when `.eh_frame` is absent.
+fn collect_functions(
+    map: &SectionMap,
+    image: &[u8],
+    control: &ScanControl,
+) -> CoreResult<(Vec<(u64, u64)>, &'static str)> {
+    if map.find(".eh_frame").is_some() {
+        if let Ok(mut functions) = parse_eh_frame(map, image) {
+            // A few FDEs describe the same start (thunks and aliases); keeping
+            // one entry per address halves the table on large libraries.
+            functions.sort_unstable_by_key(|(start, _)| *start);
+            functions.dedup_by_key(|(start, _)| *start);
+            if !functions.is_empty() {
+                return Ok((functions, "eh_frame"));
+            }
+        }
+    }
+    let functions = scan_prologues(map, image, control)?;
+    Ok((functions, "prologue_scan"))
+}
+
+/// Walks `.text` for recognisable prologues when no unwind table is present.
+fn scan_prologues(
+    map: &SectionMap,
+    image: &[u8],
+    control: &ScanControl,
+) -> CoreResult<Vec<(u64, u64)>> {
+    let text = map.bytes_of(TEXT_SECTION, image);
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
+    let verifier = PrologueVerifier::new()?;
+    let mut starts = Vec::new();
+    for offset in (0..text.len().saturating_sub(4)).step_by(4) {
+        if offset % (1024 * 1024) == 0 && control.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        let word = read_u32(text, offset);
+        if !is_probable_prologue(word) {
+            continue;
+        }
+        if verifier.verify(text, offset).accepted {
+            starts.push(map.text.address + offset as u64);
+        }
+    }
+    let mut functions = Vec::with_capacity(starts.len());
+    for (index, start) in starts.iter().enumerate() {
+        let next = starts
+            .get(index + 1)
+            .copied()
+            .unwrap_or(map.text.address + text.len() as u64);
+        functions.push((*start, next.saturating_sub(*start)));
+    }
+    Ok(functions)
+}
+
+/// A cheap pre-filter for the prologue walk.
+fn is_probable_prologue(word: u32) -> bool {
+    word == 0xD503_237F
+        || word == 0xD503_233F
+        || word & 0xFFC0_7FFF == 0xA980_7BFD
+        || word & 0xFFC0_03FF == 0xD100_03FF
+        || word & 0xFFFF_FC1F == 0xD503_241F
+        || word == 0x9100_03FD
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sections::SectionInfo;
+    use crate::verify::VerificationStatus;
+
+    #[test]
+    fn sign_extension_restores_negative_values() {
+        assert_eq!(sign_extend(0b1, 1), -1);
+        assert_eq!(sign_extend(0b0_1111, 4), -1);
+        assert_eq!(sign_extend(0b0_1000, 4), -8);
+        assert_eq!(sign_extend(7, 4), 7);
+    }
+
+    #[test]
+    fn uleb_and_sleb_round_trip_small_values() {
+        let mut position = 0;
+        assert_eq!(read_uleb(&[0xE5, 0x8E, 0x26], &mut position), Some(624_485));
+        assert_eq!(position, 3);
+
+        let mut position = 0;
+        assert_eq!(read_sleb(&[0x7F], &mut position), Some(-1));
+        let mut position = 0;
+        assert_eq!(read_sleb(&[0x3F], &mut position), Some(63));
+    }
+
+    #[test]
+    fn adrp_page_is_computed_from_the_immediate() {
+        // `adrp x16, 0x1000` at pc 0x1000 is 0x90000010.
+        assert_eq!(adrp_page(0x1000, 0x9000_0010), 0x1000);
+    }
+
+    #[test]
+    fn a_branch_is_recognised_as_a_thunk() {
+        // `b +0x10` at 0x1000: imm26 = 4.
+        let mut text = vec![0u8; 4];
+        let word = 0x1400_0000u32 | 4;
+        text.copy_from_slice(&word.to_le_bytes());
+        assert_eq!(thunk_target(&text, 0, 0x1000), Some(0x1010));
+    }
+
+    #[test]
+    fn relocatable_operands_are_recognised() {
+        assert!(is_relocatable_operand(0x9000_0010));
+        assert!(is_relocatable_operand(0x1400_0010));
+        assert!(is_relocatable_operand(0x9400_0010));
+        assert!(!is_relocatable_operand(0xD503_201F));
+    }
+
+    #[test]
+    fn name_priority_prefers_symbols_over_slots() {
+        assert!(rank("symbol") < rank("vtable"));
+        assert!(rank("vtable") < rank("signature"));
+        assert!(rank("signature") < rank("auto"));
+    }
+
+    #[test]
+    fn a_better_name_demotes_the_old_one_to_an_alias() {
+        let mut names = HashMap::new();
+        insert_name(
+            &mut names,
+            0x1000,
+            "Class::vfunc_3".to_string(),
+            "vtable",
+            "function",
+            None,
+            None,
+        );
+        insert_name(
+            &mut names,
+            0x1000,
+            "update".to_string(),
+            "symbol",
+            "function",
+            None,
+            None,
+        );
+        let entry = names.get(&0x1000).expect("entry");
+        assert_eq!(entry.name, "update");
+        assert!(entry.aliases.contains(&"Class::vfunc_3".to_string()));
+    }
+
+    #[test]
+    fn enclosing_function_finds_the_range() {
+        let functions = vec![(0x1000, 0x100), (0x2000, 0x40)];
+        assert_eq!(
+            enclosing_function(&functions, 0x1010),
+            Some((0x1000, 0x100))
+        );
+        assert_eq!(enclosing_function(&functions, 0x2000), Some((0x2000, 0x40)));
+        assert_eq!(enclosing_function(&functions, 0x3000), None);
+    }
+
+    fn section(name: &str, address: u64, offset: u64, size: u64, executable: bool) -> SectionInfo {
+        SectionInfo {
+            name: name.to_string(),
+            kind: crate::sections::SectionKind::from_name(name),
+            address,
+            size,
+            offset,
+            align: 8,
+            delta: address.wrapping_sub(offset),
+            allocated: true,
+            executable,
+            writable: false,
+            occupies_file: true,
+        }
+    }
+
+    fn map_with(text: SectionInfo, extra: Vec<SectionInfo>) -> SectionMap {
+        let mut sections = vec![text.clone()];
+        sections.extend(extra);
+        SectionMap {
+            image_base: text.address,
+            text,
+            sections,
+        }
+    }
+
+    /// Builds a `.eh_frame` with one CIE and one FDE for `0x1000..0x1040`.
+    fn eh_frame_bytes(zplr: bool) -> Vec<u8> {
+        let mut cie_body = vec![1u8];
+        cie_body.extend_from_slice(if zplr { b"zPLR\0" } else { b"zR\0" });
+        cie_body.push(1); // code alignment
+        cie_body.push(0x78); // data alignment -8
+        cie_body.push(30); // return register
+        let mut augmentation = Vec::new();
+        if zplr {
+            augmentation.push(0x1B); // P: pcrel | sdata4
+            augmentation.extend_from_slice(&[0, 0, 0, 0]);
+            augmentation.push(0); // L
+            augmentation.push(0x1B); // R: pcrel | sdata4
+        } else {
+            augmentation.push(0x1B);
+        }
+        cie_body.push(augmentation.len() as u8);
+        cie_body.extend_from_slice(&augmentation);
+
+        let mut record = Vec::new();
+        // The length covers the CIE id plus its body.
+        record.extend_from_slice(&(4 + cie_body.len() as u32).to_le_bytes());
+        record.extend_from_slice(&0u32.to_le_bytes());
+        record.extend_from_slice(&cie_body);
+
+        let fde_start = record.len();
+        let content_start = fde_start + 4;
+        let id = content_start as u32;
+        let initial_position = content_start + 4;
+        let field_address = 0x5000 + initial_position as u64;
+        let initial = (0x1000i64 - field_address as i64) as i32;
+        let mut body = Vec::new();
+        body.extend_from_slice(&initial.to_le_bytes());
+        body.extend_from_slice(&0x40i32.to_le_bytes());
+        // Every `z` augmentation carries its own length, even when empty.
+        body.push(0);
+        record.extend_from_slice(&(4 + body.len() as u32).to_le_bytes());
+        record.extend_from_slice(&id.to_le_bytes());
+        record.extend_from_slice(&body);
+        record
+    }
+
+    #[test]
+    fn eh_frame_reads_pcrel_fdes_with_zr_and_zplr() {
+        for zplr in [false, true] {
+            let eh = eh_frame_bytes(zplr);
+            let mut image = vec![0u8; 0x6000];
+            image[0x5000..0x5000 + eh.len()].copy_from_slice(&eh);
+            let map = map_with(
+                section(".text", 0x1000, 0x1000, 0x100, true),
+                vec![
+                    section(".eh_frame", 0x5000, 0x5000, eh.len() as u64, false),
+                    section(".eh_frame_hdr", 0x4000, 0x4000, 4, false),
+                ],
+            );
+
+            assert_eq!(
+                parse_eh_frame(&map, &image).expect("parse"),
+                vec![(0x1000, 0x40)],
+                "zplr={zplr}"
+            );
+        }
+    }
+
+    #[test]
+    fn eh_frame_works_without_a_header_section() {
+        let eh = eh_frame_bytes(false);
+        let mut image = vec![0u8; 0x6000];
+        image[0x5000..0x5000 + eh.len()].copy_from_slice(&eh);
+        let map = map_with(
+            section(".text", 0x1000, 0x1000, 0x100, true),
+            vec![section(".eh_frame", 0x5000, 0x5000, eh.len() as u64, false)],
+        );
+
+        assert_eq!(
+            parse_eh_frame(&map, &image).expect("parse"),
+            vec![(0x1000, 0x40)]
+        );
+    }
+
+    #[test]
+    fn every_resolve_mode_returns_the_expected_address() {
+        let map = map_with(
+            section(".text", 0x1000, 0x1000, 0x1000, true),
+            vec![section(".rodata", 0x3000, 0x3000, 0x100, false)],
+        );
+        let mut image = vec![0u8; 0x4000];
+        // BL from file offset 0x1000 to 0x2000: imm26 = 0x400.
+        let branch = (0x9400_0000u32 | 0x400).to_le_bytes();
+        image[0x1000..0x1004].copy_from_slice(&branch);
+        // ADRP x0, 0x2000 then ADD x0, x0, #0x20 at 0x1004.
+        let adrp = (0x9000_0000u32 | (1 << 29)).to_le_bytes();
+        let add = (0x9100_0000u32 | (0x20 << 10)).to_le_bytes();
+        image[0x1004..0x1008].copy_from_slice(&adrp);
+        image[0x1008..0x100c].copy_from_slice(&add);
+
+        let hit = |file_offset: u64, address: u64| crate::scanner::PatternHit {
+            name: "x".to_string(),
+            section_offset: 0,
+            file_offset,
+            address,
+            address_hex: format!("0x{address:x}"),
+            prologue_kind: None,
+            prologue_instruction: None,
+            verification_status: VerificationStatus::Unverified,
+        };
+
+        assert_eq!(
+            resolve_pattern_hit(&image, &hit(0x1000, 0x1000), "self", 4, &[]),
+            Some(0x1004)
+        );
+        assert_eq!(
+            resolve_pattern_hit(&image, &hit(0x1000, 0x1000), "bl_target", 0, &[]),
+            Some(0x2000)
+        );
+        assert_eq!(
+            resolve_pattern_hit(&image, &hit(0x1004, 0x1004), "adrp_add", 0, &[]),
+            Some(0x2020)
+        );
+        assert_eq!(
+            resolve_pattern_hit(
+                &image,
+                &hit(0x1010, 0x1010),
+                "prologue_back",
+                0,
+                &[(0x1000, 0x100)]
+            ),
+            Some(0x1000)
+        );
+        let _ = map;
+    }
+
+    #[test]
+    fn a_wildcarded_signature_keeps_opcode_bytes_and_masks_operands() {
+        let map = map_with(section(".text", 0x1000, 0x1000, 0x100, true), Vec::new());
+        let mut image = vec![0u8; 0x2000];
+        // stp x29, x30, [sp, #-16]! then a BL.
+        image[0x1000..0x1004].copy_from_slice(&0xA9BF_7BFDu32.to_le_bytes());
+        image[0x1004..0x1008].copy_from_slice(&0x9400_0010u32.to_le_bytes());
+
+        let signature = wildcard_signature(&map, &image, 0x1000).expect("signature");
+
+        assert!(signature.starts_with("FD 7B BF A9"), "{signature}");
+        assert!(signature.contains("??"), "{signature}");
+    }
+
+    #[test]
+    fn addresses_round_trip_through_the_section_table() {
+        let map = map_with(
+            section(".text", 0x1000, 0x1000, 0x100, true),
+            vec![section(".data", 0x3000, 0x3000, 0x100, false)],
+        );
+        let mut image = vec![0u8; 0x4000];
+        image[0x3010..0x3018].copy_from_slice(&0x1234_5678_9ABC_DEF0u64.to_le_bytes());
+
+        assert_eq!(read_at(&map, &image, 0x3010), Some(0x1234_5678_9ABC_DEF0));
+        assert_eq!(file_offset_of(&map, 0x3010), Some(0x3010));
+        assert!(is_executable(&map, 0x1000));
+        assert!(!is_executable(&map, 0x3010));
+    }
+
+    fn vtable(name: &str, type_info: u64) -> crate::rtti::TypeVTable {
+        crate::rtti::TypeVTable {
+            name: name.to_string(),
+            mangled: name.to_string(),
+            vtable_address: type_info + 0x100,
+            vtable_hex: format!("0x{:x}", type_info + 0x100),
+            vtable_offset: type_info + 0x100,
+            type_info_address: type_info,
+        }
+    }
+
+    fn vtables(entries: Vec<crate::rtti::TypeVTable>) -> crate::rtti::VtableMap {
+        crate::rtti::VtableMap {
+            source: crate::rtti::VtableSource::Relocations,
+            type_info_candidates: entries.len(),
+            relocations_examined: 0,
+            entries: entries.into_iter().map(|v| (v.name.clone(), v)).collect(),
+        }
+    }
+
+    #[test]
+    fn si_class_type_info_names_the_first_base() {
+        let map = map_with(
+            section(".text", 0x1000, 0x1000, 0x100, true),
+            vec![section(".data.rel.ro", 0x3000, 0x3000, 0x200, false)],
+        );
+        let mut image = vec![0u8; 0x4000];
+        // Derived's type_info at 0x3080 points at Base's type_info at 0x3000.
+        image[0x3090..0x3098].copy_from_slice(&0x3000u64.to_le_bytes());
+        let map_vtables = vtables(vec![vtable("Base", 0x3000), vtable("Derived", 0x3080)]);
+        let relocations = crate::rtti::RelocationIndex::for_tests(Vec::new());
+
+        let bases = resolve_bases(&map, &image, &relocations, &map_vtables);
+
+        assert_eq!(bases.get("Derived"), Some(&vec!["Base".to_string()]));
+    }
+
+    #[test]
+    fn vmi_class_type_info_reads_every_base() {
+        let map = map_with(
+            section(".text", 0x1000, 0x1000, 0x100, true),
+            vec![section(".data.rel.ro", 0x3000, 0x3000, 0x200, false)],
+        );
+        let mut image = vec![0u8; 0x4000];
+        // Derived's type_info at 0x3080: no single base, count 2 at +20.
+        image[0x3094..0x3098].copy_from_slice(&2u32.to_le_bytes());
+        image[0x3098..0x30A0].copy_from_slice(&0x3000u64.to_le_bytes());
+        image[0x30A8..0x30B0].copy_from_slice(&0x3000u64.to_le_bytes());
+        let map_vtables = vtables(vec![vtable("Base", 0x3000), vtable("Derived", 0x3080)]);
+        let relocations = crate::rtti::RelocationIndex::for_tests(Vec::new());
+
+        let bases = resolve_bases(&map, &image, &relocations, &map_vtables);
+
+        assert_eq!(bases.get("Derived"), Some(&vec!["Base".to_string()]));
+    }
+
+    fn class(name: &str, addresses: Vec<u64>) -> ClassSlots {
+        let slots = addresses
+            .iter()
+            .enumerate()
+            .map(|(index, address)| SlotRecord {
+                slot: index,
+                offset: (index as u64) * 8,
+                address: *address,
+                file_offset: *address,
+                size: 4,
+                name: format!("{name}::vfunc_{index}"),
+                kind: "virtual".to_string(),
+                overrides: false,
+                inherited: false,
+                status: "verified".to_string(),
+                signature: None,
+                signature_unique: None,
+            })
+            .collect();
+        ClassSlots {
+            record: ClassRecord {
+                name: name.to_string(),
+                mangled: name.to_string(),
+                bases: Vec::new(),
+                vtable: 0,
+                vtable_offset: 0,
+                type_info: 0,
+                slot_count: addresses.len(),
+                slots,
+            },
+            addresses,
+        }
+    }
+
+    #[test]
+    fn inheritance_marks_identical_slots_inherited_and_different_ones_overridden() {
+        let mut classes = vec![
+            class("Base", vec![0x1000, 0x2000]),
+            class("Derived", vec![0x1000, 0x3000]),
+        ];
+        let mut bases = HashMap::new();
+        bases.insert("Derived".to_string(), vec!["Base".to_string()]);
+
+        apply_inheritance(&mut classes, &bases);
+
+        let derived = &classes[1].record;
+        assert!(derived.slots[0].inherited);
+        assert!(!derived.slots[0].overrides);
+        assert!(derived.slots[1].overrides);
+        assert!(!derived.slots[1].inherited);
+        assert_eq!(derived.bases, vec!["Base".to_string()]);
+    }
+}
