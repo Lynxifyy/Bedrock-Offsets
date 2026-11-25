@@ -235,3 +235,10 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   the string into locals or one line. It was failing on main before the v1.0.11 batch.
 - ktlint import order is lexicographic with no blank lines; `ktlintFormat` fixes it, but a manual
   insert can leave a stray blank line that only `ktlintCheck` reports.
+- **Release flow**: bump `versionCode`/`versionName` + CHANGELOG section, commit, `git tag -a vX.Y.Z
+  -m ...`, `git push origin vX.Y.Z` — `.github/workflows/release.yml` (tag `v*`) cross-compiles the
+  engine, runs `verify_version.py --tag`, assembles/verifies the APK, generates notes with
+  `scripts/changelog.py` and calls `gh release create`. **No signing secrets are configured**, so the
+  published APK is debug-signed (step "Stage the signing material" warns; the guard step is skipped).
+  To rewrite the notes: `PATCH /releases/{id}` with `{"body": ...}`; keep the generated
+  `## vX.Y.Z` block at the end for commit links.
