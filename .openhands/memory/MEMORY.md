@@ -197,7 +197,7 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
 
 ## Bedrock-Offsets (this repo)
-- Verify: `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest` (234 tests),
+- Verify: `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest` (236 tests),
   `./gradlew ktlintCheck`, `./gradlew lintDebug`,
   `cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test`,
   `python3 -m unittest discover -s scripts/tests`, `python3 scripts/verify_release.py` (needs
