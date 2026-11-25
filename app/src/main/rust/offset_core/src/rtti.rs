@@ -305,6 +305,11 @@ fn is_plausible_vtable(
     vtable_address: u64,
     type_info_slot: u64,
 ) -> bool {
+    // The offset-to-top word is plain data even in a RELA build, so the
+    // in-place value is authoritative. Consulting the relocation table here
+    // accepted any address whose following slot happened to hold a relocated
+    // `type_info` pointer, which produced vtable groups with an offset in the
+    // tens of millions.
     let Some(offset_to_top) = crate::internal::read_at(map, image, vtable_address) else {
         return false;
     };
@@ -312,6 +317,16 @@ fn is_plausible_vtable(
     let plausible_top =
         offset_to_top == 0 || (offset_to_top % 8 == 0 && offset_to_top.unsigned_abs() <= (1 << 20));
     if !plausible_top {
+        return false;
+    }
+    // An offset-to-top of zero is only credible when the word is really data.
+    // A zeroed word that carries a relocation is a pointer the loader will fill
+    // in, so the pair below it is some other structure, not a vtable header.
+    if offset_to_top == 0
+        && relocation_targets
+            .target_of(vtable_address)
+            .is_some_and(|target| target != 0)
+    {
         return false;
     }
     let first_slot = type_info_slot.saturating_add(SLOT_BYTES);

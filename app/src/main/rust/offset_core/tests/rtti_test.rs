@@ -420,6 +420,79 @@ fn resolves_the_vtable_of_a_polymorphic_class() {
     assert_eq!(entry.vtable_hex, format!("0x{:x}", entry.vtable_address));
 }
 
+/// Builds a library whose data holds a real vtable followed by a pair of
+/// slots that look like a vtable header: a zeroed, *relocated* word followed by
+/// a relocated `type_info` pointer.
+///
+/// A real offset-to-top is plain data and is never relocated, so the second
+/// pair must not become a vtable group.
+fn image_with_relocated_offset_to_top() -> Vec<u8> {
+    let mut rodata = Vec::new();
+    let name_offset = rodata.len();
+    rodata.extend_from_slice(b"14ClientInstance\0");
+    let name_address = RODATA_ADDRESS + name_offset as u64;
+
+    let mut data = vec![0u8; TYPE_INFO_OFFSET + 16];
+    data[8..16].copy_from_slice(&TYPE_INFO_ADDRESS.to_le_bytes());
+    data[16..24].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    // The decoy: offset-to-top slot left at zero, type_info pointer relocated.
+    data[32..40].copy_from_slice(&TYPE_INFO_ADDRESS.to_le_bytes());
+    data[40..48].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET..TYPE_INFO_OFFSET + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    data[TYPE_INFO_OFFSET + 8..TYPE_INFO_OFFSET + 16].copy_from_slice(&name_address.to_le_bytes());
+
+    let mut rela = Vec::new();
+    // R_AARCH64_ABS64 = 257
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 8, 257, TYPE_INFO_ADDRESS));
+    rela.extend_from_slice(&relocation(TYPE_INFO_ADDRESS + 8, 257, name_address));
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 16, 257, TEXT_ADDRESS));
+    // The decoy's offset-to-top is relocated to a pointer-like value.
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 24, 257, 0x32F0C32));
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 32, 257, TYPE_INFO_ADDRESS));
+    rela.extend_from_slice(&relocation(VTABLE_ADDRESS + 40, 257, TEXT_ADDRESS));
+
+    let sections = vec![
+        SectionPlan {
+            name: ".text",
+            kind: SHT_PROGBITS,
+            address: TEXT_ADDRESS,
+            flags: SHF_ALLOC | SHF_EXECINSTR,
+            body: vec![0u8; 64],
+        },
+        SectionPlan {
+            name: ".rodata",
+            kind: SHT_PROGBITS,
+            address: RODATA_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rodata,
+        },
+        SectionPlan {
+            name: ".data.rel.ro",
+            kind: SHT_PROGBITS,
+            address: DATA_REL_RO_ADDRESS,
+            flags: SHF_ALLOC | SHF_WRITE,
+            body: data,
+        },
+        SectionPlan {
+            name: ".rela.dyn",
+            kind: SHT_RELA,
+            address: RELA_DYN_ADDRESS,
+            flags: SHF_ALLOC,
+            body: rela,
+        },
+    ];
+    build_image(&sections)
+}
+
+#[test]
+fn a_relocated_offset_to_top_is_not_a_vtable() {
+    let image = image_with_relocated_offset_to_top();
+    let map = resolve_vtables(&image).expect("resolve vtables");
+
+    assert_eq!(map.all.len(), 1, "{map:#?}");
+    assert_eq!(map.all[0].vtable_address, VTABLE_ADDRESS);
+}
+
 #[test]
 fn a_type_info_pointer_in_a_base_array_is_not_a_vtable() {
     let image = image_with_type_info_pointer_as_first_slot();

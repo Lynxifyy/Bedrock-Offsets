@@ -745,7 +745,14 @@ fn collect_class_slots(
     let mut classes = Vec::with_capacity(by_name.len());
     for (name, mut groups) in by_name {
         check_cancelled(control)?;
-        groups.sort_by_key(|vtable| vtable.vtable_address);
+        // The primary vtable is the one whose offset-to-top is zero; the rest
+        // are base-subobject groups. Sorting by address alone put a secondary
+        // group first for a class like `Actor`, which then became the reported
+        // primary and truncated `slotCount` to a single slot.
+        groups.sort_by_key(|vtable| {
+            let offset_to_top = read_at(map, image, vtable.vtable_address).unwrap_or(0) as i64;
+            (offset_to_top != 0, vtable.vtable_address)
+        });
         let mut group_addresses: Vec<Vec<u64>> = Vec::with_capacity(groups.len());
         let mut group_slots: Vec<Vec<Arc<SlotRecord>>> = Vec::with_capacity(groups.len());
         let mut group_meta: Vec<(i64, u64)> = Vec::with_capacity(groups.len());
@@ -829,10 +836,7 @@ fn collect_class_slots(
                 })
                 .collect();
 
-            let offset_to_top = {
-                let raw = read_at(map, image, vtable.vtable_address).unwrap_or(0);
-                relocation.target_of(vtable.vtable_address).unwrap_or(raw) as i64
-            };
+            let offset_to_top = read_at(map, image, vtable.vtable_address).unwrap_or(0) as i64;
             group_meta.push((offset_to_top, vtable.vtable_address));
             group_addresses.push(addresses);
             group_slots.push(slots);

@@ -1,3 +1,11 @@
+## v1.0.10
+
+### Bug Fixes
+
+- stop inventing vtable groups from a relocated pointer followed by a `type_info` pointer, which gave classes like `Actor`, `Mob` and `Level` a one-slot primary vtable
+- order a class's vtable groups so the primary one (offset-to-top zero) is first, so `slotCount` reports the real primary run again
+- read the offset-to-top word as plain data instead of a relocation target, which had reported offsets in the tens of millions
+
 ## v1.0.9
 
 ### Bug Fixes
