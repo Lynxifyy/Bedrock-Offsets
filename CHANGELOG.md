@@ -1,3 +1,24 @@
+## v1.0.8
+
+### Features
+
+- export one `BEDROCK_OFFSETS_<version>.zip` with `manifest.json`, `JNI/` and `InternalCPP/`
+- split the internal C++ table into one JSON per category, driven by an editable `categories.json`
+- run the export in a foreground service so it survives closing or rotating the app, with retry and a persisted job
+- show in-app progress with a determinate ring, stage, size and cancel, plus a system notification
+- classify classes and functions by class, base class, function regex and namespace, with a Settings override
+- generate signatures for every vtable slot and symbol-named function, extended until unique
+- name destructors, mark overrides and inherited slots, and keep all vtable groups of a class
+- separate data symbols from functions and explain each remaining suspect
+
+### Bug Fixes
+
+- reject vtables invented from `type_info` pointers inside base arrays, which truncated real slot runs to zero
+- keep dots in versioned file names and derive the name and the JSON version from one function
+- make colliding offset names unique with an `@<address>` suffix
+- copy slot sizes, prologues and status from `eh_frame`
+- release the scan payload as soon as an export job ends
+
 ## v1.0.7
 
 ### Features
