@@ -204,7 +204,18 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   `:app:assembleRelease`; `GSON_MODEL_CLASSES` descriptors must match the real nested class names:
   `SignaturePack$InternalEntry`, not `SignaturePack$PackDocument$InternalEntry`).
 - Real 26.60 run (xbox apk): 7396 classes, 140501 slots, 803306 functions; before F1-F7 1432 classes
-  had 0 slots, all slots had size 0, 255 signatures (none unique). After: see latest run log.
+  had 0 slots, all slots had size 0, 255 signatures (none unique).
+- After v1.0.10 on the local `libminecraftpe.so` (release, x86_64): **6386 classes, 0 zero-slot,
+  865 399 slots, 626 040 slot signatures (575 355 unique), 512 803 function signatures (469 487
+  unique), 11 354 data symbols, peak RSS 1517 MB, ~100 s**. Harness:
+  `BEDROCK_LIB=... BEDROCK_OUT=... cargo test --release --test real_library_stats -- --ignored --nocapture`.
+- **Signature matching is Aho-Corasick-bound**: anchor each pattern on its longest literal run and
+  build one `PatternSet` per 8192 candidates. Feeding every run (or a million patterns at once) is
+  what made a real 26.60 round take hours / gigabytes.
+- **A vtable header is never relocated**: offset-to-top is plain data, so a zeroed word that carries
+  a `R_AARCH64_RELATIVE` relocation is a pointer, not an offset. Accepting it invented one-slot
+  vtable groups and, when groups were sorted by address, hid the real primary (`slotCount: 1`).
+  The ~600 classes that then disappear are RTTI-only interfaces with no emitted vtable.
 - `:app:lintDebug` fails on `UsableSpace` for `File.usableSpace` (suppress with
   `@SuppressLint("UsableSpace")`) and on `ObsoleteSdkInt` checks below minSdk 28.
 - `ktlintCheck` enforces 100-char lines and "body expression on same line"; `ktlintFormat` fixes most.
