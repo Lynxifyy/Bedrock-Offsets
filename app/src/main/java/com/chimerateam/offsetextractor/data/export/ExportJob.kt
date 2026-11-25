@@ -176,6 +176,7 @@ object ExportJobRepository {
             zipPath = zipPath,
             error = null
         )
+        dropPayload()
     }
 
     /**
@@ -189,11 +190,13 @@ object ExportJobRepository {
             state = if (interrupted) ExportState.Interrupted else ExportState.Failed,
             error = message
         )
+        dropPayload()
     }
 
     /** Marks the job cancelled by the user. */
     fun cancel() {
         _progress.value = _progress.value.copy(state = ExportState.Cancelled)
+        dropPayload()
     }
 
     /** Restores an interrupted job so the Scanner tab can offer a retry. */
@@ -226,10 +229,20 @@ object ExportJobRepository {
 
     /** Drops the current job, used by Discard. */
     fun clear() {
+        dropPayload()
+        _progress.value = ExportProgress()
+    }
+
+    /**
+     * Releases the scan payload.
+     *
+     * The scan is only needed while building; keeping it alive after the job
+     * ends pins the whole internal table in memory.
+     */
+    private fun dropPayload() {
         pendingSummary = null
         pendingCategories = emptyList()
         includeCombined = false
-        _progress.value = ExportProgress()
     }
 
     /** Current snapshot, read by the service when it starts. */
