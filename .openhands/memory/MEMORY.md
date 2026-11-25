@@ -197,7 +197,7 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
 
 ## Bedrock-Offsets (this repo)
-- Verify: `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest` (236 tests),
+- Verify: `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest` (256 tests),
   `./gradlew ktlintCheck`, `./gradlew lintDebug`,
   `cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test`,
   `python3 -m unittest discover -s scripts/tests`, `python3 scripts/verify_release.py` (needs
@@ -224,3 +224,14 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   relocation targets.
 - Mobilebox: `POST /v1/phones/{id}/apps` (APK body), `/actions`, `/apps/{pkg}/logs`,
   `DELETE /v1/phones/{id}` (204). Reinstalling may clear the app cache, forcing a re-download.
+- **A ZIP with an empty `InternalCPP/` passed every check** because the internal data was optional at
+  each step. Guards now: `ScanCache` root is `filesDir/scan-data` (not `cacheDir`), the ViewModel's
+  `requireInternalTable` fails the scan if the table is missing/short, `InternalTable.isPromised`
+  treats a *resolved* pass with zero rows as missing (that is how a result cached by an older version
+  deserialises), `InternalTable.require` refuses, and `OffsetZip.verify` re-opens the ZIP to check
+  CRCs plus every category file and the row total. UI: `internalAvailable` gates the Download button.
+- `lintDebug` has `warningsAsErrors=true`, so it is a real gate. False positive to know:
+  `SuspiciousIndentation` fires on `emit(\n Logs.info(TAG, "long " +\n "wrapped string") )` — collapse
+  the string into locals or one line. It was failing on main before the v1.0.11 batch.
+- ktlint import order is lexicographic with no blank lines; `ktlintFormat` fixes it, but a manual
+  insert can leave a stray blank line that only `ktlintCheck` reports.
