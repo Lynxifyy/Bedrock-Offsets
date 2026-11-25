@@ -84,6 +84,19 @@ impl Pattern {
         runs
     }
 
+    /// The run a pattern is anchored on: its longest stretch of fixed bytes.
+    ///
+    /// Every run locates the same occurrences, so one is enough. Feeding all of
+    /// them to the automaton is what made a real 26.60 signature pass stall:
+    /// a two-byte run between two wildcards matches millions of positions, and
+    /// each hit pays for a full mask check. The longest run keeps the hit count
+    /// near the true match count.
+    fn anchor_run(&self) -> Option<(usize, Vec<u8>)> {
+        self.literal_runs()
+            .into_iter()
+            .max_by_key(|(_, bytes)| bytes.len())
+    }
+
     /// Length of the longest run of fixed bytes.
     ///
     /// Signature generation uses this as a cheap uniqueness proxy: a pattern
@@ -221,7 +234,7 @@ impl PatternSet {
 
         let mut runs = Vec::new();
         for (index, pattern) in patterns.iter().enumerate() {
-            for (pattern_offset, bytes) in pattern.literal_runs() {
+            if let Some((pattern_offset, bytes)) = pattern.anchor_run() {
                 runs.push(LiteralRun {
                     pattern_index: index,
                     pattern_offset,
@@ -258,7 +271,7 @@ impl PatternSet {
         }
         let mut runs = Vec::new();
         for (index, pattern) in patterns.iter().enumerate() {
-            for (pattern_offset, bytes) in pattern.literal_runs() {
+            if let Some((pattern_offset, bytes)) = pattern.anchor_run() {
                 runs.push(LiteralRun {
                     pattern_index: index,
                     pattern_offset,
@@ -611,6 +624,43 @@ mod tests {
         // Only a lower bound is asserted: the clock is not monotonic enough for
         // an upper bound to be meaningful in a test.
         assert!(set.compile_micros() < 1_000_000);
+    }
+
+    #[test]
+    fn only_the_longest_run_reaches_the_automaton() {
+        // A short run before the anchor is what floods a real signature scan:
+        // two fixed bytes match millions of positions on a 340 MB library.
+        let set = PatternSet::new(&[(
+            "short-first".to_string(),
+            "AA BB ?? ?? ?? ?? ?? 11 22 33 44 55 66 77".to_string(),
+        )])
+        .expect("pattern set");
+        assert_eq!(set.runs.len(), 1);
+        assert_eq!(set.runs[0].pattern_offset, 7);
+        assert_eq!(
+            set.runs[0].bytes,
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]
+        );
+    }
+
+    #[test]
+    fn a_short_run_before_the_anchor_is_still_checked() {
+        let set = PatternSet::new(&[(
+            "short-first".to_string(),
+            "AA BB ?? ?? ?? ?? ?? 11 22 33 44 55 66 77".to_string(),
+        )])
+        .expect("pattern set");
+        let mut counts = vec![0u8; 1];
+        let good = [
+            0xAA, 0xBB, 0, 0, 0, 0, 0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+        ];
+        set.count_matches(&good, good.len(), &mut counts);
+        assert_eq!(counts[0], 1);
+        counts[0] = 0;
+        let mut wrong = good;
+        wrong[0] = 0xAC;
+        set.count_matches(&wrong, wrong.len(), &mut counts);
+        assert_eq!(counts[0], 0);
     }
 
     #[test]

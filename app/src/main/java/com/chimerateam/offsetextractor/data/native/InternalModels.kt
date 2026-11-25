@@ -229,7 +229,9 @@ data class StringAnchorSpec(
  * @property generateSignatures generate and verify a signature per named
  *   function.
  * @property maxSlotsPerClass hard cap on slots read for one class.
- * @property maxSignatures cap on auto-generated signatures.
+ * @property maxSignatures cap on auto-generated signatures; the default
+ *   matches the engine so every vtable slot and every symbol-named function
+ *   gets one.
  * @property internalPatterns hand-maintained internal signatures.
  * @property stringAnchors `.rodata` string anchors.
  */
@@ -237,7 +239,7 @@ data class InternalOptions(
     val includeAllFunctions: Boolean = true,
     val generateSignatures: Boolean = true,
     val maxSlotsPerClass: Int = 4096,
-    val maxSignatures: Int = 20_000,
+    val maxSignatures: Int = 1_000_000,
     val internalPatterns: List<InternalPatternSpec> = emptyList(),
     val stringAnchors: List<StringAnchorSpec> = emptyList()
 )

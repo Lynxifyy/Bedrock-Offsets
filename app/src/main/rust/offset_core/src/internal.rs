@@ -20,6 +20,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -178,7 +179,7 @@ pub struct SlotRecord {
     pub status: String,
     /// Auto-generated signature, when one was produced.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
+    pub signature: Option<Arc<str>>,
     /// Whether the signature matched exactly once.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_unique: Option<bool>,
@@ -206,7 +207,10 @@ pub struct ClassRecord {
     /// Number of slots in the primary group.
     pub slot_count: usize,
     /// The slots of the primary vtable group.
-    pub slots: Vec<SlotRecord>,
+    ///
+    /// Shared with the primary [`VtableGroup`] instead of copied: a class with
+    /// a few hundred slots would otherwise hold every slot record twice.
+    pub slots: Vec<Arc<SlotRecord>>,
     /// Every vtable group of the class, including the primary one.
     ///
     /// Multiple inheritance gives a class one group per base subobject; the
@@ -224,7 +228,7 @@ pub struct VtableGroup {
     #[serde(serialize_with = "hex_u64")]
     pub address: u64,
     /// The group's virtual slots.
-    pub slots: Vec<SlotRecord>,
+    pub slots: Vec<Arc<SlotRecord>>,
 }
 
 /// One function in the merged table.
@@ -259,7 +263,7 @@ pub struct FunctionRecord {
     pub target: Option<u64>,
     /// Auto-generated signature.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub signature: Option<String>,
+    pub signature: Option<Arc<str>>,
     /// Whether the signature matched exactly once.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_unique: Option<bool>,
@@ -458,6 +462,7 @@ pub fn analyze(
     for class in &mut classes {
         for group in &mut class.record.vtable_groups {
             for slot in &mut group.slots {
+                let slot = Arc::make_mut(slot);
                 if slot.address == 0 {
                     slot.status = "import".to_string();
                     slots_with_size_zero += 1;
@@ -470,7 +475,7 @@ pub fn analyze(
                     }
                 }
                 if let Some((signature, unique)) = signatures.get(&slot.address) {
-                    slot.signature = Some(signature.clone());
+                    slot.signature = Some(Arc::clone(signature));
                     slot.signature_unique = Some(*unique);
                 }
             }
@@ -742,7 +747,7 @@ fn collect_class_slots(
         check_cancelled(control)?;
         groups.sort_by_key(|vtable| vtable.vtable_address);
         let mut group_addresses: Vec<Vec<u64>> = Vec::with_capacity(groups.len());
-        let mut group_slots: Vec<Vec<SlotRecord>> = Vec::with_capacity(groups.len());
+        let mut group_slots: Vec<Vec<Arc<SlotRecord>>> = Vec::with_capacity(groups.len());
         let mut group_meta: Vec<(i64, u64)> = Vec::with_capacity(groups.len());
 
         for vtable in &groups {
@@ -788,7 +793,7 @@ fn collect_class_slots(
                     || is_thunk_to(map, image, addresses[1], addresses[0])
                     || calls_target(map, image, addresses[1], addresses[0]));
 
-            let slots: Vec<SlotRecord> = addresses
+            let slots: Vec<Arc<SlotRecord>> = addresses
                 .iter()
                 .enumerate()
                 .map(|(slot, address)| {
@@ -820,6 +825,7 @@ fn collect_class_slots(
                         signature: None,
                         signature_unique: None,
                     }
+                    .into()
                 })
                 .collect();
 
@@ -948,6 +954,7 @@ fn apply_inheritance(classes: &mut [ClassSlots], bases: &HashMap<String, Vec<Str
 
         for group in class.record.vtable_groups.iter_mut() {
             for (index, slot) in group.slots.iter_mut().enumerate() {
+                let slot = Arc::make_mut(slot);
                 let mut has_base = false;
                 let mut inherited_name: Option<&String> = None;
                 for (base_index, slots) in base_slots.iter().enumerate() {
@@ -1352,7 +1359,7 @@ fn find_string_xrefs(
 }
 
 /// Generates a wildcarded signature per named function and checks uniqueness.
-type SignatureMap = HashMap<u64, (String, bool)>;
+type SignatureMap = HashMap<u64, (Arc<str>, bool)>;
 
 /// Builds and extends a signature for every named function and every slot.
 ///
@@ -1469,7 +1476,7 @@ fn generate_signatures(
 
     let mut signatures = HashMap::with_capacity(candidates.len());
     for (index, (address, pattern)) in candidates.into_iter().enumerate() {
-        signatures.insert(address, (pattern, unique[index]));
+        signatures.insert(address, (Arc::from(pattern.as_str()), unique[index]));
     }
     Ok((signatures, truncated))
 }
@@ -1489,60 +1496,70 @@ fn count_at_function_starts(
     releaser: Option<&dyn PageReleaser>,
 ) -> CoreResult<Vec<u8>> {
     let text = map.bytes_of(TEXT_SECTION, image);
-    let specs: Vec<(String, String)> = active
-        .iter()
-        .map(|(index, pattern)| (index.to_string(), pattern.clone()))
-        .collect();
-    let set = PatternSet::new(&specs)?;
 
     const STRIDE: usize = 64;
     const PREFIX: usize = MAX_SIGNATURE_EXTENDED_BYTES;
     const CHUNK: usize = 4096;
     const WAVE: usize = 64;
+    // One matcher for every candidate needs about a kilobyte of automaton per
+    // pattern, which is gigabytes at a million candidates. Each group is
+    // matched separately instead; the buffer is rescanned per group, which
+    // costs seconds and keeps the peak flat.
+    const PATTERN_GROUP: usize = 8192;
 
     let chunks: Vec<&[(u64, u64)]> = functions.chunks(CHUNK).collect();
     let mut counts = vec![0u8; active.len()];
-    for wave in chunks.chunks(WAVE) {
-        if control.is_cancelled() {
-            return Err(CoreError::Cancelled);
-        }
-        let local: Vec<Vec<u8>> = wave
-            .par_iter()
-            .map(|chunk| {
-                let mut buffer: Vec<u8> = Vec::with_capacity(CHUNK * STRIDE);
-                for (address, _) in chunk.iter() {
-                    let offset = address.saturating_sub(map.text.address) as usize;
-                    let end = (offset + PREFIX).min(text.len());
-                    if offset < end {
-                        buffer.extend_from_slice(&text[offset..end]);
-                    }
-                    buffer.resize(buffer.len().next_multiple_of(STRIDE), 0);
-                }
-                let mut chunk_counts = vec![0u8; active.len()];
-                set.count_matches_at(&buffer, STRIDE, &mut chunk_counts);
-                chunk_counts
-            })
+    let group_count = active.len().div_ceil(PATTERN_GROUP);
+    for (group_index, group) in active.chunks(PATTERN_GROUP).enumerate() {
+        let specs: Vec<(String, String)> = group
+            .iter()
+            .map(|(index, pattern)| (index.to_string(), pattern.clone()))
             .collect();
-        for chunk_counts in local {
-            for (index, count) in chunk_counts.iter().enumerate() {
-                if *count > counts[index] {
-                    counts[index] = *count;
+        let set = PatternSet::new(&specs)?;
+        let base = group_index * PATTERN_GROUP;
+        let last_group = group_index + 1 == group_count;
+        for wave in chunks.chunks(WAVE) {
+            if control.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            let local: Vec<Vec<u8>> = wave
+                .par_iter()
+                .map(|chunk| {
+                    let mut buffer: Vec<u8> = Vec::with_capacity(CHUNK * STRIDE);
+                    for (address, _) in chunk.iter() {
+                        let offset = address.saturating_sub(map.text.address) as usize;
+                        let end = (offset + PREFIX).min(text.len());
+                        if offset < end {
+                            buffer.extend_from_slice(&text[offset..end]);
+                        }
+                        buffer.resize(buffer.len().next_multiple_of(STRIDE), 0);
+                    }
+                    let mut chunk_counts = vec![0u8; group.len()];
+                    set.count_matches_at(&buffer, STRIDE, &mut chunk_counts);
+                    chunk_counts
+                })
+                .collect();
+            for chunk_counts in local {
+                for (index, count) in chunk_counts.iter().enumerate() {
+                    if *count > counts[base + index] {
+                        counts[base + index] = *count;
+                    }
                 }
             }
-        }
-        if let Some(releaser) = releaser {
-            if let (Some((first, _)), Some((last, _))) = (
-                wave.first().and_then(|chunk| chunk.first()),
-                wave.last().and_then(|chunk| chunk.last()),
-            ) {
-                let start = first.saturating_sub(map.text.address) as usize;
-                let end = last
-                    .saturating_sub(map.text.address)
-                    .saturating_add(PREFIX as u64) as usize;
-                releaser.release(
-                    map.text.offset as usize + start,
-                    map.text.offset as usize + end,
-                );
+            if let Some(releaser) = releaser.filter(|_| last_group) {
+                if let (Some((first, _)), Some((last, _))) = (
+                    wave.first().and_then(|chunk| chunk.first()),
+                    wave.last().and_then(|chunk| chunk.last()),
+                ) {
+                    let start = first.saturating_sub(map.text.address) as usize;
+                    let end = last
+                        .saturating_sub(map.text.address)
+                        .saturating_add(PREFIX as u64) as usize;
+                    releaser.release(
+                        map.text.offset as usize + start,
+                        map.text.offset as usize + end,
+                    );
+                }
             }
         }
     }
@@ -2520,23 +2537,25 @@ mod tests {
     }
 
     fn class(name: &str, addresses: Vec<u64>) -> ClassSlots {
-        let slots: Vec<SlotRecord> = addresses
+        let slots: Vec<Arc<SlotRecord>> = addresses
             .iter()
             .enumerate()
-            .map(|(index, address)| SlotRecord {
-                slot: index,
-                offset: (index as u64) * 8,
-                address: *address,
-                file_offset: *address,
-                size: 4,
-                name: format!("{name}::vfunc_{index}"),
-                kind: "virtual".to_string(),
-                prologue_kind: "none".to_string(),
-                overrides: false,
-                inherited: false,
-                status: "verified".to_string(),
-                signature: None,
-                signature_unique: None,
+            .map(|(index, address)| {
+                Arc::new(SlotRecord {
+                    slot: index,
+                    offset: (index as u64) * 8,
+                    address: *address,
+                    file_offset: *address,
+                    size: 4,
+                    name: format!("{name}::vfunc_{index}"),
+                    kind: "virtual".to_string(),
+                    prologue_kind: "none".to_string(),
+                    overrides: false,
+                    inherited: false,
+                    status: "verified".to_string(),
+                    signature: None,
+                    signature_unique: None,
+                })
             })
             .collect();
         ClassSlots {

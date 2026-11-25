@@ -1,3 +1,12 @@
+## v1.0.9
+
+### Bug Fixes
+
+- anchor each signature on its longest literal run, so a real 26.60 library no longer stalls for hours in signature round 1
+- match signature candidates in groups of 8192 so the matcher's memory stays flat at a million candidates
+- share slot records and signatures through `Arc` instead of copying them per vtable group, cutting the peak resident set on 26.60 from 1.79 GB to 1.37 GB
+- stop capping generated signatures at 20 000; every vtable slot and symbol-named function now gets one
+
 ## v1.0.8
 
 ### Features
