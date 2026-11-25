@@ -112,6 +112,7 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val generateSignatures by viewModel.generateSignatures.collectAsStateWithLifecycle()
     val maxSlotsPerClass by viewModel.maxSlotsPerClass.collectAsStateWithLifecycle()
     val includeCombined by viewModel.includeCombined.collectAsStateWithLifecycle()
+    val lowMemoryWarnings by viewModel.lowMemoryWarnings.collectAsStateWithLifecycle()
     val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
     val exportProgress by ExportJobRepository.progress.collectAsStateWithLifecycle()
 
@@ -473,6 +474,10 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                             onMaxSlotsPerClassChange = { viewModel.setMaxSlotsPerClass(it) },
                             includeCombined = includeCombined,
                             onIncludeCombinedChange = { viewModel.setIncludeCombined(it) },
+                            lowMemoryWarnings = lowMemoryWarnings,
+                            onLowMemoryWarningsChange = {
+                                viewModel.setLowMemoryWarnings(it)
+                            },
                             onImportCategories = {
                                 categoryPicker.launch(
                                     arrayOf("application/json")

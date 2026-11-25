@@ -83,6 +83,26 @@ class ExportProgressToastTest {
     }
 
     @Test
+    fun aFinishedJobReportsHowMuchItWrote() {
+        render(
+            ExportProgress(
+                stage = ExportStage.Saving,
+                fraction = 1f,
+                fileName = "BEDROCK_OFFSETS_26.60.3.zip",
+                state = ExportState.Done,
+                zipPath = "/tmp/BEDROCK_OFFSETS_26.60.3.zip",
+                jobId = "job",
+                files = 21,
+                internalRows = 883574
+            )
+        )
+
+        composeTestRule
+            .onNodeWithText("Saved BEDROCK_OFFSETS_26.60.3.zip (21 files, 883574 internal rows)")
+            .assertExists()
+    }
+
+    @Test
     fun aFailedJobTurnsRedAndOffersRetry() {
         render(
             ExportProgress(

@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.data.export.InternalIndex
+import com.chimerateam.offsetextractor.data.export.InternalTable
 import com.chimerateam.offsetextractor.data.export.OffsetCategory
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.export.OffsetRow
@@ -109,6 +110,7 @@ fun ResultsScreen(
     onDownloadZip: (() -> Unit)? = null,
     onRetryInternal: (() -> Unit)? = null,
     internalBusy: Boolean = false,
+    internalAvailable: Boolean = true,
     onCopyName: (String) -> Unit = {}
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -183,14 +185,6 @@ fun ResultsScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        result.internal?.let { internal ->
-            Text(
-                text = "Internal C++: ${internal.functions} functions · " +
-                    "${internal.classes} classes · ${internal.vtableSlots} slots",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
         if (internalRows.size >=
             com.chimerateam.offsetextractor.data.export.INTERNAL_SEARCH_LIMIT
         ) {
@@ -218,7 +212,8 @@ fun ResultsScreen(
             onStartNewScan = onStartNewScan,
             onDownloadZip = onDownloadZip,
             onRetryInternal = onRetryInternal,
-            internalBusy = internalBusy
+            internalBusy = internalBusy,
+            internalAvailable = internalAvailable
         )
     }
 }
@@ -238,7 +233,8 @@ private fun ExportBar(
     onStartNewScan: () -> Unit,
     onDownloadZip: (() -> Unit)?,
     onRetryInternal: (() -> Unit)?,
-    internalBusy: Boolean
+    internalBusy: Boolean,
+    internalAvailable: Boolean
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
         when {
@@ -267,6 +263,26 @@ private fun ExportBar(
                 Text(
                     text = "Internal extraction failed. Retry",
                     modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+
+            // The table is the archive's reason to exist, and it can be
+            // cleared after the scan; offering a download that would produce an
+            // archive without it is worse than asking for a re-extraction.
+            // Only a scan that claimed internal rows can lose them, so a
+            // JNI-only result keeps its download button.
+            !internalAvailable && InternalTable.isPromised(result) -> Button(
+                onClick = { onRetryInternal?.invoke() },
+                enabled = onRetryInternal != null,
+                modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_ZIP_TAG)
+            ) {
+                Icon(Icons.Filled.Warning, contentDescription = null)
+                Text(
+                    text = "Internal data was cleared. Extract it again to download",
+                    modifier = Modifier.padding(start = 8.dp).weight(1f),
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 

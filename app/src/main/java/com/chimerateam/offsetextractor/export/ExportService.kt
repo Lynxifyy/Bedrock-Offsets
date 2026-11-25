@@ -23,6 +23,7 @@ import com.chimerateam.offsetextractor.data.export.ExportJobStore
 import com.chimerateam.offsetextractor.data.export.ExportProgress
 import com.chimerateam.offsetextractor.data.export.ExportStage
 import com.chimerateam.offsetextractor.data.export.ExportState
+import com.chimerateam.offsetextractor.data.export.InternalTable
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.export.OffsetZipBuilder
 import com.chimerateam.offsetextractor.data.export.PersistedExportJob
@@ -120,6 +121,9 @@ class ExportService : Service() {
         val exports = File(cacheDir, EXPORT_DIRECTORY).apply { mkdirs() }
         val zip = File(exports, fileName)
         val partial = File(exports, "$fileName.part")
+        var zipFiles = 0
+        var zipRows = 0
+        var zipBytes = 0L
         try {
             if (!retryOnly) {
                 val free = exports.usableSpace
@@ -132,6 +136,9 @@ class ExportService : Service() {
                 }
                 val summary = ExportJobRepository.pendingSummary
                     ?: throw IOException("The scan is no longer available; run it again.")
+                // The table can be cleared between the scan and the tap on
+                // Download; an archive without it must never be written.
+                InternalTable.require(summary)
                 val categories = ExportJobRepository.pendingCategories
                 val work = File(exports, "categories-$jobId").apply { mkdirs() }
                 persist(
@@ -144,7 +151,9 @@ class ExportService : Service() {
                     ExportState.Running,
                     zipPath = null
                 )
-                val builder = OffsetZipBuilder(Classifier(categories), work)
+                val builder = OffsetZipBuilder(Classifier(categories), work) { line ->
+                    android.util.Log.i(TAG_ZIP, line)
+                }
                 val result = builder.build(
                     summary = summary,
                     target = partial,
@@ -175,6 +184,9 @@ class ExportService : Service() {
                 if (!result.verified) {
                     throw IOException("The archive failed verification; nothing was saved.")
                 }
+                zipFiles = result.fileCount
+                zipRows = result.internalRows
+                zipBytes = result.bytes
                 if (zip.exists()) zip.delete()
                 if (!partial.renameTo(zip)) {
                     throw IOException("Could not finalise the archive in the cache.")
@@ -244,7 +256,16 @@ class ExportService : Service() {
                 }
             }
 
-            ExportJobRepository.complete(zip.absolutePath)
+            android.util.Log.i(
+                TAG_ZIP,
+                "ZIP: saved $total bytes to $fileName ($zipFiles files, $zipRows rows)"
+            )
+            ExportJobRepository.complete(
+                zipPath = zip.absolutePath,
+                files = zipFiles,
+                internalRows = zipRows,
+                archiveBytes = zipBytes
+            )
             store.save(
                 PersistedExportJob(
                     jobId = jobId,
@@ -440,6 +461,9 @@ class ExportService : Service() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
     }
     companion object {
+        /** Tag used for the ZIP stage lines. */
+        private const val TAG_ZIP = "OffsetZip"
+
         /** Channel used for both progress and the final result. */
         const val CHANNEL_ID = "export_progress"
 

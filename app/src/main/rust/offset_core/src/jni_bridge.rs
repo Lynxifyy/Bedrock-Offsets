@@ -680,6 +680,11 @@ pub fn analyze_internal_json(
         &mut writer,
     )?;
     writer.flush()?;
+    // The table is the only copy of the internal offsets, and Kotlin refuses to
+    // export an archive without it, so make the bytes durable and report what
+    // actually landed on disk instead of trusting the writer.
+    writer.get_ref().sync_all()?;
+    summary.table_bytes = std::fs::metadata(&target)?.len();
     summary.path = target.to_string_lossy().into_owned();
     library.advise_pages_droppable();
 

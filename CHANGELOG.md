@@ -1,3 +1,17 @@
+## v1.0.11
+
+### Bug Fixes
+
+- keep the internal C++ table in `filesDir` instead of the OS-trimmable cache, and fail the scan instead of reporting success when the table it wrote cannot be read back, which is how a download could ship a ZIP without the internal offsets
+- refuse to build the archive when the table is missing, empty or shorter than the scan reported, and disable the download with an explanation once the data is gone
+- verify the finished archive entry by entry, including that every category file is present and that the category counts add up to the table
+- show the archive's file and internal-row counts in the success toast, so a ZIP with no internal data can no longer look like a successful download
+- name every remaining suspect with a reason instead of a bare `suspect` flag
+- stop the low-memory notice from interrupting a running scan, and make it opt-in with a Settings toggle
+- keep every verified-signature row reachable: the pinned footer no longer repeats the internal counts that the summary card already shows
+- write the internal table with a streaming serializer and one binary search over the `.eh_frame` sizes instead of a per-record JSON tree and an 800k-entry map
+- resolve most signature uniqueness from the first eight bytes at each function start instead of rescanning the library for every round
+
 ## v1.0.10
 
 ### Bug Fixes

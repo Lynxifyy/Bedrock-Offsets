@@ -28,6 +28,9 @@ import com.chimerateam.offsetextractor.data.saf.ApkMetadata
  * @property lowMemory whether the system has reported memory pressure. The UI
  *   shows a warning and offers to free the cache; the app never guesses that
  *   the scan itself caused it.
+ * @property internalAvailable whether the internal table behind [result] is
+ *   still on disk. A cleared table keeps the result visible but disables the
+ *   download, because an archive without it would be worthless.
  * @property batch progress of a multi-APK run, or `null` when only one APK is
  *   being processed.
  * @property batchSummary outcome of the last multi-APK run, shown once and
@@ -45,6 +48,7 @@ data class ScannerUiState(
     val errorHint: String? = null,
     val exportMessage: String? = null,
     val lowMemory: Boolean = false,
+    val internalAvailable: Boolean = false,
     val batch: BatchProgress? = null,
     val batchSummary: BatchSummary? = null
 )

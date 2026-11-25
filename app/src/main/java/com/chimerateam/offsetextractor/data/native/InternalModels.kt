@@ -37,7 +37,9 @@ data class InternalSummary(
     @SerializedName("slotsWithSizeZero") val slotsWithSizeZero: Int = 0,
     @SerializedName("dataSymbols") val dataSymbols: Int = 0,
     @SerializedName("truncatedSignatures") val truncatedSignatures: Boolean = false,
-    val path: String = ""
+    val path: String = "",
+    @SerializedName("tableBytes") val tableBytes: Long = 0,
+    val rows: Int = 0
 ) {
     /** Whether the table holds anything worth showing. */
     val isEmpty: Boolean get() = functions == 0 && classes == 0

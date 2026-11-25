@@ -83,10 +83,49 @@ class OffsetZipBuilderTest {
             vtableSlots = 1,
             functions = 2,
             named = 2,
+            dataSymbols = 1,
             path = table.absolutePath
         ),
         internalResolved = true
     )
+
+    @Test
+    fun anArchiveWithoutTheInternalTableIsRefused() {
+        val table = table()
+        val target = File(createTempDirectory().toFile(), "BEDROCK_OFFSETS_26.60.3.zip")
+        val summary = summary(table)
+        assertTrue("the test must start from a real table", table.delete())
+
+        val failure = runCatching {
+            OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile())
+                .build(summary, target)
+        }.exceptionOrNull()
+
+        assertTrue(
+            "an export without the table must fail, got $failure",
+            failure is InternalTableMissingException
+        )
+        assertTrue("no archive may be left behind", !target.exists())
+    }
+
+    @Test
+    fun aTruncatedInternalTableIsRefused() {
+        val table = table()
+        val target = File(createTempDirectory().toFile(), "BEDROCK_OFFSETS_26.60.3.zip")
+        val summary = summary(table).copy(
+            internal = summary(table).internal?.copy(tableBytes = table.length() + 4096)
+        )
+
+        val failure = runCatching {
+            OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile())
+                .build(summary, target)
+        }.exceptionOrNull()
+
+        assertTrue(
+            "a short table must be refused, got $failure",
+            failure is InternalTableMissingException
+        )
+    }
 
     @Test
     fun theZipUsesTheDocumentedFolderLayoutAndVersion() {

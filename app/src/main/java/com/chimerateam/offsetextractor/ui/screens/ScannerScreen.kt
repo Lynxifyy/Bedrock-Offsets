@@ -301,14 +301,15 @@ private fun SuccessPane(
     ResultsScreen(
         result = result,
         fillHeight = fillHeight,
-        header = { ResultsPanel(result = result) },
+        header = { ResultsPanel(result = result, internalAvailable = state.internalAvailable) },
         onCopyJson = onCopyJson,
         onShareJson = onShareJson,
         onSaveJson = onSaveJson,
         onStartNewScan = onStartNewScan,
         onDownloadZip = onDownloadZip,
         onRetryInternal = onRetryInternal,
-        internalBusy = internalBusy
+        internalBusy = internalBusy,
+        internalAvailable = state.internalAvailable
     )
 }
 

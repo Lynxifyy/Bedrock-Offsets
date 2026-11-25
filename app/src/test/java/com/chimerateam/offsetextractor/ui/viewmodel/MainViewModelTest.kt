@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
+import com.chimerateam.offsetextractor.data.export.ExportStarter
 import com.chimerateam.offsetextractor.data.native.BuildIdentity
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
 import com.chimerateam.offsetextractor.data.native.InternalAnalysis
@@ -824,10 +825,25 @@ class MainViewModelTest {
     }
 
     @Test
-    fun memoryPressureRaisesANoticeAndCanBeDismissed() = runTest(dispatcher) {
+    fun theLowMemoryNoticeIsOffByDefault() = runTest(dispatcher) {
         val viewModel = newViewModel()
-        assertTrue(!viewModel.uiState.value.lowMemory)
 
+        assertTrue("the notice must be off by default", !viewModel.lowMemoryWarnings.value)
+
+        viewModel.onMemoryPressure()
+
+        assertTrue(!viewModel.uiState.value.lowMemory)
+        assertTrue(
+            "a disabled notice must not log",
+            viewModel.logEntries.value.none { it.message.contains("low on memory") }
+        )
+    }
+
+    @Test
+    fun anEnabledLowMemoryNoticeCanBeDismissed() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.setLowMemoryWarnings(true)
         viewModel.onMemoryPressure()
 
         assertTrue(viewModel.uiState.value.lowMemory)
@@ -841,13 +857,141 @@ class MainViewModelTest {
     }
 
     @Test
-    fun memoryPressureIsReportedOnlyOnce() = runTest(dispatcher) {
-        val viewModel = newViewModel()
+    fun anEnabledLowMemoryNoticeIsReportedOncePerMinute() = runTest(dispatcher) {
+        var now = 1_000_000L
+        val viewModel = newViewModel(clock = { now })
 
+        viewModel.setLowMemoryWarnings(true)
         repeat(3) { viewModel.onMemoryPressure() }
 
-        val notices = viewModel.logEntries.value.count { it.message.contains("low on memory") }
-        assertEquals("the notice must not repeat", 1, notices)
+        assertEquals(
+            "the notice must not repeat within a minute",
+            1,
+            viewModel.logEntries.value.count { it.message.contains("low on memory") }
+        )
+
+        viewModel.onLowMemoryNoticeDismissed()
+        now += 61_000L
+        viewModel.onMemoryPressure()
+
+        assertEquals(
+            "a minute later the notice is allowed again",
+            2,
+            viewModel.logEntries.value.count { it.message.contains("low on memory") }
+        )
+    }
+
+    @Test
+    fun theLowMemoryNoticeIsSuppressedWhileAScanRuns() = runTest(dispatcher) {
+        val engine = FakeEngine(delayMillis = 50)
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.setLowMemoryWarnings(true)
+        viewModel.onApkSelected(uri)
+        viewModel.onMemoryPressure()
+
+        assertTrue(
+            "a scan must not be interrupted by an advisory notice",
+            !viewModel.uiState.value.lowMemory
+        )
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun aScanWithAnInternalTableEnablesTheDownload() = runTest(dispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertEquals(ScannerPhase.Success, viewModel.uiState.value.phase)
+        assertTrue(
+            "a scan whose table is on disk must offer the download",
+            viewModel.uiState.value.internalAvailable
+        )
+    }
+
+    @Test
+    fun aScanThatLosesItsInternalTableFailsInsteadOfReportingSuccess() = runTest(dispatcher) {
+        val engine = FakeEngine()
+        // The engine claims a table it never wrote, which is what an export
+        // without internal offsets looked like.
+        engine.internalResult = InternalSummary(
+            classes = 1,
+            functions = 1,
+            path = File(cacheDir, "gone.ndjson").absolutePath
+        )
+        val viewModel = newViewModel(engine = engine)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(ScannerPhase.Success, state.phase)
+        val summary = requireNotNull(state.result)
+        assertTrue("the internal pass must report the loss", !summary.internalResolved)
+        assertNotNull(summary.internalError)
+        assertTrue(
+            "the download must stay unavailable",
+            !state.internalAvailable
+        )
+    }
+
+    @Test
+    fun aDownloadWithoutTheInternalTableIsRefused() = runTest(dispatcher) {
+        val started = mutableListOf<String>()
+        val viewModel = MainViewModel(
+            safAccess = FakeSafAccess(),
+            engine = FakeEngine(),
+            cacheDir = cacheDir,
+            writer = DocumentWriter { _, _ -> WriteResult.Success },
+            exportStarter = object : ExportStarter {
+                override fun start(
+                    destination: Uri,
+                    summary: com.chimerateam.offsetextractor.ui.state.ScanResultSummary,
+                    categories: List<com.chimerateam.offsetextractor.data.export.CategoryRule>,
+                    includeCombined: Boolean
+                ) {
+                    started += destination.toString()
+                }
+            },
+            ioDispatcher = dispatcher
+        )
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        val table = File(viewModel.uiState.value.result?.internal?.path.orEmpty())
+        assertTrue("the fake must have written a table", table.delete())
+
+        viewModel.onZipDestinationChosen(uri)
+        advanceUntilIdle()
+
+        assertTrue("nothing may be started", started.isEmpty())
+        val message = viewModel.uiState.value.exportMessage.orEmpty()
+        assertTrue("the refusal must explain itself: $message", message.contains("internal"))
+        assertTrue(
+            "the download must be disabled afterwards",
+            !viewModel.uiState.value.internalAvailable
+        )
+    }
+
+    @Test
+    fun clearingTheCacheDisablesTheDownload() = runTest(dispatcher) {
+        val cache = newCache()
+        val viewModel = newViewModel(cache = cache)
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.internalAvailable)
+
+        viewModel.clearCache()
+        advanceUntilIdle()
+
+        assertTrue(
+            "cleared data must not be offered for download",
+            !viewModel.uiState.value.internalAvailable
+        )
     }
 
     @Test
@@ -1028,7 +1172,8 @@ class MainViewModelTest {
         patterns: List<PatternSpec> = listOf(PatternSpec("prologue", "FD 7B BF A9")),
         writer: DocumentWriter = DocumentWriter { _, _ -> WriteResult.Success },
         cache: ScanCache? = null,
-        preferences: ScanPreferences? = null
+        preferences: ScanPreferences? = null,
+        clock: () -> Long = System::currentTimeMillis
     ): MainViewModel = MainViewModel(
         safAccess = access,
         engine = engine,
@@ -1037,7 +1182,8 @@ class MainViewModelTest {
         writer = writer,
         cache = cache,
         preferences = preferences,
-        ioDispatcher = dispatcher
+        ioDispatcher = dispatcher,
+        clock = clock
     )
 
     private fun newCache(): ScanCache = ScanCache(File(cacheDir, "scan-cache"))

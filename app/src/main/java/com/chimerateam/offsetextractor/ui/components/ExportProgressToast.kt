@@ -96,8 +96,15 @@ fun ExportProgressToast(
         isDone -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.secondary
     }
+    // The counts are the only way a user can tell that the archive really
+    // carries the internal offsets; a bare "Saved" hid a ZIP with none.
+    val contents = if (progress.files > 0) {
+        " (${progress.files} files, ${progress.internalRows} internal rows)"
+    } else {
+        ""
+    }
     val stageText = when {
-        isDone -> "Saved ${progress.fileName}"
+        isDone -> "Saved ${progress.fileName}$contents"
         progress.stage == ExportStage.Building -> "Building ZIP…"
         else -> "Saving…"
     }

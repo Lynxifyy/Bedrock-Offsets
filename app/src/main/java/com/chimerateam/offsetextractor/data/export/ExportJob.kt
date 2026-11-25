@@ -52,6 +52,9 @@ enum class ExportState {
  * @property destinationUri the user's document, as text.
  * @property zipPath cached ZIP path, when it exists.
  * @property jobId identifier used by the persisted job.
+ * @property files files written to the archive, zero until it is built.
+ * @property internalRows internal records the archive holds.
+ * @property archiveBytes size of the finished archive.
  */
 data class ExportProgress(
     val stage: ExportStage = ExportStage.Building,
@@ -63,7 +66,10 @@ data class ExportProgress(
     val error: String? = null,
     val destinationUri: String? = null,
     val zipPath: String? = null,
-    val jobId: String = ""
+    val jobId: String = "",
+    val files: Int = 0,
+    val internalRows: Int = 0,
+    val archiveBytes: Long = 0L
 ) {
     /** Whether a job is running. */
     val isRunning: Boolean get() = state == ExportState.Running
@@ -167,14 +173,24 @@ object ExportJobRepository {
         _progress.value = progress
     }
 
-    /** Marks the job finished. */
-    fun complete(zipPath: String) {
+    /**
+     * Marks the job finished.
+     *
+     * @param zipPath cached archive that was saved.
+     * @param files files the archive holds, including the manifest.
+     * @param internalRows internal records it carries.
+     * @param archiveBytes size of the archive.
+     */
+    fun complete(zipPath: String, files: Int = 0, internalRows: Int = 0, archiveBytes: Long = 0L) {
         _progress.value = _progress.value.copy(
             stage = ExportStage.Saving,
             fraction = 1f,
             state = ExportState.Done,
             zipPath = zipPath,
-            error = null
+            error = null,
+            files = files,
+            internalRows = internalRows,
+            archiveBytes = archiveBytes
         )
         dropPayload()
     }

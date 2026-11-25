@@ -1,0 +1,147 @@
+package com.chimerateam.offsetextractor.data.export
+
+import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
+import java.io.File
+import java.io.IOException
+
+/**
+ * Thrown when a scan promises internal rows but the NDJSON table behind them
+ * cannot be used.
+ *
+ * This is deliberately fatal for an export: an archive without the internal
+ * data looks complete, verifies against its own manifest and is worthless to a
+ * client, so the export must fail instead of shipping it.
+ */
+class InternalTableMissingException(message: String, cause: Throwable? = null) :
+    IOException(message, cause)
+
+/**
+ * Thrown when the table holds a different number of rows than the scan
+ * reported.
+ *
+ * A mismatch means the table was truncated or replaced, so its category files
+ * would silently disagree with `stats` in the index.
+ */
+class InternalCountMismatchException(message: String) : IOException(message)
+
+/**
+ * A usable internal table.
+ *
+ * @property file the NDJSON file.
+ * @property bytes its size on disk.
+ * @property rows classes plus functions plus data symbols it must contain.
+ */
+data class InternalTableFile(
+    val file: File,
+    val bytes: Long,
+    val rows: Int
+)
+
+/**
+ * Validates the internal table a [ScanResultSummary] points at.
+ *
+ * The table is written by the engine into app-private storage that survives a
+ * cache trim, but it can still disappear: the user can clear it, a retried scan
+ * can replace it, and an older cached result can outlive its file. Every step
+ * that consumes it therefore validates it first instead of assuming it exists.
+ */
+object InternalTable {
+
+    /**
+     * Rows the summary claims the table holds.
+     *
+     * @param summary the scan result.
+     * @return classes plus functions plus data symbols, zero when the internal
+     *   pass never ran.
+     */
+    fun expectedRows(summary: ScanResultSummary): Int {
+        val internal = summary.internal ?: return 0
+        return internal.classes + internal.functions + internal.dataSymbols
+    }
+
+    /**
+     * Whether an export for [summary] must contain internal data.
+     *
+     * @param summary the scan result.
+     * @return true when the internal pass reported at least one row.
+     */
+    fun isRequired(summary: ScanResultSummary): Boolean = expectedRows(summary) > 0
+
+    /**
+     * Whether [summary] was supposed to carry internal data at all.
+     *
+     * A pass that finished but recorded no rows counts: a result cached by an
+     * older version deserialises with every count at zero, and treating that as
+     * "nothing to export" is exactly how an archive with an empty
+     * `InternalCPP/` was written and reported as a success.
+     *
+     * @param summary the scan result.
+     * @return true when the archive must contain internal data.
+     */
+    fun isPromised(summary: ScanResultSummary): Boolean =
+        summary.internalResolved || expectedRows(summary) > 0
+
+    /**
+     * Returns the validated table, or `null` when the summary claims no rows.
+     *
+     * @param summary the scan result.
+     * @return the table to split, or `null` for a JNI-only export.
+     * @throws InternalTableMissingException when rows are claimed but the file
+     *   is missing, empty or shorter than the engine reported.
+     */
+    fun require(summary: ScanResultSummary): InternalTableFile? {
+        val internal = summary.internal
+        val rows = expectedRows(summary)
+        if (rows == 0) {
+            if (summary.internalResolved) {
+                throw InternalTableMissingException(
+                    "The internal extraction finished without recording any rows. " +
+                        "Re-run the internal extraction."
+                )
+            }
+            return null
+        }
+        val path = internal?.path.orEmpty()
+        if (path.isBlank()) {
+            throw InternalTableMissingException(
+                "The internal offsets file is gone (no path recorded, $rows rows expected). " +
+                    "Re-run the internal extraction."
+            )
+        }
+        val file = File(path)
+        if (!file.isFile) {
+            throw InternalTableMissingException(
+                "The internal offsets file is gone ($path, ${file.length()} bytes). " +
+                    "Re-run the internal extraction."
+            )
+        }
+        val bytes = file.length()
+        if (bytes <= 0L) {
+            throw InternalTableMissingException(
+                "The internal offsets file is empty ($path, 0 bytes). " +
+                    "Re-run the internal extraction."
+            )
+        }
+        val reported = internal?.tableBytes ?: 0L
+        if (reported > 0L && bytes != reported) {
+            throw InternalTableMissingException(
+                "The internal offsets file is truncated ($path, $bytes bytes, " +
+                    "$reported expected). Re-run the internal extraction."
+            )
+        }
+        return InternalTableFile(file, bytes, rows)
+    }
+
+    /**
+     * Validates a table without throwing.
+     *
+     * @param summary the scan result.
+     * @return `null` when the table is usable, otherwise the reason it is not.
+     */
+    fun problem(summary: ScanResultSummary): String? = try {
+        require(summary)
+        null
+    } catch (error: InternalTableMissingException) {
+        error.message ?: "The internal offsets file is gone. Re-run the internal extraction."
+    }
+}

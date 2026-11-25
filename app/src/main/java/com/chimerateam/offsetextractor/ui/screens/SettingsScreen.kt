@@ -39,6 +39,8 @@ import com.chimerateam.offsetextractor.ui.theme.ThemeMode
  * @param lastBuildId build identifier recorded by the most recent scan, or an
  *   empty string when nothing has been scanned yet.
  * @param modifier layout modifier for the screen.
+ * @param lowMemoryWarnings whether the advisory low-memory notice is shown.
+ * @param onLowMemoryWarningsChange invoked when the notice is switched.
  */
 @Composable
 fun SettingsScreen(
@@ -58,6 +60,8 @@ fun SettingsScreen(
     onMaxSlotsPerClassChange: (Int) -> Unit = {},
     includeCombined: Boolean = false,
     onIncludeCombinedChange: (Boolean) -> Unit = {},
+    lowMemoryWarnings: Boolean = false,
+    onLowMemoryWarningsChange: (Boolean) -> Unit = {},
     onImportCategories: () -> Unit = {},
     onResetCategories: () -> Unit = {}
 ) {
@@ -156,6 +160,14 @@ fun SettingsScreen(
         }
 
         SectionPanel(title = "Storage") {
+            SettingToggleRow(
+                title = "Low memory warnings",
+                subtitle = "Show a notice when the system reports memory pressure. " +
+                    "The scan is unaffected either way.",
+                checked = lowMemoryWarnings,
+                onCheckedChange = onLowMemoryWarningsChange
+            )
+            Spacer(Modifier.height(8.dp))
             SettingToggleRow(
                 title = "Force rescan",
                 subtitle = "Ignore a cached result and scan every time",

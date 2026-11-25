@@ -1,6 +1,7 @@
 package com.chimerateam.offsetextractor.data.export
 
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
+import com.chimerateam.offsetextractor.util.formatBytes
 import com.google.gson.JsonParser
 import java.io.BufferedOutputStream
 import java.io.File
@@ -26,15 +27,25 @@ data class ManifestEntry(
  * @property file the finished archive.
  * @property manifest the files it contains, in write order.
  * @property verified whether re-opening the archive confirmed every CRC, size
- *   and digest.
+ *   and digest, that every category file is present and that the internal row
+ *   counts add up.
  * @property version version label shared by every file name.
+ * @property bytes size of the finished archive.
+ * @property internalRows internal records written, zero for a JNI-only export.
+ * @property categoryFiles number of `InternalCPP/` category files.
  */
 data class ZipBuildResult(
     val file: File,
     val manifest: List<ManifestEntry>,
     val verified: Boolean,
-    val version: String
-)
+    val version: String,
+    val bytes: Long = 0L,
+    val internalRows: Int = 0,
+    val categoryFiles: Int = 0
+) {
+    /** Every file in the archive, including `manifest.json`. */
+    val fileCount: Int get() = manifest.size + 1
+}
 
 /**
  * Builds `BEDROCK_OFFSETS_<version>.zip`.
@@ -46,10 +57,12 @@ data class ZipBuildResult(
  *
  * @param classifier category rules.
  * @param workDir scratch directory for the raw category files.
+ * @param log receives one line per export stage.
  */
 class OffsetZipBuilder(
     private val classifier: Classifier,
-    private val workDir: File
+    private val workDir: File,
+    private val log: (String) -> Unit = {}
 ) {
 
     /**
@@ -60,6 +73,10 @@ class OffsetZipBuilder(
      * @param includeCombined whether to add one combined internal document.
      * @param onProgress receives `(fraction, message)` with `fraction` in 0..1.
      * @return the archive and whether it verified.
+     * @throws InternalTableMissingException when the scan reports internal rows
+     *   but the table behind them is gone.
+     * @throws InternalCountMismatchException when the table holds a different
+     *   number of rows than the scan reported.
      */
     fun build(
         summary: ScanResultSummary,
@@ -70,22 +87,20 @@ class OffsetZipBuilder(
         workDir.mkdirs()
         target.parentFile?.mkdirs()
         val version = OffsetExporter.versionLabel(summary)
-        val table = summary.internal?.path
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::File)
-        val split = if (table != null && table.isFile) {
-            InternalTableSplitter(classifier, workDir).split(table) { percent, message ->
+        val table = InternalTable.require(summary)
+        val split = table?.let { validated ->
+            InternalTableSplitter(classifier, workDir).split(validated.file) { percent, message ->
                 onProgress(percent / 200f, message)
             }
-        } else {
-            SplitResult(emptyList(), emptyMap(), 0, 0, 0)
-        }
-        check(split.consistent) {
-            "Category assignment is inconsistent: ${split.assignedFunctions} of " +
-                "${split.totalFunctions} functions were assigned."
-        }
+        } ?: SplitResult(emptyList(), emptyMap(), 0, 0, 0)
+        requireCounts(summary, split, table)
+        log(
+            "ZIP: classified ${split.totalClasses} classes / ${split.totalFunctions} functions " +
+                "into ${split.parts.size} category files"
+        )
 
         val manifest = mutableListOf<ManifestEntry>()
+        val categoryPaths = mutableListOf<String>()
         ZipOutputStream(BufferedOutputStream(target.outputStream(), BUFFER_BYTES)).use { zip ->
             zip.setLevel(9)
 
@@ -103,6 +118,7 @@ class OffsetZipBuilder(
 
             for ((index, part) in split.parts.withIndex()) {
                 val name = "InternalCPP/${OffsetExporter.categoryFileName(part.id, summary)}"
+                categoryPaths += name
                 manifest += writeEntry(zip, name, part.counts.total) { writer ->
                     OffsetExporter.writeCategory(summary, part, writer)
                 }
@@ -124,11 +140,83 @@ class OffsetZipBuilder(
             zip.write(manifestText.toByteArray(Charsets.UTF_8))
             zip.closeEntry()
         }
+        log(
+            "ZIP: built ${target.name}, ${manifest.size + 1} files, " +
+                "${formatBytes(target.length())}"
+        )
 
         onProgress(0.95f, "Verifying the archive")
-        val verified = verify(target, manifest)
-        onProgress(1f, "Archive verified")
-        return ZipBuildResult(target, manifest, verified, version)
+        val expectedRows = InternalTable.expectedRows(summary)
+        val verified = verify(target, manifest, categoryPaths, expectedRows)
+        if (verified) {
+            log("ZIP: verified (${manifest.size + 1} files, $expectedRows internal rows)")
+        } else {
+            log("ZIP: verification FAILED for ${target.name}")
+        }
+        onProgress(1f, if (verified) "Archive verified" else "Archive failed verification")
+        return ZipBuildResult(
+            file = target,
+            manifest = manifest,
+            verified = verified,
+            version = version,
+            bytes = target.length(),
+            internalRows = split.rows,
+            categoryFiles = categoryPaths.size
+        )
+    }
+
+    /**
+     * Refuses to build an archive whose internal part disagrees with the scan.
+     *
+     * @param summary the scan result.
+     * @param split the category split.
+     * @param table the validated table, or `null` for a JNI-only export.
+     */
+    private fun requireCounts(
+        summary: ScanResultSummary,
+        split: SplitResult,
+        table: InternalTableFile?
+    ) {
+        val internal = summary.internal
+        if (table == null) {
+            if (split.rows > 0) {
+                throw InternalCountMismatchException(
+                    "The internal table holds ${split.rows} rows but the scan claims none."
+                )
+            }
+            if (internal != null && (internal.functions > 0 || internal.classes > 0)) {
+                throw InternalTableMissingException(
+                    "The internal offsets file is gone (no path recorded, " +
+                        "${InternalTable.expectedRows(summary)} rows expected). " +
+                        "Re-run the internal extraction."
+                )
+            }
+            return
+        }
+        if (!split.consistent) {
+            throw InternalCountMismatchException(
+                "Category assignment is inconsistent: ${split.assignedClasses} of " +
+                    "${split.totalClasses} classes, ${split.assignedFunctions} of " +
+                    "${split.totalFunctions} functions and ${split.assignedSymbols} of " +
+                    "${split.totalSymbols} data symbols were assigned."
+            )
+        }
+        if (internal == null) {
+            throw InternalCountMismatchException(
+                "The internal table holds ${split.rows} rows but the scan recorded no counts."
+            )
+        }
+        if (split.totalFunctions != internal.functions ||
+            split.totalClasses != internal.classes ||
+            split.totalSymbols != internal.dataSymbols
+        ) {
+            throw InternalCountMismatchException(
+                "The internal table does not match the scan: ${split.totalClasses} classes " +
+                    "(expected ${internal.classes}), ${split.totalFunctions} functions " +
+                    "(expected ${internal.functions}), ${split.totalSymbols} data symbols " +
+                    "(expected ${internal.dataSymbols}). Re-run the internal extraction."
+            )
+        }
     }
 
     private fun writeEntry(
@@ -180,14 +268,26 @@ class OffsetZipBuilder(
      * Re-opens [archive] and checks every entry against the manifest.
      *
      * `ZipFile` verifies a DEFLATED entry's CRC while it is read, so a corrupt
-     * archive throws here rather than at the client.
+     * archive throws here rather than at the client. On top of that, an archive
+     * that promises internal rows must actually contain the category files and
+     * their manifest counts must add up to those rows: a manifest that only
+     * describes itself would otherwise "verify" an empty export.
      *
      * @param archive the finished archive.
      * @param expected the manifest that was written.
+     * @param categoryPaths the `InternalCPP/` category files the build wrote.
+     * @param expectedInternalRows rows the scan reported, or `null` to skip the
+     *   internal checks.
      * @return whether every entry matched.
      */
-    fun verify(archive: File, expected: List<ManifestEntry>): Boolean {
+    fun verify(
+        archive: File,
+        expected: List<ManifestEntry>,
+        categoryPaths: List<String> = emptyList(),
+        expectedInternalRows: Int? = null
+    ): Boolean {
         if (!archive.isFile) return false
+        if ((expectedInternalRows ?: 0) > 0 && categoryPaths.isEmpty()) return false
         return runCatching {
             ZipFile(archive).use { zip ->
                 val manifestEntry = zip.getEntry("manifest.json") ?: return@use false
@@ -196,6 +296,7 @@ class OffsetZipBuilder(
                     .use { JsonParser.parseReader(it).asJsonObject }
                 val files = manifest.getAsJsonArray("files")
                 if (files.size() != expected.size) return@use false
+                if (manifest.get("entryCount")?.asInt != expected.size) return@use false
                 for (index in 0 until files.size()) {
                     val item = files[index].asJsonObject
                     val path = item.get("path").asString
@@ -216,7 +317,15 @@ class OffsetZipBuilder(
                     if (total != size) return@use false
                     if (hex(digest.digest()) != sha) return@use false
                 }
-                true
+                val rows = expectedInternalRows ?: return@use true
+                if (rows <= 0) return@use true
+                var written = 0
+                for (path in categoryPaths) {
+                    val entry = expected.firstOrNull { it.path == path } ?: return@use false
+                    if (zip.getEntry(path) == null) return@use false
+                    written += entry.entries
+                }
+                written == rows
             }
         }.getOrDefault(false)
     }

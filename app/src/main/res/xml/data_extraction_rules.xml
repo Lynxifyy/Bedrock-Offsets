@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- See backup_rules.xml: the scan store is reproducible and far too large. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="scan-data/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="scan-data/" />
+    </device-transfer>
+</data-extraction-rules>

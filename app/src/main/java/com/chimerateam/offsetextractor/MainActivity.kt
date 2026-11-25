@@ -46,9 +46,13 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels {
         viewModelFactory {
             initializer {
-                // The extracted library must live inside the managed cache, or
-                // "Clear cache" never frees the largest file the app creates.
-                val scanCache = ScanCache(File(cacheDir, "scan-cache").apply { mkdirs() })
+                // The extracted library and the internal table are the only
+                // copies of what a scan produced, and Android deletes cacheDir
+                // under storage pressure, so they live in filesDir instead.
+                // Auto-backup excludes this directory (res/xml/backup_rules.xml).
+                val scanCache = ScanCache(
+                    File(filesDir, ScanCache.DIRECTORY_NAME).apply { mkdirs() }
+                )
                 val pack = SignaturePack.loadDocument(applicationContext)
                 MainViewModel.create(
                     safAccess = AndroidSafApkAccess(applicationContext),

@@ -60,8 +60,20 @@ data class SplitResult(
     /** Functions assigned to a category file. */
     val assignedFunctions: Int get() = parts.sumOf { it.counts.functions }
 
-    /** Whether every function was assigned exactly once. */
-    val consistent: Boolean get() = assignedFunctions == totalFunctions
+    /** Classes assigned to a category file. */
+    val assignedClasses: Int get() = parts.sumOf { it.counts.classes }
+
+    /** Data symbols assigned to a category file. */
+    val assignedSymbols: Int get() = parts.sumOf { it.counts.symbols }
+
+    /** Records the table held, in total. */
+    val rows: Int get() = totalClasses + totalFunctions + totalSymbols
+
+    /** Whether every record was assigned exactly once. */
+    val consistent: Boolean
+        get() = assignedFunctions == totalFunctions &&
+            assignedClasses == totalClasses &&
+            assignedSymbols == totalSymbols
 }
 
 /**
@@ -87,11 +99,21 @@ class InternalTableSplitter(
      * @param table NDJSON file written by the engine.
      * @param onProgress receives `(percent, message)` updates.
      * @return the files and the class-to-category map.
+     * @throws InternalTableMissingException when the table is absent or empty.
      */
     fun split(table: File, onProgress: (Int, String) -> Unit = { _, _ -> }): SplitResult {
         workDir.mkdirs()
         if (!table.isFile) {
-            return SplitResult(emptyList(), emptyMap(), 0, 0, 0)
+            throw InternalTableMissingException(
+                "The internal offsets file is gone (${table.absolutePath}, 0 bytes). " +
+                    "Re-run the internal extraction."
+            )
+        }
+        if (table.length() == 0L) {
+            throw InternalTableMissingException(
+                "The internal offsets file is empty (${table.absolutePath}, 0 bytes). " +
+                    "Re-run the internal extraction."
+            )
         }
 
         val classWriters = mutableMapOf<String, BufferedWriter>()

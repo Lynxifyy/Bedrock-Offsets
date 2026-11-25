@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The scan store holds extracted native libraries and internal tables that can
+  reach hundreds of megabytes. They are reproducible from the APK, so they are
+  never uploaded to a backup.
+-->
+<full-backup-content>
+    <exclude domain="file" path="scan-data/" />
+</full-backup-content>

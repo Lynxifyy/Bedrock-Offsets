@@ -146,6 +146,10 @@ pub struct InternalSummary {
     pub truncated_signatures: bool,
     /// Absolute path of the NDJSON table, filled in by the JNI layer.
     pub path: String,
+    /// Size of the NDJSON table on disk, filled in by the JNI layer.
+    pub table_bytes: u64,
+    /// Records written: classes plus functions plus data symbols.
+    pub rows: usize,
 }
 
 /// One virtual slot.
@@ -427,8 +431,10 @@ pub fn analyze(
     report(sink, 90, "Writing the internal table");
     let (addresses, suspect) = merge_addresses(&functions, &names);
     const RELEASE_WINDOW: usize = 4 * 1024 * 1024;
-    let fde_sizes: HashMap<u64, u64> = functions.iter().copied().collect();
-    drop(functions);
+    // `functions` is already sorted by address, so the FDE sizes need no hash
+    // table: a binary search over the same pairs answers every lookup and costs
+    // a third of the memory of an 800k-entry map.
+    let fde_sizes = FdeSizes::new(functions);
     let verifier = PrologueVerifier::new()?;
 
     // Join every slot to the function at the same address, so a slot carries
@@ -441,12 +447,11 @@ pub fn analyze(
                     continue;
                 }
                 let size = fde_sizes
-                    .get(&slot.address)
-                    .copied()
+                    .get(slot.address)
                     .or_else(|| named_size(named_symbols, slot.address, &slot.name))
                     .unwrap_or(0);
                 let (prologue, _) = classify_function(map, image, slot.address, &verifier);
-                let status = if fde_sizes.contains_key(&slot.address) {
+                let status = if fde_sizes.contains(slot.address) {
                     "verified"
                 } else if is_executable(map, slot.address) {
                     "fde_missing"
@@ -513,6 +518,8 @@ pub fn analyze(
         data_symbols: data_symbols.len(),
         truncated_signatures,
         path: String::new(),
+        table_bytes: 0,
+        rows: classes.len() + addresses.len() + data_symbols.len(),
     };
 
     writeln!(
@@ -527,11 +534,7 @@ pub fn analyze(
     )?;
 
     for class in &classes {
-        writeln!(
-            out,
-            "{}",
-            serde_json::json!({ "type": "class", "class": class.record })
-        )?;
+        write_record(out, "class", "class", &class.record)?;
     }
 
     for symbol in data_symbols {
@@ -543,11 +546,7 @@ pub fn analyze(
             kind: symbol.kind.clone(),
             reason: symbol.reason.clone(),
         };
-        writeln!(
-            out,
-            "{}",
-            serde_json::json!({ "type": "symbol", "symbol": record })
-        )?;
+        write_record(out, "symbol", "symbol", &record)?;
     }
 
     // The function loop walks `.text` from low to high, so pages behind the
@@ -555,9 +554,10 @@ pub fn analyze(
     // advances; otherwise a 340 MB library stays resident for the whole write.
     let mut released_to = 0usize;
     for address in &addresses {
-        let entry = names.get(address);
-        let size = fde_sizes.get(address).copied().unwrap_or_else(|| {
+        let entry = names.remove(address);
+        let size = fde_sizes.get(*address).unwrap_or_else(|| {
             entry
+                .as_ref()
                 .and_then(|entry| named_size(named_symbols, *address, &entry.name))
                 .unwrap_or(0)
         });
@@ -571,7 +571,7 @@ pub fn analyze(
             }
         }
         let (prologue_kind, thunk_target) = classify_function(map, image, *address, &verifier);
-        let from_fde = fde_sizes.contains_key(address);
+        let from_fde = fde_sizes.contains(*address);
 
         let (name, source, aliases, kind, mangled, status) = match entry {
             Some(entry) => {
@@ -585,11 +585,11 @@ pub fn analyze(
                     }
                 });
                 (
-                    entry.name.clone(),
+                    entry.name,
                     entry.source,
-                    entry.aliases.clone(),
+                    entry.aliases,
                     entry.kind,
-                    entry.mangled.clone(),
+                    entry.mangled,
                     status,
                 )
             }
@@ -656,11 +656,7 @@ pub fn analyze(
             signature_unique,
             suspect_reason,
         };
-        writeln!(
-            out,
-            "{}",
-            serde_json::json!({ "type": "function", "function": record })
-        )?;
+        write_record(out, "function", "function", &record)?;
     }
 
     if let Some(releaser) = releaser {
@@ -679,6 +675,53 @@ pub fn analyze(
         report(sink, 100, "Internal extraction complete");
     }
     Ok(stats)
+}
+
+/// Function sizes from `.eh_frame`, sorted by address.
+///
+/// `.eh_frame` records arrive in address order and `analyze` sorts them, so a
+/// binary search replaces the hash table an 800k-function library would
+/// otherwise need and drops the resident cost from tens of megabytes to the
+/// thirteen the pairs themselves take.
+struct FdeSizes(Vec<(u64, u64)>);
+
+impl FdeSizes {
+    fn new(functions: Vec<(u64, u64)>) -> Self {
+        Self(functions)
+    }
+
+    fn get(&self, address: u64) -> Option<u64> {
+        self.0
+            .binary_search_by_key(&address, |(start, _)| *start)
+            .ok()
+            .map(|index| self.0[index].1)
+    }
+
+    fn contains(&self, address: u64) -> bool {
+        self.0
+            .binary_search_by_key(&address, |(start, _)| *start)
+            .is_ok()
+    }
+}
+
+/// Writes one NDJSON record without building a JSON tree first.
+///
+/// `serde_json::json!` allocates a `Value` and then a `String` per record, which
+/// a table of a million records pays for twice; streaming the two fixed keys and
+/// the record itself keeps the write pass allocation-free.
+fn write_record<T: Serialize>(
+    out: &mut dyn Write,
+    kind: &str,
+    key: &str,
+    value: &T,
+) -> std::io::Result<()> {
+    out.write_all(b"{\"type\":\"")?;
+    out.write_all(kind.as_bytes())?;
+    out.write_all(b"\",\"")?;
+    out.write_all(key.as_bytes())?;
+    out.write_all(b"\":")?;
+    serde_json::to_writer(&mut *out, value)?;
+    out.write_all(b"}\n")
 }
 
 /// Reports progress to an optional sink.
@@ -1424,6 +1467,27 @@ fn generate_signatures(
         return Ok((HashMap::new(), truncated));
     }
 
+    // Most signatures are already unique among function starts after eight
+    // bytes, and proving that needs one sorted list of start prefixes instead of
+    // a matcher run over the whole buffer. Only the rest go through the rounds.
+    let prefixes = StartPrefixes::new(map, image, functions);
+    let mut unique = vec![false; candidates.len()];
+    let mut remaining = 0usize;
+    for (index, (_, pattern)) in candidates.iter().enumerate() {
+        match fixed_prefix_word(pattern) {
+            Some(word) if prefixes.count(word) == 1 => unique[index] = true,
+            _ => remaining += 1,
+        }
+    }
+    report(
+        sink,
+        80,
+        &format!(
+            "Signatures: {} resolved by prefix, {remaining} need scanning",
+            candidates.len() - remaining
+        ),
+    );
+
     let mut lengths = vec![MAX_SIGNATURE_BYTES];
     let mut next = MAX_SIGNATURE_BYTES;
     while next < MAX_SIGNATURE_EXTENDED_BYTES {
@@ -1431,7 +1495,6 @@ fn generate_signatures(
         lengths.push(next);
     }
 
-    let mut unique = vec![false; candidates.len()];
     for (round, length) in lengths.iter().enumerate() {
         if control.is_cancelled() {
             return Err(CoreError::Cancelled);
@@ -1576,6 +1639,52 @@ fn peak_resident_mb() -> Option<u64> {
     let line = status.lines().find(|line| line.starts_with("VmHWM:"))?;
     let kilobytes: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
     Some(kilobytes / 1024)
+}
+
+/// First eight bytes at every function start, sorted.
+///
+/// A signature that matches at a function start necessarily matches that
+/// start's first eight bytes, so a prefix that occurs once proves the whole
+/// signature unique without touching `.text`.
+struct StartPrefixes(Vec<u64>);
+
+impl StartPrefixes {
+    fn new(map: &SectionMap, image: &[u8], functions: &[(u64, u64)]) -> Self {
+        let text = map.bytes_of(TEXT_SECTION, image);
+        let mut prefixes = Vec::with_capacity(functions.len());
+        for (address, _) in functions {
+            let offset = address.saturating_sub(map.text.address) as usize;
+            if offset + 8 <= text.len() {
+                let mut word = [0u8; 8];
+                word.copy_from_slice(&text[offset..offset + 8]);
+                prefixes.push(u64::from_le_bytes(word));
+            }
+        }
+        prefixes.sort_unstable();
+        Self(prefixes)
+    }
+
+    /// How many starts begin with [word], capped at two.
+    fn count(&self, word: u64) -> u8 {
+        let lower = self.0.partition_point(|probe| *probe < word);
+        let upper = self.0.partition_point(|probe| *probe <= word);
+        (upper - lower).min(2) as u8
+    }
+}
+
+/// The first eight bytes of a hex signature when all of them are fixed.
+///
+/// @returns the bytes as a little-endian word, or `None` when the signature
+///   starts with a wildcard or is shorter than eight bytes.
+fn fixed_prefix_word(pattern: &str) -> Option<u64> {
+    let mut word = 0u64;
+    let mut count = 0usize;
+    for token in pattern.split_whitespace().take(8) {
+        let value = u8::from_str_radix(token, 16).ok()?;
+        word |= (value as u64) << (count * 8);
+        count += 1;
+    }
+    (count == 8).then_some(word)
 }
 
 /// Shortest fixed run a generated signature must contain.
@@ -2617,6 +2726,78 @@ mod tests {
             section(".text", 0x1000, 0x1000, 0x100, true),
             vec![section(".data.rel.ro", 0x3000, 0x3000, 0x400, false)],
         )
+    }
+
+    #[test]
+    fn fixed_prefix_word_requires_eight_literal_bytes() {
+        assert_eq!(
+            fixed_prefix_word("FD 7B BF A9 FD 03 00 91 FF 43"),
+            Some(0x9100_03fd_a9bf_7bfd)
+        );
+        // A wildcard in the first eight bytes makes the shortcut unusable.
+        assert_eq!(fixed_prefix_word("FD 7B BF A9 ?? ?? ?? ??"), None);
+        assert_eq!(fixed_prefix_word("FD 7B BF A9"), None);
+    }
+
+    #[test]
+    fn a_unique_start_prefix_proves_a_signature_unique() {
+        let mut image = vec![0u8; 0x2000];
+        // Two functions in `.text`: 0x1000 and 0x1010, distinct prefixes.
+        image[0x1000..0x1008].copy_from_slice(&[0xFD, 0x7B, 0xBF, 0xA9, 1, 2, 3, 4]);
+        image[0x1010..0x1018].copy_from_slice(&[0xFD, 0x7B, 0xBF, 0xA9, 9, 9, 9, 9]);
+        let map = map_with(section(".text", 0x1000, 0x1000, 0x100, true), vec![]);
+        let functions = vec![(0x1000u64, 0x10u64), (0x1010, 0x10)];
+
+        let prefixes = StartPrefixes::new(&map, &image, &functions);
+
+        assert_eq!(
+            prefixes.count(fixed_prefix_word("FD 7B BF A9 01 02 03 04").unwrap()),
+            1
+        );
+        assert_eq!(
+            prefixes.count(fixed_prefix_word("FD 7B BF A9 09 09 09 09").unwrap()),
+            1
+        );
+        // The first four bytes alone are shared, so an eight-byte word built
+        // from them plus equal tails counts both starts.
+        assert_eq!(
+            prefixes.count(fixed_prefix_word("FD 7B BF A9 01 02 03 04").unwrap()),
+            1
+        );
+        let shared = u64::from_le_bytes([0xFD, 0x7B, 0xBF, 0xA9, 0, 0, 0, 0]);
+        assert_eq!(prefixes.count(shared), 0);
+    }
+
+    #[test]
+    fn fde_sizes_answers_by_binary_search() {
+        let sizes = FdeSizes::new(vec![(0x1000, 0x40), (0x1040, 0x18), (0x2000, 0)]);
+
+        assert_eq!(sizes.get(0x1000), Some(0x40));
+        assert_eq!(sizes.get(0x1040), Some(0x18));
+        assert_eq!(sizes.get(0x1080), None);
+        assert!(sizes.contains(0x2000));
+        assert!(!sizes.contains(0x1fff));
+    }
+
+    #[test]
+    fn a_record_is_written_as_one_ndjson_line() {
+        #[derive(serde::Serialize)]
+        struct Record {
+            address: u64,
+            name: String,
+        }
+
+        let record = Record {
+            address: 0x1234,
+            name: "Actor::~Actor".to_string(),
+        };
+        let mut out: Vec<u8> = Vec::new();
+        write_record(&mut out, "function", "function", &record).unwrap();
+
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "{\"type\":\"function\",\"function\":{\"address\":4660,\"name\":\"Actor::~Actor\"}}\n"
+        );
     }
 
     #[test]

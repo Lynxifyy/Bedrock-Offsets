@@ -47,6 +47,23 @@ mapped to its enclosing function through the `.eh_frame` table.
 Prefer a string that appears once. A common log prefix will produce dozens of
 candidates and an `ambiguous` result.
 
+## How signatures are made unique
+
+Every vtable slot and every symbol-named function gets a signature. It starts as
+the first 48 bytes of the function with relocatable operands wildcarded (`ADRP`
+and `ADD` immediates, `B`/`BL` targets, `LDR` literal), and is extended in 16-byte
+steps up to 128 bytes until it selects exactly one function start in `.text`. A
+signature that is still ambiguous at 128 bytes is stored with
+`signatureUnique: false`, and `stats.truncatedSignatures` says the cap was hit.
+
+Two things keep that pass cheap on a 340 MB library:
+
+- the first eight bytes at every function start are collected once and sorted, so
+  a signature whose first eight bytes occur at exactly one start is unique by
+  construction and never needs a scan. Only the rest go through the matcher.
+- the matcher runs over a packed buffer of function-start prefixes in groups of
+  8192 patterns, and the pages behind each wave are released as it advances.
+
 ## Testing a new entry
 
 ```bash

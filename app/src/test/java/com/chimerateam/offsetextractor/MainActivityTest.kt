@@ -2,8 +2,10 @@ package com.chimerateam.offsetextractor
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
@@ -29,11 +31,24 @@ class MainActivityTest {
     }
 
     @Test
-    fun theLowMemoryCallbackRaisesTheNotice() {
-        // onTrimMemory(TRIM_MEMORY_RUNNING_LOW) is not the only callback the
-        // system sends; onLowMemory is delivered on the same pressure and must
-        // reach the same notice.
+    fun theLowMemoryCallbackRaisesTheNoticeOnlyWhenTheSettingIsOn() {
+        // The notice is advisory, so it is off until the user asks for it.
         composeTestRule.activity.onLowMemory()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Low on memory").assertDoesNotExist()
+
+        composeTestRule.onNodeWithText("Settings").performClick()
+        composeTestRule
+            .onNodeWithContentDescription("Low memory warnings")
+            .performScrollTo()
+            .performClick()
+        composeTestRule.onNodeWithText("Scanner").performClick()
+        composeTestRule.waitForIdle()
+
+        // onLowMemory is delivered on the same pressure as onTrimMemory, and
+        // both must reach the same notice.
+        composeTestRule.activity.onLowMemory()
+        composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithText("Low on memory").assertIsDisplayed()
     }

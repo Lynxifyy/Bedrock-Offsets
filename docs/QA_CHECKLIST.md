@@ -88,14 +88,25 @@ APK size.
 
 ### 7. Export and load
 
-Export the document, then paste the `offsets` map into a mock loader config and
-confirm every name resolves. Check the file landed where you chose and is valid
-JSON.
+Download the ZIP, then open it and confirm it has `manifest.json`, `JNI/` and
+`InternalCPP/` with one file per category. Paste the `offsets` map from the JNI
+document into a mock loader config and confirm every name resolves. Check the
+file landed where you chose and is valid JSON.
+
+Then press Download again with the internal data gone (Settings, Clear cache):
+the button must read "Internal data was cleared. Extract it again to download"
+and no archive may be written.
 
 ### 8. Cancel mid-scan
 
 Start a scan and press cancel. Expect the UI to return to idle within a moment,
 a log line recording the cancellation, and no extracted file left in the cache.
+
+### 8a. Close the app during a download
+
+Start a download on a large APK, then swipe the app away from recents. The
+notification must keep counting and the ZIP must appear complete where you chose
+it. Re-open the app: no interrupted-job card should be offered for that job.
 
 ### 9. Rotate during a scan
 

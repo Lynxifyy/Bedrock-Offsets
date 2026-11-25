@@ -3,13 +3,19 @@ package com.chimerateam.offsetextractor.data.cache
 import java.io.File
 
 /**
- * On-disk cache of extracted libraries and exported offset documents.
+ * On-disk store of extracted libraries, internal tables and offset documents.
+ *
+ * It is deliberately *not* Android's `cacheDir`: the extracted library and the
+ * internal NDJSON table are the only copies of what a scan produced, and the OS
+ * reclaims `cacheDir` under storage pressure. The root therefore lives in
+ * `filesDir`, is excluded from auto-backup, and is only deleted when the user
+ * asks for it.
  *
  * Every method is fail-closed: a directory that cannot be read yields an empty
- * listing or a zero size rather than an exception, so a broken cache never
+ * listing or a zero size rather than an exception, so a broken store never
  * stops a scan.
  *
- * @param root directory that holds the cached artefacts.
+ * @param root directory that holds the artefacts.
  */
 class ScanCache(private val root: File) {
 
@@ -164,6 +170,9 @@ class ScanCache(private val root: File) {
     }
 
     companion object {
+        /** Directory under `filesDir` that holds everything a scan produced. */
+        const val DIRECTORY_NAME = "scan-data"
+
         /** Size of the block used to overwrite a file during [shred]. */
         private const val SHRED_BLOCK_BYTES = 64 * 1024
 

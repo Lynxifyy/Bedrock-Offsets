@@ -34,7 +34,9 @@ class SettingsScreenTest {
         onTheme: (ThemeMode) -> Unit = {},
         onInclude: (Boolean) -> Unit = {},
         onSignatures: (Boolean) -> Unit = {},
-        onSlots: (Int) -> Unit = {}
+        onSlots: (Int) -> Unit = {},
+        lowMemoryWarnings: Boolean = false,
+        onLowMemory: (Boolean) -> Unit = {}
     ) {
         composeTestRule.setContent {
             var mode by remember { mutableStateOf(themeMode) }
@@ -55,7 +57,9 @@ class SettingsScreenTest {
                     maxSlotsPerClass = maxSlots,
                     onIncludeAllFunctionsChange = onInclude,
                     onGenerateSignaturesChange = onSignatures,
-                    onMaxSlotsPerClassChange = onSlots
+                    onMaxSlotsPerClassChange = onSlots,
+                    lowMemoryWarnings = lowMemoryWarnings,
+                    onLowMemoryWarningsChange = onLowMemory
                 )
             }
         }
@@ -107,6 +111,19 @@ class SettingsScreenTest {
         composeTestRule.onNodeWithText("256").performScrollTo().performClick()
 
         assertEquals(256, slots)
+    }
+
+    @Test
+    fun theLowMemoryToggleReportsItsNewValue() {
+        var enabled: Boolean? = null
+        render(lowMemoryWarnings = false, onLowMemory = { enabled = it })
+
+        composeTestRule
+            .onNodeWithContentDescription("Low memory warnings")
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(true, enabled)
     }
 
     @Test

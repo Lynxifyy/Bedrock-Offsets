@@ -57,6 +57,25 @@ is checked; a mismatch fails the download instead of shipping a broken file.
 The JNI document under `JNI/` is the v1 document described below and is
 unchanged. The `InternalCPP/` folder holds one file per category plus an index.
 
+### The archive always carries the internal data
+
+An archive without `InternalCPP/` is worthless to a client that came for the
+C++ offsets, and it verifies against its own manifest, so nothing downstream can
+notice the loss. Three guards make that state unreachable:
+
+- the engine writes the NDJSON table into `filesDir/scan-data`, which the OS
+  never trims and auto-backup excludes, and the scan fails rather than reporting
+  success when the table it just wrote cannot be read back;
+- the exporter refuses to write an archive when the table is missing, empty or
+  shorter than the scan reported, and refuses again when the category files do
+  not add up to the table's rows;
+- the finished archive is re-opened, and every entry's CRC, size and digest is
+  checked along with the presence of every category file.
+
+The UI follows the same rule: once the data is gone, the download button becomes
+"Internal data was cleared. Extract it again to download", and the success toast
+reports how many files and internal rows the archive holds.
+
 The current schema version is **1**. A field is only ever added within a
 version; a rename or a removal bumps `schemaVersion`.
 

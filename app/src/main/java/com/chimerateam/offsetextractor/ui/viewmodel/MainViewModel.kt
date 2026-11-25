@@ -2,13 +2,16 @@ package com.chimerateam.offsetextractor.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.chimerateam.offsetextractor.data.cache.DEFAULT_LOW_MEMORY_WARNINGS
 import com.chimerateam.offsetextractor.data.cache.ResultCache
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.export.CategoryRule
 import com.chimerateam.offsetextractor.data.export.Classifier
+import com.chimerateam.offsetextractor.data.export.ExportJobRepository
 import com.chimerateam.offsetextractor.data.export.ExportKind
 import com.chimerateam.offsetextractor.data.export.ExportStarter
+import com.chimerateam.offsetextractor.data.export.InternalTable
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.export.OffsetZipBuilder
 import com.chimerateam.offsetextractor.data.native.InternalAnalysis
@@ -101,7 +104,8 @@ class MainViewModel(
     private val preferences: ScanPreferences? = null,
     private var categories: List<CategoryRule> = emptyList(),
     private val exportStarter: ExportStarter? = null,
-    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val clock: () -> Long = System::currentTimeMillis
 ) : ViewModel() {
 
     private val supervisor = SupervisorJob(viewModelScope.coroutineContext[Job])
@@ -158,6 +162,14 @@ class MainViewModel(
     /** Persisted theme mode name. */
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
+    private val _lowMemoryWarnings = MutableStateFlow(DEFAULT_LOW_MEMORY_WARNINGS)
+
+    /** Whether the advisory low-memory notice is shown. */
+    val lowMemoryWarnings: StateFlow<Boolean> = _lowMemoryWarnings.asStateFlow()
+
+    /** When the notice was last logged and shown. */
+    private var lastMemoryNoticeMillis = Long.MIN_VALUE
+
     private var activeApk: ApkSource? = null
     private var extractionJob: Job? = null
 
@@ -191,6 +203,9 @@ class MainViewModel(
             }
             viewModelScope.launch(supervisor + ioDispatcher) {
                 store.themeMode.collect { _themeMode.value = it }
+            }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.lowMemoryWarnings.collect { _lowMemoryWarnings.value = it }
             }
         }
     }
@@ -529,6 +544,14 @@ class MainViewModel(
             _uiState.update { it.copy(exportMessage = "Internal offsets are not ready.") }
             return
         }
+        val problem = InternalTable.problem(result)
+        if (problem != null) {
+            emit(Logs.error(TAG_UI, problem))
+            _uiState.update {
+                it.copy(exportMessage = problem, internalAvailable = false)
+            }
+            return
+        }
         val starter = exportStarter
         if (starter == null) {
             emit(Logs.warn(TAG_UI, "The download service is not available."))
@@ -613,12 +636,28 @@ class MainViewModel(
     /**
      * Records that the system reported memory pressure.
      *
-     * The notice is advisory: the scan continues, because extraction streams
-     * from the descriptor and a scan holds only its result set. What the user
-     * can usefully do is free the cache, so the notice says that.
+     * The notice is advisory and off by default: it cannot change how much
+     * memory the app uses, and Android reports trim levels on a healthy device
+     * often enough that showing it every time trains the user to dismiss it
+     * without reading it.
+     *
+     * When the setting is on, the notice is shown at most once per
+     * [MEMORY_NOTICE_INTERVAL_MS] and never while a scan or an export runs: the
+     * only action it offers ("Clear cache") is refused during a scan and would
+     * delete the internal table an export needs.
      */
     fun onMemoryPressure() {
+        if (!_lowMemoryWarnings.value || isBusy()) {
+            return
+        }
         if (_uiState.value.lowMemory) return
+        val now = clock()
+        if (lastMemoryNoticeMillis != Long.MIN_VALUE &&
+            now - lastMemoryNoticeMillis < MEMORY_NOTICE_INTERVAL_MS
+        ) {
+            return
+        }
+        lastMemoryNoticeMillis = now
         emit(
             Logs.warn(
                 TAG_UI,
@@ -632,6 +671,32 @@ class MainViewModel(
     fun onLowMemoryNoticeDismissed() {
         _uiState.update { it.copy(lowMemory = false) }
     }
+
+    /**
+     * Turns the advisory low-memory notice on or off.
+     *
+     * @param enabled whether the notice may be shown.
+     */
+    fun setLowMemoryWarnings(enabled: Boolean) {
+        _lowMemoryWarnings.value = enabled
+        emit(
+            Logs.info(
+                TAG_UI,
+                if (enabled) {
+                    "Low-memory warnings enabled."
+                } else {
+                    "Low-memory warnings disabled."
+                }
+            )
+        )
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setLowMemoryWarnings(enabled)
+        }
+    }
+
+    /** Whether a scan, an internal pass or an export is using the cache. */
+    private fun isBusy(): Boolean =
+        extractionJob?.isActive == true || ExportJobRepository.progress.value.isRunning
 
     /**
      * Turns cached-result reuse on or off.
@@ -748,7 +813,13 @@ class MainViewModel(
             refreshCacheSize()
             if (cleared) {
                 emit(Logs.info(TAG_CACHE, "Cache cleared."))
-                _uiState.update { it.copy(exportMessage = "Cache cleared.") }
+                _uiState.update {
+                    it.copy(
+                        exportMessage = "Cache cleared. The internal data must be " +
+                            "extracted again before a download.",
+                        internalAvailable = false
+                    )
+                }
             } else {
                 emit(Logs.warn(TAG_CACHE, "Some cached files could not be deleted."))
             }
@@ -894,13 +965,9 @@ class MainViewModel(
                     "Build ID: ${symbols.identity.buildId} (from ${symbols.identity.source})"
                 )
             )
-            emit(
-                Logs.info(
-                    TAG_RUST,
-                    "Symbols: ${symbols.symbols.defined} defined, " +
-                        "${symbols.symbols.jni.size} JNI exports"
-                )
-            )
+            val definedSymbols = symbols.symbols.defined
+            val jniSymbols = symbols.symbols.jni.size
+            emit(Logs.info(TAG_RUST, "Symbols: $definedSymbols defined, $jniSymbols JNI exports"))
 
             cachedResultFor(symbols.identity.buildId)?.let { cached ->
                 emit(Logs.info(TAG_CACHE, "Loaded offsets from previous scan."))
@@ -918,6 +985,8 @@ class MainViewModel(
                             textSection = cached.textSection ?: sections.text,
                             imageBase = sections.imageBase
                         ),
+                        internalAvailable = cached.internalResolved &&
+                            InternalTable.problem(cached) == null,
                         error = null,
                         errorHint = null
                     )
@@ -966,6 +1035,8 @@ class MainViewModel(
                     progress = 100,
                     progressTask = "Mapping complete",
                     result = summary,
+                    internalAvailable = summary.internalResolved &&
+                        InternalTable.problem(summary) == null,
                     error = null,
                     errorHint = null
                 )
@@ -1110,6 +1181,7 @@ class MainViewModel(
             }
             val analysis = engine.analyzeInternal(extracted, options, output, reporter)
             val summary = analysis.summary
+            requireInternalTable(summary.path, summary.tableBytes, summary.rows)
             emit(
                 Logs.info(
                     TAG_RUST,
@@ -1134,6 +1206,36 @@ class MainViewModel(
             emit(Logs.warn(TAG_RUST, "Internal extraction failed: $detail"))
             null
         }
+    }
+
+    /**
+     * Confirms the engine's table is on disk with the size it reported.
+     *
+     * The table is the only copy of the internal offsets: a pass that reports
+     * 883,574 functions but leaves nothing on disk would otherwise produce a
+     * "successful" scan and a ZIP with no internal data in it.
+     *
+     * @param path absolute path the engine reported.
+     * @param tableBytes size the engine reported, or zero when it did not.
+     * @param rows rows the engine reported.
+     * @throws java.io.IOException when the file is missing, empty or short.
+     */
+    private fun requireInternalTable(path: String, tableBytes: Long, rows: Int) {
+        val file = File(path)
+        val bytes = file.length()
+        if (path.isBlank() || !file.isFile || bytes <= 0L) {
+            throw java.io.IOException(
+                "The internal offsets file is gone ($path, $bytes bytes). " +
+                    "Re-run the internal extraction."
+            )
+        }
+        if (tableBytes > 0L && bytes != tableBytes) {
+            throw java.io.IOException(
+                "The internal offsets file is truncated ($path, $bytes bytes, " +
+                    "$tableBytes expected). Re-run the internal extraction."
+            )
+        }
+        emit(Logs.info(TAG_RUST, "Internal table: ${file.name} ${formatBytes(bytes)} $rows rows"))
     }
 
     /**
@@ -1166,6 +1268,8 @@ class MainViewModel(
             _uiState.update {
                 it.copy(
                     result = updated,
+                    internalAvailable = updated.internalResolved &&
+                        InternalTable.problem(updated) == null,
                     progress = 100,
                     progressTask = if (analysis != null) {
                         "Internal offsets ready"
@@ -1326,6 +1430,9 @@ class MainViewModel(
      * @param patterns signatures the scanner looks for; empty skips the scan.
      */
     companion object {
+
+        /** Minimum gap between two low-memory notices. */
+        private const val MEMORY_NOTICE_INTERVAL_MS = 60_000L
 
         /**
          * Builds a ViewModel wired to the real engine.

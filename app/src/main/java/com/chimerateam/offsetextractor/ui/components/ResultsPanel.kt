@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.chimerateam.offsetextractor.data.export.InternalTable
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.MonoText
@@ -32,9 +33,16 @@ import com.chimerateam.offsetextractor.util.formatBytes
  *
  * @param result the completed scan summary.
  * @param modifier layout modifier for the panel.
+ * @param internalAvailable whether the internal table behind [result] is still
+ *   on disk; when it is not, the panel says so instead of implying the data is
+ *   ready to download.
  */
 @Composable
-fun ResultsPanel(result: ScanResultSummary, modifier: Modifier = Modifier) {
+fun ResultsPanel(
+    result: ScanResultSummary,
+    modifier: Modifier = Modifier,
+    internalAvailable: Boolean = true
+) {
     SectionPanel(title = "Result", modifier = modifier) {
         Field("APK", result.displayName)
         Field("Architecture", result.architecture)
@@ -76,6 +84,20 @@ fun ResultsPanel(result: ScanResultSummary, modifier: Modifier = Modifier) {
             Field("Verified", internal.verified.toString())
             Field("Ambiguous", internal.ambiguous.toString())
             Field("Signatures", internal.signatures.toString())
+            Field("Unique signatures", internal.signaturesUnique.toString())
+            Field("Data symbols", internal.dataSymbols.toString())
+            if (internal.tableBytes > 0) {
+                Field("Table", formatBytes(internal.tableBytes))
+            }
+            if (!internalAvailable && InternalTable.isPromised(result)) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "The internal data was cleared. Extract it again before " +
+                        "downloading, or the archive will not contain it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
             if (internal.truncatedSignatures) {
                 Text(
                     text = "Signature generation was capped; the first " +

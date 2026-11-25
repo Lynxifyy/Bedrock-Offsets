@@ -48,6 +48,9 @@ interface ScanPreferences {
     /** Maximum virtual slots read per class. */
     val maxSlotsPerClass: Flow<Int> get() = flowOf(4096)
 
+    /** Whether the advisory low-memory notice is shown. */
+    val lowMemoryWarnings: Flow<Boolean> get() = flowOf(DEFAULT_LOW_MEMORY_WARNINGS)
+
     /**
      * Records the selected theme mode.
      *
@@ -75,7 +78,24 @@ interface ScanPreferences {
      * @param slots maximum slots per class.
      */
     suspend fun setMaxSlotsPerClass(slots: Int) {}
+
+    /**
+     * Records whether the low-memory notice is shown.
+     *
+     * @param enabled whether to show it.
+     */
+    suspend fun setLowMemoryWarnings(enabled: Boolean) {}
 }
+
+/**
+ * Whether the low-memory notice is shown by default.
+ *
+ * It is advisory only: it changes nothing about how much memory the app uses,
+ * and Android reports pressure on a healthy device often enough that showing it
+ * by default trains the user to dismiss it. Flip this one constant to change
+ * the default for everyone.
+ */
+const val DEFAULT_LOW_MEMORY_WARNINGS = false
 
 /** File-backed [ScanPreferences] on top of DataStore. */
 class DataStoreScanPreferences(private val store: DataStore<Preferences>) : ScanPreferences {
@@ -122,6 +142,13 @@ class DataStoreScanPreferences(private val store: DataStore<Preferences>) : Scan
         store.edit { it[MAX_SLOTS_PER_CLASS] = slots.coerceIn(64, 4096) }
     }
 
+    override val lowMemoryWarnings: Flow<Boolean> =
+        store.data.map { it[LOW_MEMORY_WARNINGS] ?: DEFAULT_LOW_MEMORY_WARNINGS }
+
+    override suspend fun setLowMemoryWarnings(enabled: Boolean) {
+        store.edit { it[LOW_MEMORY_WARNINGS] = enabled }
+    }
+
     /** Reads the stored build identifier once, for use outside a flow. */
     suspend fun currentBuildId(): String = lastBuildId.first()
 
@@ -132,6 +159,7 @@ class DataStoreScanPreferences(private val store: DataStore<Preferences>) : Scan
         val INCLUDE_ALL_FUNCTIONS = booleanPreferencesKey("include_all_functions")
         val GENERATE_SIGNATURES = booleanPreferencesKey("generate_signatures")
         val MAX_SLOTS_PER_CLASS = intPreferencesKey("max_slots_per_class")
+        val LOW_MEMORY_WARNINGS = booleanPreferencesKey("low_memory_warnings")
     }
 }
 

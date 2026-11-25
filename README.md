@@ -63,11 +63,15 @@ bash scripts/setup_toolchain.sh
 
 ## Output
 
-A scan writes one JSON document, named `offsets_<BuildID>.json` by default. It
-carries the identity of the library (SHA-256, build ID) so a loader can refuse
-offsets from the wrong build, and a flat `offsets` map of name to address.
-[`docs/OUTPUT_FORMAT.md`](docs/OUTPUT_FORMAT.md) documents every field and the
-versioning rules.
+A scan writes one ZIP, `BEDROCK_OFFSETS_<version>.zip`, with a `JNI/` folder
+holding the v1 JNI document and an `InternalCPP/` folder holding the C++ offsets
+split into one file per category, plus a `manifest.json` that lists every entry
+with its size and SHA-256. [`docs/OUTPUT_FORMAT.md`](docs/OUTPUT_FORMAT.md)
+documents the layout, every field and the versioning rules.
+
+The JNI document carries the identity of the library (SHA-256, build ID) so a
+loader can refuse offsets from the wrong build, and a flat `offsets` map of name
+to address.
 
 A minimal loader reads only `offsets`:
 
@@ -83,6 +87,23 @@ A minimal loader reads only `offsets`:
 
 The literal value `"-"` means the signature was expected but not found in this
 build. Treat it as a failure, not as address zero.
+
+The archive is refused rather than written when the internal table behind it is
+missing, empty or shorter than the scan reported, and the finished archive is
+re-opened and checked entry by entry. A download therefore either carries the
+internal offsets or fails with a reason; it cannot silently ship a ZIP without
+them.
+
+## Settings
+
+| Setting | Effect |
+|---|---|
+| Dark mode | Switches between the light and the dark palette. |
+| Category rules | Imports a custom `categories.json`, or restores the built-in rules. |
+| Include one combined internal file | Adds the whole internal document to the archive as well as the category files. Off by default because of its size. |
+| Low memory warnings | Shows an advisory notice when the system reports memory pressure. Off by default: the scan is unaffected either way. |
+| Force rescan | Ignores a cached result and scans every time. |
+| Clear cache | Deletes every artefact a scan produced, including the internal table. A download is unavailable until the next scan. |
 
 ## Adding a signature
 

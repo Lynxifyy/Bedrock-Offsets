@@ -5,8 +5,10 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
@@ -130,6 +132,103 @@ class ScannerScreenWideLayoutTest {
         composeTestRule
             .onNodeWithText("Download BEDROCK_OFFSETS_deadbeef.zip")
             .assertIsDisplayed()
+    }
+
+    /**
+     * The summary card must show the whole "Verified signatures" block.
+     *
+     * A device screenshot showed the card cut off after its heading, with
+     * Matches, Discarded and Peak resident missing, so this asserts the three
+     * rows are actually laid out and visible on a landscape tablet.
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = "w1920dp-h1200dp-land")
+    fun theResultCardShowsEveryVerifiedSignatureRow() {
+        renderWide(
+            ScannerUiState(
+                phase = ScannerPhase.Success,
+                progress = 100,
+                progressTask = "Mapping complete",
+                result = summary.copy(
+                    discardedMatches = 7,
+                    peakResidentBytes = 154L * 1024 * 1024
+                )
+            )
+        )
+
+        composeTestRule.onNodeWithText("Matches").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Discarded").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Peak resident").assertIsDisplayed()
+    }
+
+    /**
+     * The same three rows must survive the narrow, phone-shaped layout.
+     *
+     * This is the layout the device screenshot came from: one column, a pinned
+     * footer under the list and a log pane taking the remaining height. If the
+     * footer grows, the list viewport shrinks and the card is cut mid-row.
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h891dp")
+    fun theResultCardShowsEveryVerifiedSignatureRowOnAPhone() {
+        renderWide(
+            ScannerUiState(
+                phase = ScannerPhase.Success,
+                progress = 100,
+                progressTask = "Mapping complete",
+                result = summary.copy(
+                    discardedMatches = 7,
+                    peakResidentBytes = 154L * 1024 * 1024
+                )
+            )
+        )
+
+        composeTestRule.onNodeWithText("Matches").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Discarded").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Peak resident").assertIsDisplayed()
+    }
+
+    /**
+     * A summary taller than the list viewport must still be readable.
+     *
+     * A LazyColumn clips an item taller than its viewport and the clipped part
+     * cannot be reached by scrolling the list, so the summary needs its own
+     * scroll container. This is the shape of the real result card: a dozen
+     * internal rows below the signature block.
+     */
+    @Test
+    @Config(sdk = [34], qualifiers = "w411dp-h891dp")
+    fun aTallSummaryStaysReachableOnAPhone() {
+        renderWide(
+            ScannerUiState(
+                phase = ScannerPhase.Success,
+                progress = 100,
+                progressTask = "Mapping complete",
+                internalAvailable = true,
+                result = summary.copy(
+                    discardedMatches = 7,
+                    peakResidentBytes = 154L * 1024 * 1024,
+                    internal = InternalSummary(
+                        classes = 7396,
+                        vtableSlots = 140501,
+                        functions = 803306,
+                        named = 131770,
+                        verified = 129000,
+                        signatures = 131770,
+                        signaturesUnique = 4000,
+                        dataSymbols = 1432,
+                        path = "/data/scan-data/internal.ndjson",
+                        tableBytes = 247L * 1024 * 1024,
+                        rows = 945000
+                    ),
+                    internalResolved = true
+                )
+            )
+        )
+
+        composeTestRule.onNodeWithText("Peak resident").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Table").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag(DOWNLOAD_ZIP_TAG).assertIsDisplayed()
     }
 
     @Test
