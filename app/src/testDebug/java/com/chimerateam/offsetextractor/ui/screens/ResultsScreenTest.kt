@@ -128,15 +128,12 @@ class ResultsScreenTest {
     fun exportActionsArePresent() {
         content()
 
-        composeTestRule.onNodeWithText("Copy").assertExists()
-        composeTestRule.onNodeWithText("Share").assertExists()
-        composeTestRule.onNodeWithText("Save").assertExists()
+        composeTestRule.onNodeWithText("Copy JNI").assertExists()
+        composeTestRule.onNodeWithText("Share JNI").assertExists()
+        composeTestRule.onNodeWithText("Save JNI").assertExists()
         composeTestRule.onNodeWithText("Start new scan").assertExists()
         composeTestRule
-            .onNodeWithText("Download JNI_OFFSETS_deadbeef.json")
-            .assertExists()
-        composeTestRule
-            .onNodeWithText("Download INTERNALCPP_OFFSETS_deadbeef.json")
+            .onNodeWithText("Download BEDROCK_OFFSETS_deadbeef.zip")
             .assertExists()
     }
 

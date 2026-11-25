@@ -26,7 +26,9 @@
 
 use std::collections::BTreeMap;
 
-use goblin::elf::reloc::{R_AARCH64_ABS64, R_AARCH64_RELATIVE};
+use goblin::elf::reloc::{
+    R_AARCH64_ABS64, R_AARCH64_GLOB_DAT, R_AARCH64_JUMP_SLOT, R_AARCH64_RELATIVE,
+};
 use goblin::elf::section_header::SHT_RELA;
 use serde::Serialize;
 
@@ -81,7 +83,18 @@ pub struct VtableMap {
     /// Number of relocations examined.
     pub relocations_examined: usize,
     /// Resolved vtables, keyed by class name.
+    ///
+    /// A class with multiple inheritance has one vtable per base subobject; the
+    /// map keeps the primary one (lowest `type_info` address) so a name lookup
+    /// is unambiguous.
     pub entries: BTreeMap<String, TypeVTable>,
+    /// Every resolved vtable, including the secondary groups of a class with
+    /// multiple inheritance.
+    ///
+    /// Not serialised: the wire format stays keyed by class name. The internal
+    /// pass walks this list so no group is silently dropped.
+    #[serde(skip)]
+    pub all: Vec<TypeVTable>,
 }
 
 impl VtableMap {
@@ -165,18 +178,23 @@ pub fn resolve_vtables_with_releaser(
     let (type_info_candidates, resolved) = collect_vtables(&map, image, &reloc_pointer);
 
     let mut entries: BTreeMap<String, TypeVTable> = BTreeMap::new();
+    let mut all = Vec::with_capacity(resolved.len());
     for vtable in resolved {
-        // Insertion order is by `type_info` address, so when two candidates
-        // claim the same class name the lower address wins and the output is
-        // reproducible.
-        entries.entry(vtable.name.clone()).or_insert(TypeVTable {
+        let resolved = TypeVTable {
             vtable_hex: format!("0x{:x}", vtable.vtable_address),
             vtable_offset: vtable.vtable_address.saturating_sub(map.image_base),
             name: vtable.name,
             mangled: vtable.mangled,
             vtable_address: vtable.vtable_address,
             type_info_address: vtable.type_info_address,
-        });
+        };
+        // Insertion order is by `type_info` address, so when two candidates
+        // claim the same class name the lower address wins and the output is
+        // reproducible.
+        entries
+            .entry(resolved.name.clone())
+            .or_insert_with(|| resolved.clone());
+        all.push(resolved);
     }
 
     Ok(VtableMap {
@@ -184,6 +202,7 @@ pub fn resolve_vtables_with_releaser(
         type_info_candidates,
         relocations_examined,
         entries,
+        all,
     })
 }
 
@@ -251,6 +270,9 @@ fn collect_vtables(
             let Some(vtable_address) = slot_address.checked_sub(SLOT_BYTES) else {
                 continue;
             };
+            if !is_plausible_vtable(map, image, relocation_targets, vtable_address, slot_address) {
+                continue;
+            }
             resolved.push(ResolvedVtable {
                 type_info_address,
                 vtable_address,
@@ -266,6 +288,38 @@ fn collect_vtables(
     resolved.sort_by_key(|vtable| vtable.type_info_address);
     resolved.dedup();
     (candidates, resolved)
+}
+
+/// Whether a candidate really starts a vtable.
+///
+/// A `type_info` pointer also appears in a `__si_class_type_info` or
+/// `__vmi_class_type_info` base array. Without this check such a slot becomes a
+/// bogus vtable whose header can coincide with a real vtable's first slot, which
+/// then truncated that class's slot run to zero. A real vtable has a small
+/// offset-to-top and at least one virtual function slot that is either
+/// relocated or points into `.text`.
+fn is_plausible_vtable(
+    map: &crate::sections::SectionMap,
+    image: &[u8],
+    relocation_targets: &RelocationIndex,
+    vtable_address: u64,
+    type_info_slot: u64,
+) -> bool {
+    let Some(offset_to_top) = crate::internal::read_at(map, image, vtable_address) else {
+        return false;
+    };
+    let offset_to_top = offset_to_top as i64;
+    let plausible_top =
+        offset_to_top == 0 || (offset_to_top % 8 == 0 && offset_to_top.unsigned_abs() <= (1 << 20));
+    if !plausible_top {
+        return false;
+    }
+    let first_slot = type_info_slot.saturating_add(SLOT_BYTES);
+    if relocation_targets.target_of(first_slot).is_some() {
+        return true;
+    }
+    crate::internal::read_at(map, image, first_slot)
+        .is_some_and(|target| crate::internal::is_executable(map, target))
 }
 
 /// Reads the name pointer out of a `type_info` object.
@@ -627,11 +681,16 @@ impl RelocationIndex {
 /// Whether a relocation kind is one the resolver trusts.
 ///
 /// `R_AARCH64_RELATIVE` and `R_AARCH64_ABS64` both end up holding the virtual
-/// address the slot will carry once the library is loaded. Everything else —
-/// including the TLS and GOT-relative kinds, which are the bulk of a real
-/// table — is dropped rather than guessed at.
+/// address the slot will carry once the library is loaded. `GLOB_DAT` and
+/// `JUMP_SLOT` mark an imported symbol: their addend is usually zero because
+/// the loader fills the slot from the GOT, so the slot is kept with a zero
+/// target and treated as an unresolved import rather than as the end of the
+/// vtable.
 fn is_supported_relocation(kind: u32) -> bool {
-    kind == R_AARCH64_RELATIVE || kind == R_AARCH64_ABS64
+    kind == R_AARCH64_RELATIVE
+        || kind == R_AARCH64_ABS64
+        || kind == R_AARCH64_GLOB_DAT
+        || kind == R_AARCH64_JUMP_SLOT
 }
 
 /// Reads a little-endian `u64` at `offset`, or zero when it runs off the end.
@@ -696,13 +755,15 @@ mod tests {
     }
 
     #[test]
-    fn only_relative_and_absolute_kinds_are_trusted() {
+    fn only_pointer_kinds_are_trusted() {
         assert!(is_supported_relocation(R_AARCH64_RELATIVE));
         assert!(is_supported_relocation(R_AARCH64_ABS64));
-        // A GOT-relative or TLS kind carries a different meaning entirely.
-        assert!(!is_supported_relocation(1025));
-        assert!(!is_supported_relocation(1026));
+        // Imported symbols are kept so an unresolved slot does not end a vtable.
+        assert!(is_supported_relocation(R_AARCH64_GLOB_DAT));
+        assert!(is_supported_relocation(R_AARCH64_JUMP_SLOT));
+        // A TLS or unrelated kind carries a different meaning entirely.
         assert!(!is_supported_relocation(999));
+        assert!(!is_supported_relocation(0));
     }
 
     #[test]
@@ -772,6 +833,64 @@ mod tests {
             demangle_type_name("NSt6__ndk19basic_iosIcNS_11char_traitsIcEEEE").as_deref(),
             Some("std::__ndk1::basic_ios")
         );
+    }
+
+    /// Dumps the raw context of three classes that came back with no slots in
+    /// the 26.60 output. Ignored by default because it needs the real library:
+    ///
+    /// ```text
+    /// BEDROCK_LIB=/path/libminecraftpe.so cargo test -- --ignored dump_vtable_context
+    /// ```
+    #[test]
+    #[ignore = "needs a real libminecraftpe.so; set BEDROCK_LIB"]
+    fn dump_vtable_context() {
+        let Ok(path) = std::env::var("BEDROCK_LIB") else {
+            eprintln!("BEDROCK_LIB is not set");
+            return;
+        };
+        let image = std::fs::read(&path).expect("read library");
+        let map = crate::sections::build_section_map(&image).expect("section map");
+        let relocations = RelocationIndex::build(&image).expect("relocations");
+        let vtables = resolve_vtables(&image).expect("vtables");
+        let read = |address: u64| -> Option<u64> {
+            let section = map
+                .sections
+                .iter()
+                .find(|section| {
+                    section.allocated
+                        && address >= section.address
+                        && address + 8 <= section.address + section.size
+                })
+                .or_else(|| {
+                    (address >= map.text.address && address + 8 <= map.text.address + map.text.size)
+                        .then_some(&map.text)
+                })?;
+            let offset = section.offset_of(address)? as usize;
+            let bytes = image.get(offset..offset + 8)?;
+            Some(read_u64(bytes, 0))
+        };
+        for name in ["Actor", "Level", "Player"] {
+            let Some(vtable) = vtables.get(name) else {
+                println!("{name}: not resolved");
+                continue;
+            };
+            println!(
+                "{name}: vtable={:#x} typeInfo={:#x}",
+                vtable.vtable_address, vtable.type_info_address
+            );
+            for delta in [-16i64, -8] {
+                let address = vtable.vtable_address.wrapping_add_signed(delta);
+                println!("  header[{delta}]: {:#x}", read(address).unwrap_or(0));
+            }
+            for slot in 0..8u64 {
+                let address = vtable.vtable_address + 16 + slot * 8;
+                println!(
+                    "  slot {slot} @{address:#x}: raw={:#x} reloc={:?}",
+                    read(address).unwrap_or(0),
+                    relocations.target_of(address)
+                );
+            }
+        }
     }
 
     #[test]

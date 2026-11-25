@@ -107,8 +107,7 @@ class ScannerScreenWideLayoutTest {
 
         composeTestRule.onNodeWithText("Offsets").assertExists()
         composeTestRule.onNodeWithTag(SEARCH_FIELD_TAG).assertExists()
-        composeTestRule.onNodeWithTag(DOWNLOAD_JNI_TAG).assertExists()
-        composeTestRule.onNodeWithTag(DOWNLOAD_INTERNAL_TAG).assertExists()
+        composeTestRule.onNodeWithTag(DOWNLOAD_ZIP_TAG).assertExists()
         composeTestRule.onNodeWithTag(RESULTS_LIST_TAG)
             .performScrollToNode(hasText("clientInstance"))
         composeTestRule.onNodeWithText("clientInstance").assertExists()
@@ -116,7 +115,7 @@ class ScannerScreenWideLayoutTest {
 
     @Test
     @Config(sdk = [34], qualifiers = "w1920dp-h1200dp-land")
-    fun aLandscapeTabletKeepsTheSearchFieldAndBothDownloadsVisible() {
+    fun aLandscapeTabletKeepsTheSearchFieldAndTheDownloadVisible() {
         renderWide(
             ScannerUiState(
                 phase = ScannerPhase.Success,
@@ -127,13 +126,9 @@ class ScannerScreenWideLayoutTest {
         )
 
         composeTestRule.onNodeWithTag(SEARCH_FIELD_TAG).assertIsDisplayed()
-        composeTestRule.onNodeWithTag(DOWNLOAD_JNI_TAG).assertIsDisplayed()
-        composeTestRule.onNodeWithTag(DOWNLOAD_INTERNAL_TAG).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(DOWNLOAD_ZIP_TAG).assertIsDisplayed()
         composeTestRule
-            .onNodeWithText("Download JNI_OFFSETS_deadbeef.json")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Download INTERNALCPP_OFFSETS_deadbeef.json")
+            .onNodeWithText("Download BEDROCK_OFFSETS_deadbeef.zip")
             .assertIsDisplayed()
     }
 

@@ -1,9 +1,61 @@
 # Offset document format
 
-A scan writes one JSON file. This is the contract between the extractor and the
-loader that consumes the offsets (`HoneyLoader` or an equivalent). The document
-is produced by `data/export/OffsetExporter.kt`; the Rust engine produces the
-pieces, Kotlin assembles them.
+A scan is saved as one ZIP. This is the contract between the extractor and the
+loader that consumes the offsets (`HoneyLoader` or an equivalent). The archive
+is produced by `data/export/OffsetZip.kt`; the Rust engine produces the pieces,
+Kotlin assembles and streams them.
+
+## ZIP layout
+
+```
+BEDROCK_OFFSETS_<version>.zip
+├── manifest.json
+├── JNI/
+│   └── JNI_OFFSETS_<version>.json
+└── InternalCPP/
+    ├── INTERNALCPP_INDEX_<version>.json
+    ├── INTERNALCPP_BLOCK_PLACEMENT_<version>.json
+    ├── INTERNALCPP_ACTOR_ENTITY_<version>.json
+    ├── ...
+    ├── INTERNALCPP_OTHER_NAMED_<version>.json
+    └── INTERNALCPP_UNNAMED_PART_01_<version>.json ... PART_NN
+```
+
+`<version>` is produced by one function, `OffsetExporter.versionLabel`. It comes
+from the APK manifest `versionName` first, then the APK file name, then the
+build id prefix. Dots are kept, so `26.60.3` stays `26.60.3`; only characters
+that are unsafe in a file name are removed and `+` is never used. The same
+string appears in every file name and in `source.apkVersion`, so a name can
+never disagree with the document.
+
+`manifest.json` lists every other entry with its size, its record count and its
+SHA-256. The archive is re-opened after writing and every CRC, size and digest
+is checked; a mismatch fails the download instead of shipping a broken file.
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "bedrock_offsets_zip",
+  "generatedBy": "BedrockOffsetExtractor",
+  "generatedAt": "2026-11-25T05:12:00Z",
+  "version": "26.60.3",
+  "apk": "minecraft-26-60-arm64-v8a-xbox.apk",
+  "buildId": "...",
+  "librarySha256": "...",
+  "entryCount": 17,
+  "files": [
+    {
+      "path": "JNI/JNI_OFFSETS_26.60.3.json",
+      "size": 1234,
+      "entries": 91,
+      "sha256": "..."
+    }
+  ]
+}
+```
+
+The JNI document under `JNI/` is the v1 document described below and is
+unchanged. The `InternalCPP/` folder holds one file per category plus an index.
 
 The current schema version is **1**. A field is only ever added within a
 version; a rename or a removal bumps `schemaVersion`.
@@ -175,18 +227,21 @@ an input cannot be read. Use it before shipping a signature pack for a new build
 
 ## Internal C++ document
 
-The internal extraction writes a second document next to the JNI one. It is
-named `INTERNALCPP_OFFSETS_<version>.json` (for example
-`INTERNALCPP_OFFSETS_26.66.json`) and has its own `kind`.
+The internal extraction is split by category. `INTERNALCPP_INDEX_<version>.json`
+is the entry point: it lists every category file with its counts and maps each
+class to its category, so a client can open only the file it needs. A combined
+`INTERNALCPP_OFFSETS_<version>.json` is written only when the Settings toggle
+"Also include one combined file" is on.
 
 ```json
 {
   "schemaVersion": 1,
   "generatedBy": "BedrockOffsetExtractor",
-  "kind": "internal_cpp",
+  "kind": "internal_cpp_index",
+  "version": "26.60.3",
   "source": {
-    "apk": "minecraft-26-66.apk",
-    "apkVersion": "26.66",
+    "apk": "minecraft-26-60-arm64-v8a-xbox.apk",
+    "apkVersion": "26.60.3",
     "architecture": "AArch64",
     "librarySha256": "...",
     "buildId": "...",
@@ -196,37 +251,79 @@ named `INTERNALCPP_OFFSETS_<version>.json` (for example
     "textDelta": "0x0"
   },
   "stats": {
-    "classes": 0,
-    "vtableSlots": 0,
-    "functions": 0,
-    "named": 0,
-    "autoNamed": 0,
-    "verified": 0,
-    "ambiguous": 0,
-    "notFound": 0,
-    "signatures": 0
+    "classes": 7396,
+    "functions": 803306,
+    "dataSymbols": 0,
+    "categories": 17
+  },
+  "categories": [
+    {
+      "id": "actor_entity",
+      "category": "actor_entity",
+      "label": "Actors and entities",
+      "file": "InternalCPP/INTERNALCPP_ACTOR_ENTITY_26.60.3.json",
+      "classes": 120,
+      "functions": 41000,
+      "symbols": 0
+    }
+  ],
+  "classToCategory": {
+    "Player": "actor_entity"
+  }
+}
+```
+
+## Category file
+
+Every category file has the same `source` block, its own `stats`, the classes
+that belong to it (with all their slots, bases and signatures) and its
+functions. A class is written to exactly one file; a base class in another
+category is still listed by name in `bases`.
+
+```json
+{
+  "schemaVersion": 1,
+  "generatedBy": "BedrockOffsetExtractor",
+  "kind": "internal_cpp_category",
+  "category": "actor_entity",
+  "label": "Actors and entities",
+  "version": "26.60.3",
+  "source": { "...": "same block as the index" },
+  "stats": {
+    "classes": 120,
+    "functions": 41000,
+    "symbols": 0,
+    "entries": 41120
   },
   "classes": {
-    "ClientInstance": {
-      "mangled": "14ClientInstance",
-      "bases": ["..."],
+    "Player": {
+      "mangled": "6Player",
+      "bases": ["Mob", "Actor"],
       "vtable": "0x...",
       "typeInfo": "0x...",
-      "slotCount": 0,
+      "slotCount": 247,
       "slots": [
         {
           "slot": 0,
           "offset": "0x0",
           "address": "0x...",
           "fileOffset": "0x...",
-          "size": 0,
-          "name": "ClientInstance::~ClientInstance",
+          "size": 12,
+          "name": "Player::~Player",
           "kind": "virtual",
+          "prologueKind": "frame_push",
           "overrides": true,
           "inherited": false,
           "status": "verified",
           "signature": "FD 7B ?? A9 ...",
           "signatureUnique": true
+        }
+      ],
+      "vtableGroups": [
+        {
+          "offsetToTop": 0,
+          "address": "0x...",
+          "slots": ["..."]
         }
       ]
     }
@@ -235,28 +332,50 @@ named `INTERNALCPP_OFFSETS_<version>.json` (for example
     {
       "address": "0x...",
       "fileOffset": "0x...",
-      "size": 0,
+      "size": 12,
       "name": "...",
       "nameSource": "eh_frame|symbol|vtable|signature|string|auto",
       "aliases": [],
-      "kind": "function|thunk|pure_virtual",
-      "status": "verified|fde_only|suspect|ambiguous|not_found",
-      "signature": null
+      "kind": "function|thunk|pure_virtual|import",
+      "status": "verified|fde_only|suspect|ambiguous|not_found|fde_missing|import",
+      "suspectReason": "overlapping_fde|unverified_name|no_fde_no_prologue",
+      "prologueKind": "frame_push|none",
+      "signature": null,
+      "signatureUnique": null
     }
   ],
-  "offsets": {
-    "ClientInstance::vfunc_12": "0x...",
-    "sub_1d0a4c8": "0x1d0a4c8"
-  }
+  "symbols": [
+    {
+      "address": "0x...",
+      "size": 8,
+      "name": "_binary_classes_dex_size",
+      "mangled": "_binary_classes_dex_size",
+      "kind": "data",
+      "reason": "object_symbol"
+    }
+  ]
 }
 ```
 
-`classes` and `functions` are streamed: the Rust engine writes them to an
-NDJSON table in the app cache, and the exporter copies them through a
-`JsonWriter` so a 340 MB library never has to become one giant `String`.
+`classes`, `functions` and `symbols` are streamed: the Rust engine writes an
+NDJSON table in the app cache, the exporter splits it by category, and the ZIP
+writer copies each category through a `JsonWriter` so a 340 MB library never has
+to become one giant `String`.
 
 Addresses are image-relative virtual addresses, the same convention as the JNI
-document. `offsets` is the stable surface: it maps the best name for every
-function and every virtual slot to its address. Slot indices are stable across
-game updates, so prefer a `Class::vfunc_N` key over a byte signature when a
-client needs a virtual function.
+document. A slot's `size` is the FDE size of the function at that address;
+a slot whose function has no FDE keeps `size: 0` and is marked `fde_missing`,
+while a slot that points at an unresolved import is marked `import` and keeps
+its place in the run. `vtableGroups` lists every vtable of a class with multiple
+inheritance; `slots` repeats the primary group for compatibility.
+
+Data symbols such as `_binary_classes_dex_size` and `__emutls_t.*` are not
+functions. They are emitted in `symbols` with `kind: "data"` and are excluded
+from the function table, the stats and the suspect count.
+
+## Category rules
+
+The split is data, not code. `app/src/main/assets/categories.json` is an
+ordered list of rules; the first match wins. Settings > Download imports a
+custom file and can reset to the bundled one. See
+[CATEGORIES.md](CATEGORIES.md) for the rule format and the starter categories.

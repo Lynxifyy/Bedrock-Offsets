@@ -24,6 +24,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.chimerateam.offsetextractor.data.export.ExportProgress
+import com.chimerateam.offsetextractor.ui.components.ExportInterruptedCard
 import com.chimerateam.offsetextractor.ui.components.LiveLogPane
 import com.chimerateam.offsetextractor.ui.components.ResultsPanel
 import com.chimerateam.offsetextractor.ui.components.SelectedApkCard
@@ -65,11 +67,12 @@ fun ScannerScreen(
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
     modifier: Modifier = Modifier,
-    onDownloadJni: () -> Unit = {},
-    onDownloadInternal: () -> Unit = {},
+    onDownloadZip: () -> Unit = {},
     onRetryInternal: () -> Unit = {},
     internalBusy: Boolean = false,
-    onShareInternal: (() -> Unit)? = null
+    exportProgress: ExportProgress? = null,
+    onRetryExport: () -> Unit = {},
+    onDiscardExport: () -> Unit = {}
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val availableWidth = maxWidth
@@ -102,11 +105,12 @@ fun ScannerScreen(
                         onCopyJson = onCopyJson,
                         onShareJson = onShareJson,
                         onSaveJson = onSaveJson,
-                        onDownloadJni = onDownloadJni,
-                        onDownloadInternal = onDownloadInternal,
+                        onDownloadZip = onDownloadZip,
                         onRetryInternal = onRetryInternal,
                         internalBusy = internalBusy,
-                        onShareInternal = onShareInternal
+                        exportProgress = exportProgress,
+                        onRetryExport = onRetryExport,
+                        onDiscardExport = onDiscardExport
                     )
                 }
                 LiveLogPane(
@@ -135,11 +139,12 @@ fun ScannerScreen(
                     onCopyJson = onCopyJson,
                     onShareJson = onShareJson,
                     onSaveJson = onSaveJson,
-                    onDownloadJni = onDownloadJni,
-                    onDownloadInternal = onDownloadInternal,
+                    onDownloadZip = onDownloadZip,
                     onRetryInternal = onRetryInternal,
                     internalBusy = internalBusy,
-                    onShareInternal = onShareInternal
+                    exportProgress = exportProgress,
+                    onRetryExport = onRetryExport,
+                    onDiscardExport = onDiscardExport
                 )
                 LiveLogPane(
                     entries = entries,
@@ -165,12 +170,24 @@ private fun ControlsPane(
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
-    onDownloadJni: () -> Unit,
-    onDownloadInternal: () -> Unit,
+    onDownloadZip: () -> Unit,
     onRetryInternal: () -> Unit,
     internalBusy: Boolean,
-    onShareInternal: (() -> Unit)?
+    exportProgress: ExportProgress?,
+    onRetryExport: () -> Unit,
+    onDiscardExport: () -> Unit
 ) {
+    if (exportProgress != null && exportProgress.state ==
+        com.chimerateam.offsetextractor.data.export.ExportState.Interrupted
+    ) {
+        ExportInterruptedCard(
+            progress = exportProgress,
+            onRetry = onRetryExport,
+            onDiscard = onDiscardExport
+        )
+        Spacer(Modifier.height(12.dp))
+    }
+
     // AnimatedContent keeps the state change visible rather than instantaneous:
     // a fade and a small slide make it obvious which pane replaced which.
     AnimatedContent(
@@ -192,11 +209,12 @@ private fun ControlsPane(
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
             onSaveJson = onSaveJson,
-            onDownloadJni = onDownloadJni,
-            onDownloadInternal = onDownloadInternal,
+            onDownloadZip = onDownloadZip,
             onRetryInternal = onRetryInternal,
             internalBusy = internalBusy,
-            onShareInternal = onShareInternal
+            exportProgress = exportProgress,
+            onRetryExport = onRetryExport,
+            onDiscardExport = onDiscardExport
         )
     }
 }
@@ -213,11 +231,12 @@ private fun PhasePane(
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
-    onDownloadJni: () -> Unit,
-    onDownloadInternal: () -> Unit,
+    onDownloadZip: () -> Unit,
     onRetryInternal: () -> Unit,
     internalBusy: Boolean,
-    onShareInternal: (() -> Unit)?
+    exportProgress: ExportProgress?,
+    onRetryExport: () -> Unit,
+    onDiscardExport: () -> Unit
 ) {
     when (phase) {
         ScannerPhase.Extracting, ScannerPhase.Scanning -> LoadingScreen(
@@ -232,11 +251,12 @@ private fun PhasePane(
             onCopyJson = onCopyJson,
             onShareJson = onShareJson,
             onSaveJson = onSaveJson,
-            onDownloadJni = onDownloadJni,
-            onDownloadInternal = onDownloadInternal,
+            onDownloadZip = onDownloadZip,
             onRetryInternal = onRetryInternal,
             internalBusy = internalBusy,
-            onShareInternal = onShareInternal
+            exportProgress = exportProgress,
+            onRetryExport = onRetryExport,
+            onDiscardExport = onDiscardExport
         )
 
         ScannerPhase.Error -> ErrorPane(
@@ -267,11 +287,12 @@ private fun SuccessPane(
     onCopyJson: () -> Unit,
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
-    onDownloadJni: () -> Unit,
-    onDownloadInternal: () -> Unit,
+    onDownloadZip: () -> Unit,
     onRetryInternal: () -> Unit,
     internalBusy: Boolean,
-    onShareInternal: (() -> Unit)?
+    exportProgress: ExportProgress?,
+    onRetryExport: () -> Unit,
+    onDiscardExport: () -> Unit
 ) {
     val result = state.result ?: return
     // One scroll container: the summary is the first item of the list and the
@@ -285,11 +306,9 @@ private fun SuccessPane(
         onShareJson = onShareJson,
         onSaveJson = onSaveJson,
         onStartNewScan = onStartNewScan,
-        onDownloadJni = onDownloadJni,
-        onDownloadInternal = onDownloadInternal,
+        onDownloadZip = onDownloadZip,
         onRetryInternal = onRetryInternal,
-        internalBusy = internalBusy,
-        onShareInternal = onShareInternal
+        internalBusy = internalBusy
     )
 }
 

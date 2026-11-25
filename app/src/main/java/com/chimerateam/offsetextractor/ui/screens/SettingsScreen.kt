@@ -55,7 +55,11 @@ fun SettingsScreen(
     maxSlotsPerClass: Int = 4096,
     onIncludeAllFunctionsChange: (Boolean) -> Unit = {},
     onGenerateSignaturesChange: (Boolean) -> Unit = {},
-    onMaxSlotsPerClassChange: (Int) -> Unit = {}
+    onMaxSlotsPerClassChange: (Int) -> Unit = {},
+    includeCombined: Boolean = false,
+    onIncludeCombinedChange: (Boolean) -> Unit = {},
+    onImportCategories: () -> Unit = {},
+    onResetCategories: () -> Unit = {}
 ) {
     Column(
         modifier = modifier
@@ -118,6 +122,35 @@ fun SettingsScreen(
                     ) {
                         Text(slots.toString())
                     }
+                }
+            }
+        }
+
+        SectionPanel(title = "Download") {
+            SettingToggleRow(
+                title = "Also include one combined file",
+                subtitle = "Adds a single large internal document to the ZIP",
+                checked = includeCombined,
+                onCheckedChange = onIncludeCombinedChange
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Category rules",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = "Import a categories.json to change how classes and " +
+                    "functions are split into files.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onImportCategories) {
+                    Text("Import categories.json")
+                }
+                OutlinedButton(onClick = onResetCategories) {
+                    Text("Reset to default")
                 }
             }
         }

@@ -21,6 +21,9 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import re
 import sys
 import zipfile
 from dataclasses import dataclass
@@ -104,6 +107,11 @@ GSON_MODEL_CLASSES = (
     "Lcom/chimerateam/offsetextractor/ui/state/BatchProgress;",
     "Lcom/chimerateam/offsetextractor/ui/state/BatchSummary;",
 )
+
+
+# Characters allowed in an offsets ZIP entry name. The exporter never uses `+`,
+# so a plus in an entry is a naming regression rather than a style choice.
+ZIP_ENTRY_PATTERN = re.compile(r"^[A-Za-z0-9._\-/]+$")
 
 
 class ReleaseCheckError(RuntimeError):
@@ -364,6 +372,140 @@ def check_manifest(apk: Path) -> CheckResult:
     )
 
 
+def find_offsets_zip(root: Path) -> Path:
+    """Locate a ``BEDROCK_OFFSETS_*.zip`` under ``root``.
+
+    Args:
+        root: directory to search.
+
+    Returns:
+        The newest matching archive.
+
+    Raises:
+        ReleaseCheckError: if no archive exists.
+    """
+    candidates = sorted(
+        root.rglob("BEDROCK_OFFSETS_*.zip"),
+        key=lambda path: path.stat().st_mtime,
+    )
+    if not candidates:
+        raise ReleaseCheckError(f"no BEDROCK_OFFSETS_*.zip found under {root}")
+    return candidates[-1]
+
+
+def run_zip_checks(archive_path: Path) -> list[CheckResult]:
+    """Verify a downloaded offsets ZIP against its own manifest.
+
+    Args:
+        archive_path: the archive to inspect.
+
+    Returns:
+        One result per check, in report order.
+
+    Raises:
+        ReleaseCheckError: if the archive has no manifest.
+    """
+    results: list[CheckResult] = []
+    with zipfile.ZipFile(archive_path) as archive:
+        names = archive.namelist()
+        if "manifest.json" not in names:
+            raise ReleaseCheckError(f"{archive_path} has no manifest.json")
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        version = str(manifest.get("version", ""))
+        files = manifest.get("files", [])
+        listed = {item.get("path") for item in files if isinstance(item, dict)}
+
+        results.append(
+            CheckResult(
+                name="zip manifest count",
+                passed=int(manifest.get("entryCount", -1)) == len(files),
+                detail=f"{len(files)} files, entryCount={manifest.get('entryCount')}",
+            )
+        )
+
+        unsafe = [name for name in names if not ZIP_ENTRY_PATTERN.match(name)]
+        results.append(
+            CheckResult(
+                name="zip entry names",
+                passed=not unsafe,
+                detail="clean" if not unsafe else f"unsafe: {', '.join(unsafe[:5])}",
+            )
+        )
+
+        required = [
+            f"JNI/JNI_OFFSETS_{version}.json",
+            f"InternalCPP/INTERNALCPP_INDEX_{version}.json",
+        ]
+        missing = [name for name in required if name not in names]
+        results.append(
+            CheckResult(
+                name="zip versioned entries",
+                passed=not missing,
+                detail="present" if not missing else f"missing {', '.join(missing)}",
+            )
+        )
+
+        unlisted = [name for name in names if name != "manifest.json" and name not in listed]
+        results.append(
+            CheckResult(
+                name="zip manifest coverage",
+                passed=not unlisted,
+                detail="every entry is listed"
+                if not unlisted
+                else f"unlisted: {', '.join(unlisted[:5])}",
+            )
+        )
+
+        size_bad: list[str] = []
+        hash_bad: list[str] = []
+        crc_bad: list[str] = []
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("path")
+            if not name or name not in names:
+                continue
+            digest = hashlib.sha256()
+            total = 0
+            try:
+                with archive.open(name) as handle:
+                    while True:
+                        chunk = handle.read(64 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                        total += len(chunk)
+            except zipfile.BadZipFile:
+                crc_bad.append(name)
+                continue
+            if total != int(item.get("size", -1)):
+                size_bad.append(name)
+            if digest.hexdigest() != item.get("sha256"):
+                hash_bad.append(name)
+        results.append(
+            CheckResult(
+                name="zip CRCs",
+                passed=not crc_bad,
+                detail="clean" if not crc_bad else f"bad CRC: {', '.join(crc_bad[:5])}",
+            )
+        )
+        results.append(
+            CheckResult(
+                name="zip sizes",
+                passed=not size_bad,
+                detail="match" if not size_bad else f"mismatch: {', '.join(size_bad[:5])}",
+            )
+        )
+        results.append(
+            CheckResult(
+                name="zip digests",
+                passed=not hash_bad,
+                detail="match" if not hash_bad else f"mismatch: {', '.join(hash_bad[:5])}",
+            )
+        )
+    return results
+
+
 def run_checks(apk: Path) -> list[CheckResult]:
     """Run every check against ``apk``.
 
@@ -431,15 +573,27 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         target = args.apk_flag or args.apk or Path("app/build/outputs/apk/release")
-        apk = find_apk(target) if target.is_dir() else target
-        if not apk.is_file():
-            raise ReleaseCheckError(f"{apk} does not exist")
-        results = run_checks(apk)
+        if target.is_dir():
+            target = (
+                find_offsets_zip(target)
+                if any(target.rglob("BEDROCK_OFFSETS_*.zip"))
+                else find_apk(target)
+            )
+        if not target.is_file():
+            raise ReleaseCheckError(f"{target} does not exist")
+        is_offsets_zip = target.suffix.lower() == ".zip" and zipfile.is_zipfile(target)
+        if is_offsets_zip:
+            with zipfile.ZipFile(target) as archive:
+                if "manifest.json" in archive.namelist():
+                    results = run_zip_checks(target)
+                    print(format_report(target, results), end="")
+                    return 0 if all(result.passed for result in results) else 1
+        results = run_checks(target)
     except (ReleaseCheckError, zipfile.BadZipFile) as error:
         print(f"[verify_release] ERROR: {error}", file=sys.stderr)
         return 2
 
-    print(format_report(apk, results), end="")
+    print(format_report(target, results), end="")
     return 0 if all(result.passed for result in results) else 1
 
 

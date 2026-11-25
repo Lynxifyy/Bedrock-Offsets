@@ -5,8 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.chimerateam.offsetextractor.data.cache.ResultCache
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
+import com.chimerateam.offsetextractor.data.export.CategoryRule
+import com.chimerateam.offsetextractor.data.export.Classifier
 import com.chimerateam.offsetextractor.data.export.ExportKind
+import com.chimerateam.offsetextractor.data.export.ExportStarter
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
+import com.chimerateam.offsetextractor.data.export.OffsetZipBuilder
 import com.chimerateam.offsetextractor.data.native.InternalAnalysis
 import com.chimerateam.offsetextractor.data.native.InternalOptions
 import com.chimerateam.offsetextractor.data.native.InternalPatternSpec
@@ -95,6 +99,8 @@ class MainViewModel(
     },
     private val cache: ScanCache? = null,
     private val preferences: ScanPreferences? = null,
+    private var categories: List<CategoryRule> = emptyList(),
+    private val exportStarter: ExportStarter? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : ViewModel() {
 
@@ -136,6 +142,11 @@ class MainViewModel(
 
     /** Whether auto-generated signatures are produced. */
     val generateSignatures: StateFlow<Boolean> = _generateSignatures.asStateFlow()
+
+    private val _includeCombined = MutableStateFlow(false)
+
+    /** Whether the ZIP also contains one combined internal document. */
+    val includeCombined: StateFlow<Boolean> = _includeCombined.asStateFlow()
 
     private val _maxSlotsPerClass = MutableStateFlow(4096)
 
@@ -491,6 +502,45 @@ class MainViewModel(
         }
     }
 
+    /** Default file name offered by the ZIP save dialog. */
+    fun defaultZipFileName(): String? =
+        _uiState.value.result?.let { OffsetExporter.zipFileName(it) }
+
+    /**
+     * Hands the current result to the foreground export service.
+     *
+     * The ViewModel does not own the job: it only records the request and lets
+     * the service publish progress through `ExportJobRepository`.
+     *
+     * @param uri destination document, or `null` when the dialog was dismissed.
+     */
+    fun onZipDestinationChosen(uri: android.net.Uri?) {
+        if (uri == null) {
+            emit(Logs.warn(TAG_UI, "Download cancelled."))
+            return
+        }
+        val result = _uiState.value.result
+        if (result == null) {
+            emit(Logs.warn(TAG_UI, "There is nothing to export yet."))
+            return
+        }
+        if (!result.internalResolved || result.internal == null) {
+            emit(Logs.warn(TAG_UI, "The internal offsets are not ready yet."))
+            _uiState.update { it.copy(exportMessage = "Internal offsets are not ready.") }
+            return
+        }
+        val starter = exportStarter
+        if (starter == null) {
+            emit(Logs.warn(TAG_UI, "The download service is not available."))
+            _uiState.update { it.copy(exportMessage = "The download service is not available.") }
+            return
+        }
+        starter.start(uri, result, categories, _includeCombined.value)
+        val name = OffsetExporter.zipFileName(result)
+        emit(Logs.info(TAG_UI, "Started $name"))
+        _uiState.update { it.copy(exportMessage = "Preparing $name") }
+    }
+
     /**
      * Writes [kind] to [uri], streaming in production and falling back to a
      * single string only for a test double that cannot stream.
@@ -530,14 +580,16 @@ class MainViewModel(
         val directory = cache?.documentDir ?: File(cacheDir, "documents")
         directory.mkdirs()
         val written = mutableListOf<String>()
+        val name = OffsetExporter.zipFileName(result)
+        val work = File(cacheDir, "batch-${result.buildId.ifBlank { result.sha256.take(8) }}")
         runCatching {
-            val name = OffsetExporter.jniFileName(result)
-            File(directory, name).bufferedWriter().use { writer ->
-                OffsetExporter.writeJni(result, writer)
-            }
+            OffsetZipBuilder(Classifier(categories), work)
+                .build(result, File(directory, name))
             written += name
         }.onFailure {
-            emit(Logs.warn(TAG_UI, "Batch JNI export failed: ${it.message}"))
+            emit(Logs.warn(TAG_UI, "Batch ZIP export failed: ${it.message}"))
+        }.also {
+            work.deleteRecursively()
         }
         if (result.internalResolved) {
             runCatching {
@@ -637,6 +689,20 @@ class MainViewModel(
         viewModelScope.launch(supervisor + ioDispatcher) {
             preferences?.setThemeMode(mode)
         }
+    }
+
+    /**
+     * Replaces the classifier rules after an import or a reset.
+     *
+     * @param rules the new ordered rules.
+     */
+    fun setCategories(rules: List<CategoryRule>) {
+        categories = rules
+    }
+
+    /** Records whether the ZIP also contains one combined internal document. */
+    fun setIncludeCombined(include: Boolean) {
+        _includeCombined.value = include
     }
 
     /**
@@ -1279,7 +1345,9 @@ class MainViewModel(
             preferences: ScanPreferences,
             patterns: List<PatternSpec> = emptyList(),
             internalPatterns: List<InternalPatternSpec> = emptyList(),
-            stringAnchors: List<StringAnchorSpec> = emptyList()
+            stringAnchors: List<StringAnchorSpec> = emptyList(),
+            categories: List<CategoryRule> = emptyList(),
+            exportStarter: ExportStarter? = null
         ): MainViewModel = MainViewModel(
             safAccess = safAccess,
             engine = engine,
@@ -1289,7 +1357,9 @@ class MainViewModel(
             stringAnchors = stringAnchors,
             writer = writer,
             cache = cache,
-            preferences = preferences
+            preferences = preferences,
+            categories = categories,
+            exportStarter = exportStarter
         )
     }
 }

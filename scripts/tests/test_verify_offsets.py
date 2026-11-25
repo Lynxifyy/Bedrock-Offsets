@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -113,3 +114,30 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ZipInputTests(unittest.TestCase):
+    """A ``BEDROCK_OFFSETS_*.zip`` is read from its JNI entry."""
+
+    def _zip(self, directory: str, with_jni: bool = True) -> Path:
+        path = Path(directory) / "BEDROCK_OFFSETS_26.60.3.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            if with_jni:
+                archive.writestr(
+                    "JNI/JNI_OFFSETS_26.60.3.json",
+                    json.dumps(document("abc", {"symbol:x": "0x10"})),
+                )
+            archive.writestr("manifest.json", "{}")
+        return path
+
+    def test_the_jni_entry_is_read_from_a_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._zip(directory)
+            loaded = verify_offsets.load_document(path)
+        self.assertEqual({"symbol:x": "0x10"}, loaded["offsets"])
+
+    def test_a_zip_without_an_offsets_document_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._zip(directory, with_jni=False)
+            with self.assertRaises(verify_offsets.VerificationError):
+                verify_offsets.load_document(path)

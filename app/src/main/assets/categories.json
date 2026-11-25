@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "description": "Ordered classification rules for the internal C++ table. First match wins. Edit and re-import from Settings > Category rules.",
+  "categories": [
+    {
+      "category": "block_placement",
+      "label": "Block placement",
+      "classes": [
+        "^(Block|BlockLegacy|BlockSource|BlockActor|BlockItem|GameMode)$"
+      ],
+      "functions": [
+        "useItemOn",
+        "buildBlock",
+        "placeBlock",
+        "mayPlace",
+        "tryPlace",
+        "destroyBlock",
+        "startDestroyBlock"
+      ],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "actor_entity",
+      "label": "Actors and entities",
+      "classes": [
+        "^(Actor|Mob|Player|LocalPlayer|ServerPlayer|ActorDefinition.*|EntityContext.*)$"
+      ],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "movement",
+      "label": "Movement",
+      "classes": [
+        "^(MoveInputHandler|.*PlayerMovement.*|.*Velocity.*)$"
+      ],
+      "functions": [
+        "setPos",
+        "Jump",
+        "Sprint",
+        "Sneak",
+        "Fly"
+      ],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "combat",
+      "label": "Combat",
+      "classes": [
+        "^(.*Health.*|.*Damage.*)$"
+      ],
+      "functions": [
+        "attack",
+        "hurt",
+        "Damage",
+        "Knockback",
+        "Health"
+      ],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "inventory_items",
+      "label": "Inventory and items",
+      "classes": [
+        "^(Item.*|ItemStack.*|Inventory.*|Container.*|PlayerInventory)$"
+      ],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "world_level",
+      "label": "World and level",
+      "classes": [
+        "^(Level|Dimension|ChunkSource|LevelChunk|ClientLevel|Biome.*|Weather.*)$"
+      ],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "rendering",
+      "label": "Rendering",
+      "classes": [
+        "^(LevelRenderer|GameRenderer|ScreenContext|MinecraftUIRenderContext)$",
+        "^mce::.*$",
+        "^dragon::.*$",
+        "^bgfx::.*$",
+        "^.*Renderer.*$",
+        "^.*Tessellator.*$"
+      ],
+      "functions": [],
+      "namespaces": [
+        "mce",
+        "dragon",
+        "bgfx"
+      ],
+      "includeBases": true
+    },
+    {
+      "category": "ui_screens",
+      "label": "UI and screens",
+      "classes": [
+        "^Screen.*$",
+        "^.*ScreenController.*$",
+        "^UIControl.*$",
+        "^Scene.*$",
+        "^SceneStack.*$",
+        "^Hud.*$",
+        "^.*Layout.*$"
+      ],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "input",
+      "label": "Input",
+      "classes": [
+        "^(ClientInputHandler)$",
+        "^.*InputHandler.*$",
+        "^.*Mouse.*$",
+        "^.*Keyboard.*$",
+        "^.*Gamepad.*$",
+        "^.*Touch.*$"
+      ],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "network_packets",
+      "label": "Network and packets",
+      "classes": [
+        "^.*Packet$",
+        "^(PacketSender|NetworkHandler|ClientNetworkHandler)$",
+        "^RakNet::.*$",
+        "^.*Connection.*$"
+      ],
+      "functions": [],
+      "namespaces": [
+        "RakNet"
+      ],
+      "includeBases": true
+    },
+    {
+      "category": "client_game",
+      "label": "Client and game",
+      "classes": [
+        "^(ClientInstance|MinecraftGame|Minecraft|IClientInstance|MinecraftScreenModel)$",
+        "^Options.*$",
+        "^AppPlatform.*$"
+      ],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "audio",
+      "label": "Audio",
+      "classes": [
+        "^SoundEngine.*$",
+        "^.*Audio.*$",
+        "^.*Sound.*$"
+      ],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "commands",
+      "label": "Commands",
+      "classes": [
+        "^Command.*$",
+        "^.*CommandRegistry.*$"
+      ],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": true
+    },
+    {
+      "category": "thirdparty",
+      "label": "Third-party libraries",
+      "classes": [],
+      "functions": [],
+      "namespaces": [
+        "webrtc",
+        "absl",
+        "icu_",
+        "leveldb",
+        "std",
+        "__cxxabiv1",
+        "google",
+        "cohtml",
+        "bx",
+        "bgfx",
+        "pplx",
+        "entt",
+        "moodycamel",
+        "Json",
+        "nlohmann",
+        "cpprestsdk",
+        "sigslot",
+        "rtc",
+        "cricket",
+        "zstd",
+        "curl",
+        "openssl"
+      ],
+      "includeBases": false
+    },
+    {
+      "category": "other_named",
+      "label": "Other named",
+      "classes": [],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": false
+    },
+    {
+      "category": "unnamed",
+      "label": "Unnamed",
+      "classes": [],
+      "functions": [],
+      "namespaces": [],
+      "includeBases": false
+    }
+  ]
+}

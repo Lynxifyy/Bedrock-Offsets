@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import struct
 import sys
@@ -456,3 +457,46 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OffsetsZipTests(unittest.TestCase):
+    """The offsets ZIP is checked against its own manifest."""
+
+    def _zip(self, directory: str, corrupt: bool = False) -> Path:
+        path = Path(directory) / "BEDROCK_OFFSETS_26.60.3.zip"
+        payloads = {
+            "JNI/JNI_OFFSETS_26.60.3.json": b'{"offsets":{}}',
+            "InternalCPP/INTERNALCPP_INDEX_26.60.3.json": b'{"categories":[]}',
+        }
+        manifest = {
+            "version": "26.60.3",
+            "entryCount": len(payloads),
+            "files": [
+                {
+                    "path": name,
+                    "size": len(data),
+                    "entries": 0,
+                    "sha256": __import__("hashlib").sha256(
+                        b"tampered" if corrupt else data
+                    ).hexdigest(),
+                }
+                for name, data in payloads.items()
+            ],
+        }
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("manifest.json", json.dumps(manifest))
+            for name, data in payloads.items():
+                archive.writestr(name, data)
+        return path
+
+    def test_a_well_formed_zip_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            results = verify_release.run_zip_checks(self._zip(directory))
+        self.assertTrue(all(result.passed for result in results), results)
+
+    def test_a_tampered_entry_fails_the_digest_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            results = verify_release.run_zip_checks(self._zip(directory, corrupt=True))
+        digests = [result for result in results if result.name == "zip digests"]
+        self.assertEqual(1, len(digests))
+        self.assertFalse(digests[0].passed)

@@ -177,6 +177,18 @@ fn relocation(offset: u64, kind: u32, addend: u64) -> [u8; 24] {
 /// .data.rel.ro[0x88]  name pointer -> .rodata[0]
 /// ```
 fn image_with_client_instance() -> Vec<u8> {
+    image_with_client_instance_layout(false)
+}
+
+/// The same image, optionally with a `type_info` pointer where the first
+/// virtual function belongs. A `__si_class_type_info` base array holds such
+/// pointers, and one placed here used to look like the start of a second vtable
+/// for the same class, whose header then truncated the real slot run.
+fn image_with_type_info_pointer_as_first_slot() -> Vec<u8> {
+    image_with_client_instance_layout(true)
+}
+
+fn image_with_client_instance_layout(decoy_type_info: bool) -> Vec<u8> {
     let mut rodata = Vec::new();
     let name_offset = rodata.len();
     rodata.extend_from_slice(b"14ClientInstance\0");
@@ -189,7 +201,12 @@ fn image_with_client_instance() -> Vec<u8> {
     // vtable[-1]: pointer to the type_info object.
     data[8..16].copy_from_slice(&TYPE_INFO_ADDRESS.to_le_bytes());
     // vtable[0]: first virtual function.
-    data[16..24].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
+    let first_slot = if decoy_type_info {
+        TYPE_INFO_ADDRESS
+    } else {
+        TEXT_ADDRESS
+    };
+    data[16..24].copy_from_slice(&first_slot.to_le_bytes());
     // type_info[0]: the type_info vtable pointer, which points into `.text` and
     // therefore cannot itself be mistaken for a type_info pointer.
     data[TYPE_INFO_OFFSET..TYPE_INFO_OFFSET + 8].copy_from_slice(&TEXT_ADDRESS.to_le_bytes());
@@ -201,7 +218,7 @@ fn image_with_client_instance() -> Vec<u8> {
         // R_AARCH64_ABS64 = 257
         body.extend_from_slice(&relocation(VTABLE_ADDRESS + 8, 257, TYPE_INFO_ADDRESS));
         body.extend_from_slice(&relocation(TYPE_INFO_ADDRESS + 8, 257, name_address));
-        body.extend_from_slice(&relocation(VTABLE_ADDRESS + 16, 257, TEXT_ADDRESS));
+        body.extend_from_slice(&relocation(VTABLE_ADDRESS + 16, 257, first_slot));
         body
     };
 
@@ -401,6 +418,15 @@ fn resolves_the_vtable_of_a_polymorphic_class() {
     );
     assert!(entry.type_info_address > entry.vtable_address);
     assert_eq!(entry.vtable_hex, format!("0x{:x}", entry.vtable_address));
+}
+
+#[test]
+fn a_type_info_pointer_in_a_base_array_is_not_a_vtable() {
+    let image = image_with_type_info_pointer_as_first_slot();
+    let map = resolve_vtables(&image).expect("resolve vtables");
+
+    assert_eq!(map.all.len(), 1, "{map:#?}");
+    assert_eq!(map.all[0].vtable_address, VTABLE_ADDRESS);
 }
 
 #[test]

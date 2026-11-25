@@ -260,6 +260,61 @@ class OffsetExporterTest {
     }
 
     @Test
+    fun theZipNameAndTheJsonFieldShareOneVersion() {
+        val versioned = summary.copy(
+            displayName = "minecraft-26-60-arm64-v8a-xbox.apk",
+            apkVersion = "26.60.3"
+        )
+
+        assertEquals("26.60.3", OffsetExporter.versionLabel(versioned))
+        assertEquals("BEDROCK_OFFSETS_26.60.3.zip", OffsetExporter.zipFileName(versioned))
+        assertEquals(
+            "JNI_OFFSETS_26.60.3.json",
+            OffsetExporter.jniFileName(versioned)
+        )
+        val source = JsonParser.parseString(OffsetExporter.toJson(versioned))
+            .asJsonObject
+            .getAsJsonObject("source")
+        assertEquals("26.60.3", source.get("apkVersion").asString)
+    }
+
+    @Test
+    fun theManifestVersionWinsOverTheApkName() {
+        val versioned = summary.copy(
+            displayName = "minecraft-26-66.apk",
+            apkVersion = "26.60.3"
+        )
+
+        assertEquals("BEDROCK_OFFSETS_26.60.3.zip", OffsetExporter.zipFileName(versioned))
+    }
+
+    @Test
+    fun collidingFunctionNamesGetAnAddressSuffix() {
+        val table = kotlin.io.path.createTempFile("internal", ".ndjson").toFile()
+        table.deleteOnExit()
+        fun line(address: String) = """{"type":"function","function":{""" +
+            """"address":"$address","fileOffset":"0x0","size":4,""" +
+            """"name":"Player::getPos","nameSource":"symbol","aliases":[],""" +
+            """"kind":"function","status":"verified","prologueKind":"none"}}"""
+        table.writeText(listOf(line("0x1000"), line("0x1010")).joinToString("\n"))
+        val internal = com.chimerateam.offsetextractor.data.native.InternalSummary(
+            functions = 2,
+            named = 2,
+            path = table.absolutePath
+        )
+        val writer = java.io.StringWriter()
+
+        OffsetExporter.writeInternal(summary.copy(internal = internal), writer)
+
+        val offsets = JsonParser.parseString(writer.toString())
+            .asJsonObject
+            .getAsJsonObject("offsets")
+        assertEquals(2, offsets.size())
+        assertEquals("0x1000", offsets.get("Player::getPos@0x1000").asString)
+        assertEquals("0x1010", offsets.get("Player::getPos@0x1010").asString)
+    }
+
+    @Test
     fun anEmptySummaryStillProducesAValidDocument() {
         val empty = summary.copy(
             patternHits = emptyList(),

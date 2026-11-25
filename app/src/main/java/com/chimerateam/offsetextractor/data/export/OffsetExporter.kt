@@ -3,6 +3,7 @@ package com.chimerateam.offsetextractor.data.export
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonWriter
 import java.io.File
@@ -106,6 +107,7 @@ object OffsetExporter {
         writeInternalStats(json, summary)
         writeInternalClasses(json, table)
         writeInternalFunctions(json, table)
+        writeInternalSymbols(json, table)
         writeInternalOffsets(json, table)
         json.endObject()
         json.flush()
@@ -114,31 +116,148 @@ object OffsetExporter {
     }
 
     /**
-     * Version label used in both file names.
+     * Streams the category index.
      *
-     * 1. A version inside the APK display name, e.g. `minecraft-26-66.apk`.
-     * 2. The `versionName` read from the APK manifest.
-     * 3. The first eight characters of the build identifier.
+     * The index is the entry point of the `InternalCPP/` folder: it lists every
+     * category file with its counts and maps each class to its category, so a
+     * client can jump straight to the file it needs.
      *
      * @param summary the completed scan.
-     * @return a sanitised label such as `26.66`.
+     * @param split the category files produced by [InternalTableSplitter].
+     * @param writer destination writer.
+     */
+    fun writeInternalIndex(summary: ScanResultSummary, split: SplitResult, writer: Writer) {
+        val json = JsonWriter(writer)
+        json.setIndent("  ")
+        json.beginObject()
+        json.name("schemaVersion").value(SCHEMA_VERSION)
+        json.name("generatedBy").value("BedrockOffsetExtractor")
+        json.name("kind").value("internal_cpp_index")
+        json.name("version").value(versionLabel(summary))
+        writeInternalSource(json, summary)
+        json.name("stats").beginObject()
+        json.name("classes").value(split.totalClasses)
+        json.name("functions").value(split.totalFunctions)
+        json.name("dataSymbols").value(split.totalSymbols)
+        json.name("categories").value(split.parts.size)
+        json.endObject()
+        json.name("categories").beginArray()
+        for (part in split.parts) {
+            json.beginObject()
+            json.name("id").value(part.id)
+            json.name("category").value(part.categoryId)
+            json.name("label").value(part.label)
+            json.name("file").value(
+                "InternalCPP/${categoryFileName(part.id, summary)}"
+            )
+            if (part.part > 0) json.name("part").value(part.part)
+            json.name("classes").value(part.counts.classes)
+            json.name("functions").value(part.counts.functions)
+            json.name("symbols").value(part.counts.symbols)
+            json.endObject()
+        }
+        json.endArray()
+        json.name("classToCategory").beginObject()
+        split.classToCategory.toSortedMap().forEach { (name, category) ->
+            json.name(name).value(category)
+        }
+        json.endObject()
+        json.endObject()
+        json.flush()
+        writer.write("\n")
+        writer.flush()
+    }
+
+    /**
+     * Streams one category file.
+     *
+     * @param summary the completed scan.
+     * @param part the category file to write.
+     * @param writer destination writer.
+     */
+    fun writeCategory(summary: ScanResultSummary, part: CategoryPart, writer: Writer) {
+        val json = JsonWriter(writer)
+        json.setIndent("  ")
+        json.beginObject()
+        json.name("schemaVersion").value(SCHEMA_VERSION)
+        json.name("generatedBy").value("BedrockOffsetExtractor")
+        json.name("kind").value("internal_cpp_category")
+        json.name("category").value(part.categoryId)
+        json.name("label").value(part.label)
+        if (part.part > 0) json.name("part").value(part.part)
+        json.name("version").value(versionLabel(summary))
+        writeInternalSource(json, summary)
+        json.name("stats").beginObject()
+        json.name("classes").value(part.counts.classes)
+        json.name("functions").value(part.counts.functions)
+        json.name("symbols").value(part.counts.symbols)
+        json.name("entries").value(part.counts.total)
+        json.endObject()
+        json.name("classes").beginObject()
+        part.classFile?.let { file ->
+            file.forEachLine { line ->
+                val record = parseRecord(line, "class") ?: return@forEachLine
+                val name = record.get("name")?.asString ?: return@forEachLine
+                json.name(name).jsonValue(record.toString())
+            }
+        }
+        json.endObject()
+        json.name("functions").beginArray()
+        for (file in part.functionFiles) {
+            file.forEachLine { line ->
+                val record = parseRecord(line, "function") ?: return@forEachLine
+                json.jsonValue(record.toString())
+            }
+        }
+        json.endArray()
+        json.name("symbols").beginArray()
+        part.symbolFile?.let { file ->
+            file.forEachLine { line ->
+                val record = parseRecord(line, "symbol") ?: return@forEachLine
+                json.jsonValue(record.toString())
+            }
+        }
+        json.endArray()
+        json.endObject()
+        json.flush()
+        writer.write("\n")
+        writer.flush()
+    }
+
+    /**
+     * Version label used by every file name and by the `source.apkVersion`
+     * field. One function, so a name can never disagree with the document.
+     *
+     * 1. The `versionName` read from the APK manifest, e.g. `26.60.3`.
+     * 2. A version inside the APK display name, e.g. `minecraft-26-66.apk`.
+     * 3. The first eight characters of the build identifier.
+     *
+     * Dots are preserved; only characters that are unsafe in a file name are
+     * removed.
+     *
+     * @param summary the completed scan.
+     * @return a sanitised label such as `26.60.3`.
      */
     fun versionLabel(summary: ScanResultSummary): String {
-        val name = summary.displayName
-        val marker = name.indexOf("minecraft", ignoreCase = true)
-        val tail = if (marker >= 0) {
-            name.substring(marker + "minecraft".length)
+        val fromManifest = summary.apkVersion.trim()
+        val candidate = if (fromManifest.isNotEmpty()) {
+            fromManifest
         } else {
-            name
-        }
-        val match = versionPattern.find(tail)
-        val candidate = when {
-            match != null -> match.groupValues.drop(1)
-                .filter { it.isNotEmpty() }
-                .joinToString(".")
-            summary.apkVersion.isNotBlank() -> summary.apkVersion
-            summary.buildId.isNotBlank() -> summary.buildId.take(8)
-            else -> summary.sha256.take(8)
+            val name = summary.displayName
+            val marker = name.indexOf("minecraft", ignoreCase = true)
+            val tail = if (marker >= 0) {
+                name.substring(marker + "minecraft".length)
+            } else {
+                name
+            }
+            val match = versionPattern.find(tail)
+            when {
+                match != null -> match.groupValues.drop(1)
+                    .filter { it.isNotEmpty() }
+                    .joinToString(".")
+                summary.buildId.isNotBlank() -> summary.buildId.take(8)
+                else -> summary.sha256.take(8)
+            }
         }
         return sanitize(candidate).ifBlank { "unknown" }
     }
@@ -159,6 +278,23 @@ object OffsetExporter {
      */
     fun internalFileName(summary: ScanResultSummary): String =
         "${ExportNames.INTERNAL_PREFIX}_${versionLabel(summary)}${ExportNames.EXTENSION}"
+
+    /** File name of the category index, e.g. `INTERNALCPP_INDEX_26.60.3.json`. */
+    fun internalIndexFileName(summary: ScanResultSummary): String =
+        "INTERNALCPP_INDEX_${versionLabel(summary)}${ExportNames.EXTENSION}"
+
+    /**
+     * File name of one category file.
+     *
+     * @param part category and part identifier, e.g. `actor_entity`.
+     * @param summary the completed scan.
+     */
+    fun categoryFileName(part: String, summary: ScanResultSummary): String =
+        "INTERNALCPP_${part.uppercase()}_${versionLabel(summary)}${ExportNames.EXTENSION}"
+
+    /** File name of the single ZIP, e.g. `BEDROCK_OFFSETS_26.60.3.zip`. */
+    fun zipFileName(summary: ScanResultSummary): String =
+        "BEDROCK_OFFSETS_${versionLabel(summary)}.zip"
 
     /**
      * File name for [kind].
@@ -246,6 +382,9 @@ object OffsetExporter {
         json.name("ambiguous").value(internal?.ambiguous ?: 0)
         json.name("notFound").value(internal?.notFound ?: 0)
         json.name("signatures").value(internal?.signatures ?: 0)
+        json.name("signaturesUnique").value(internal?.signaturesUnique ?: 0)
+        json.name("slotsWithSizeZero").value(internal?.slotsWithSizeZero ?: 0)
+        json.name("dataSymbols").value(internal?.dataSymbols ?: 0)
         json.endObject()
     }
 
@@ -262,10 +401,31 @@ object OffsetExporter {
     }
 
     private fun writeInternalFunctions(json: JsonWriter, table: File?) {
+        val duplicates = countFunctionNames(table)
         json.name("functions").beginArray()
         if (table != null && table.isFile) {
             table.forEachLine { line ->
                 val record = parseRecord(line, "function") ?: return@forEachLine
+                val name = record.get("name")?.asString
+                val address = record.get("address")?.asString
+                if (name != null && address != null && (duplicates[name] ?: 0) > 1) {
+                    // The flat offsets map disambiguates a colliding name with
+                    // `@address`; the alias list records that spelling too.
+                    val aliases = record.getAsJsonArray("aliases")
+                        ?: JsonArray().also { record.add("aliases", it) }
+                    aliases.add("$name@$address")
+                }
+                json.jsonValue(record.toString())
+            }
+        }
+        json.endArray()
+    }
+
+    private fun writeInternalSymbols(json: JsonWriter, table: File?) {
+        json.name("symbols").beginArray()
+        if (table != null && table.isFile) {
+            table.forEachLine { line ->
+                val record = parseRecord(line, "symbol") ?: return@forEachLine
                 json.jsonValue(record.toString())
             }
         }
@@ -273,16 +433,30 @@ object OffsetExporter {
     }
 
     private fun writeInternalOffsets(json: JsonWriter, table: File?) {
+        val duplicates = countFunctionNames(table)
         json.name("offsets").beginObject()
         if (table != null && table.isFile) {
             table.forEachLine { line ->
                 val record = parseRecord(line, "function") ?: return@forEachLine
                 val name = record.get("name")?.asString ?: return@forEachLine
                 val address = record.get("address")?.asString ?: return@forEachLine
-                json.name(name).value(address)
+                val key = if ((duplicates[name] ?: 0) > 1) "$name@$address" else name
+                json.name(key).value(address)
             }
         }
         json.endObject()
+    }
+
+    /** Counts how many functions share each name, streaming the table once. */
+    private fun countFunctionNames(table: File?): Map<String, Int> {
+        if (table == null || !table.isFile) return emptyMap()
+        val counts = HashMap<String, Int>()
+        table.forEachLine { line ->
+            val record = parseRecord(line, "function") ?: return@forEachLine
+            val name = record.get("name")?.asString ?: return@forEachLine
+            counts[name] = (counts[name] ?: 0) + 1
+        }
+        return counts
     }
 
     private fun parseRecord(line: String, kind: String) = runCatching {

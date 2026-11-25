@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,10 +64,55 @@ def load_document(path: Path) -> dict:
     """
     if not path.is_file():
         raise VerificationError(f"{path} does not exist")
+    if path.suffix.lower() == ".zip":
+        return load_zip_document(path)
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise VerificationError(f"{path} is not valid JSON: {error}") from error
+    if not isinstance(document, dict) or not isinstance(document.get("offsets"), dict):
+        raise VerificationError(f"{path} has no 'offsets' object")
+    return document
+
+
+def load_zip_document(path: Path) -> dict:
+    """Read the JNI document from a ``BEDROCK_OFFSETS_*.zip``.
+
+    The archive keeps the v1 JNI document under ``JNI/`` and the split internal
+    table under ``InternalCPP/``. A diff is only meaningful for the JNI
+    document, so this reads that entry; the combined internal document is used
+    as a fallback when the archive was built without a JNI folder.
+
+    Args:
+        path: the ZIP to read.
+
+    Returns:
+        The parsed JNI (or combined internal) document.
+
+    Raises:
+        VerificationError: if the archive has no readable offsets document.
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            candidates = [
+                name
+                for name in names
+                if name.startswith("JNI/JNI_OFFSETS_") and name.endswith(".json")
+            ] or [
+                name
+                for name in names
+                if name.startswith("InternalCPP/INTERNALCPP_OFFSETS_")
+                and name.endswith(".json")
+            ]
+            if not candidates:
+                raise VerificationError(
+                    f"{path} has no JNI/JNI_OFFSETS_*.json entry"
+                )
+            with archive.open(sorted(candidates)[0]) as handle:
+                document = json.load(handle)
+    except (zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise VerificationError(f"{path} is not a usable offsets ZIP: {error}") from error
     if not isinstance(document, dict) or not isinstance(document.get("offsets"), dict):
         raise VerificationError(f"{path} has no 'offsets' object")
     return document

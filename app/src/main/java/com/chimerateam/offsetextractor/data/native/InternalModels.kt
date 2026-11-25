@@ -17,6 +17,9 @@ import com.google.gson.annotations.SerializedName
  * @property ambiguous signatures or anchors with more than one candidate.
  * @property notFound signatures or anchors with no candidate.
  * @property signatures auto-generated signatures.
+ * @property signaturesUnique signatures that matched exactly one function start.
+ * @property slotsWithSizeZero virtual slots whose function has no size.
+ * @property dataSymbols data symbols moved out of the function table.
  * @property truncatedSignatures whether the signature cap truncated generation.
  * @property path absolute path of the NDJSON table in the app cache.
  */
@@ -30,6 +33,9 @@ data class InternalSummary(
     val ambiguous: Int = 0,
     @SerializedName("notFound") val notFound: Int = 0,
     val signatures: Int = 0,
+    @SerializedName("signaturesUnique") val signaturesUnique: Int = 0,
+    @SerializedName("slotsWithSizeZero") val slotsWithSizeZero: Int = 0,
+    @SerializedName("dataSymbols") val dataSymbols: Int = 0,
     @SerializedName("truncatedSignatures") val truncatedSignatures: Boolean = false,
     val path: String = ""
 ) {
@@ -70,7 +76,8 @@ data class InternalFunction(
     val mangled: String? = null,
     val target: String? = null,
     val signature: String? = null,
-    @SerializedName("signatureUnique") val signatureUnique: Boolean? = null
+    @SerializedName("signatureUnique") val signatureUnique: Boolean? = null,
+    @SerializedName("suspectReason") val suspectReason: String? = null
 ) {
     /** [address] as a number, or zero when it is not hex. */
     fun addressValue(): Long = parseHex(address)
@@ -100,6 +107,7 @@ data class VtableSlot(
     val size: Long = 0,
     val name: String = "",
     val kind: String = "virtual",
+    @SerializedName("prologueKind") val prologueKind: String = "none",
     val overrides: Boolean = false,
     val inherited: Boolean = false,
     val status: String = "verified",
@@ -116,8 +124,9 @@ data class VtableSlot(
  * @property vtable vtable header address.
  * @property vtableOffset vtable offset from the image base.
  * @property typeInfo `type_info` address.
- * @property slotCount number of slots.
- * @property slots the slots themselves.
+ * @property slotCount number of slots in the primary group.
+ * @property slots the primary group's slots.
+ * @property vtableGroups every vtable group of the class.
  */
 data class ClassInfo(
     val name: String = "",
@@ -127,7 +136,40 @@ data class ClassInfo(
     @SerializedName("vtableOffset") val vtableOffset: String = "0x0",
     @SerializedName("typeInfo") val typeInfo: String = "0x0",
     @SerializedName("slotCount") val slotCount: Int = 0,
+    val slots: List<VtableSlot> = emptyList(),
+    @SerializedName("vtableGroups") val vtableGroups: List<VtableGroup> = emptyList()
+)
+
+/**
+ * One vtable group of a class with multiple inheritance.
+ *
+ * @property offsetToTop offset from this subobject to the most-derived object.
+ * @property address vtable header address.
+ * @property slots the group's slots.
+ */
+data class VtableGroup(
+    @SerializedName("offsetToTop") val offsetToTop: Long = 0,
+    val address: String = "0x0",
     val slots: List<VtableSlot> = emptyList()
+)
+
+/**
+ * One data symbol that was kept out of the function table.
+ *
+ * @property address virtual address.
+ * @property size size recorded by the linker.
+ * @property name demangled name.
+ * @property mangled mangled name.
+ * @property kind `data` or `tls`.
+ * @property reason why the symbol is data rather than a function.
+ */
+data class InternalDataSymbol(
+    val address: String = "0x0",
+    val size: Long = 0,
+    val name: String = "",
+    val mangled: String = "",
+    val kind: String = "data",
+    val reason: String = ""
 )
 
 /** Payload returned by the internal-analysis entry point. */

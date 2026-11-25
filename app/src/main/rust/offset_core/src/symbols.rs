@@ -302,23 +302,102 @@ pub struct NamedSymbol {
     pub binding: u8,
 }
 
-/// Reads every defined global or weak symbol that carries a name.
+/// A defined dynamic symbol that names data rather than code.
+///
+/// `_binary_classes_dex_size`, `__emutls_t.*` and similar entries live in the
+/// symbol table but have no executable body. Exporting them as functions makes
+/// the internal table claim code that does not exist, so they are separated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataSymbol {
+    /// Demangled name, or the raw name when it is not an Itanium symbol.
+    pub name: String,
+    /// Name exactly as it appears in `.dynstr`.
+    pub mangled: String,
+    /// Virtual address of the symbol.
+    pub address: u64,
+    /// Size recorded for the symbol, or zero.
+    pub size: u64,
+    /// `data` for an object, `tls` for thread-local storage.
+    pub kind: String,
+    /// Why the symbol was classified as data.
+    pub reason: String,
+}
+
+/// The dynamic symbols split into code and data.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct NamedSymbols {
+    /// Symbols with an executable body.
+    pub functions: Vec<NamedSymbol>,
+    /// Symbols that name data or thread-local storage.
+    pub data: Vec<DataSymbol>,
+}
+
+/// `st_info` type: no type information.
+const STT_NOTYPE: u8 = 0;
+/// `st_info` type: data object.
+const STT_OBJECT: u8 = 1;
+/// `st_info` type: function.
+const STT_FUNC: u8 = 2;
+/// `st_info` type: thread-local storage.
+const STT_TLS: u8 = 6;
+/// Section index meaning "absolute, not relocated".
+const SHN_ABS: usize = 0xfff1;
+/// Section index meaning "common block".
+const SHN_COMMON: usize = 0xfff2;
+
+/// Whether an address lies inside an executable section.
+fn in_executable_section(map: &crate::sections::SectionMap, address: u64) -> bool {
+    map.sections.iter().any(|section| {
+        section.executable
+            && address >= section.address
+            && address < section.address.saturating_add(section.size)
+    })
+}
+
+/// Why a symbol names data rather than code, or `None` when it is a function.
+fn data_reason_for(
+    symbol_type: u8,
+    section_index: usize,
+    executable: bool,
+) -> Option<&'static str> {
+    if section_index == SHN_ABS {
+        Some("absolute_symbol")
+    } else if section_index == SHN_COMMON {
+        Some("common_symbol")
+    } else if symbol_type == STT_TLS {
+        Some("tls_symbol")
+    } else if symbol_type == STT_OBJECT {
+        Some("object_symbol")
+    } else if !executable {
+        Some("outside_executable_section")
+    } else if symbol_type != STT_FUNC && symbol_type != STT_NOTYPE {
+        Some("non_function_type")
+    } else {
+        None
+    }
+}
+
+/// Reads every defined global or weak symbol that carries a name, split into
+/// functions and data.
 ///
 /// Unlike [`read_dynamic_symbols`], which keeps only `Java_` entry points, this
-/// is the naming source for the internal function table: every exported C++
-/// method and helper is a candidate name.
+/// is the naming source for the internal function table. A symbol is treated as
+/// code only when its `st_info` type is `STT_FUNC`, or `STT_NOTYPE` with an
+/// address inside an executable section. Everything else is returned as data so
+/// the function table, its stats and its suspect count stay honest.
 ///
 /// # Errors
 ///
 /// Returns [`CoreError::InvalidElf`] when the symbol or string table cannot be
 /// read.
-pub fn read_named_symbols(image: &[u8]) -> CoreResult<Vec<NamedSymbol>> {
+pub fn read_named_symbols(image: &[u8]) -> CoreResult<NamedSymbols> {
     let map = build_section_map(image)?;
     let Some(dynsym) = map.find(DYNSYM_SECTION) else {
-        return Ok(Vec::new());
+        return Ok(NamedSymbols::default());
     };
     if dynsym.size == 0 {
-        return Ok(Vec::new());
+        return Ok(NamedSymbols::default());
     }
 
     let context = section_context(image)?;
@@ -332,9 +411,9 @@ pub fn read_named_symbols(image: &[u8]) -> CoreResult<Vec<NamedSymbol>> {
     let table = goblin::strtab::Strtab::parse(strings, 0, strings.len(), 0x0)
         .map_err(|error| CoreError::InvalidElf(format!("cannot read {DYNSTR_SECTION}: {error}")))?;
 
-    let mut named = Vec::new();
+    let mut named = NamedSymbols::default();
     for symbol in &symbols {
-        if named.len() >= MAX_NAMED_SYMBOLS {
+        if named.functions.len() + named.data.len() >= MAX_NAMED_SYMBOLS {
             break;
         }
         let binding = symbol.st_bind();
@@ -347,7 +426,28 @@ pub fn read_named_symbols(image: &[u8]) -> CoreResult<Vec<NamedSymbol>> {
         if name.is_empty() {
             continue;
         }
-        named.push(NamedSymbol {
+        let symbol_type = symbol.st_type();
+        let executable = in_executable_section(&map, symbol.st_value);
+        let data_reason = data_reason_for(symbol_type, symbol.st_shndx, executable);
+
+        if let Some(reason) = data_reason {
+            named.data.push(DataSymbol {
+                name: demangle(name).unwrap_or_else(|| name.to_string()),
+                mangled: name.to_string(),
+                address: symbol.st_value,
+                size: symbol.st_size,
+                kind: if symbol_type == STT_TLS {
+                    "tls"
+                } else {
+                    "data"
+                }
+                .to_string(),
+                reason: reason.to_string(),
+            });
+            continue;
+        }
+
+        named.functions.push(NamedSymbol {
             name: demangle(name).unwrap_or_else(|| name.to_string()),
             mangled: name.to_string(),
             address: symbol.st_value,
@@ -481,6 +581,27 @@ mod tests {
 
         let found = note_build_id(&blob, Ctx::default()).expect("note must be found");
         assert_eq!(found, vec![0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn data_symbols_are_separated_from_functions() {
+        // A function in .text stays a function.
+        assert_eq!(data_reason_for(STT_FUNC, 2, true), None);
+        // An object, a TLS entry and an absolute symbol are data even in .text.
+        assert_eq!(data_reason_for(STT_OBJECT, 2, true), Some("object_symbol"));
+        assert_eq!(data_reason_for(STT_TLS, 2, true), Some("tls_symbol"));
+        assert_eq!(
+            data_reason_for(STT_FUNC, SHN_ABS, true),
+            Some("absolute_symbol")
+        );
+        // An untyped symbol outside .text is data, which is what
+        // `_binary_classes_dex_size` is.
+        assert_eq!(
+            data_reason_for(STT_NOTYPE, 3, false),
+            Some("outside_executable_section")
+        );
+        // An untyped symbol inside .text is still treated as code.
+        assert_eq!(data_reason_for(STT_NOTYPE, 2, true), None);
     }
 
     #[test]

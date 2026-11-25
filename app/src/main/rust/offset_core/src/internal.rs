@@ -18,9 +18,10 @@
 //! Results are streamed as NDJSON so a table of several hundred thousand
 //! functions never has to be materialised as one JSON string.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
@@ -29,7 +30,7 @@ use crate::prologue::{PrologueKind, PrologueVerifier};
 use crate::rtti::{read_u64, RelocationIndex, VtableMap};
 use crate::scanner::{scan_section_releasing_pages, PageReleaser, ProgressSink, ScanControl};
 use crate::sections::{SectionMap, RODATA_SECTION, TEXT_SECTION};
-use crate::symbols::{find_symbol_address, NamedSymbol};
+use crate::symbols::{find_symbol_address, DataSymbol, NamedSymbol};
 
 /// Hard sanity limit on the slots read for one class.
 pub const MAX_SLOTS_PER_CLASS: usize = 4096;
@@ -37,8 +38,16 @@ pub const MAX_SLOTS_PER_CLASS: usize = 4096;
 /// Bytes sampled from a function when auto-generating a signature.
 pub const MAX_SIGNATURE_BYTES: usize = 48;
 
+/// Upper bound the signature generator extends a pattern to before giving up
+/// on uniqueness.
+pub const MAX_SIGNATURE_EXTENDED_BYTES: usize = 128;
+
 /// Default cap on auto-generated signatures.
-pub const DEFAULT_MAX_SIGNATURES: usize = 256;
+///
+/// The pass generates one signature per symbol-named function and per vtable
+/// slot, which is a few hundred thousand on a real library, so the default is
+/// effectively "no cap" while still bounding a corrupt input.
+pub const DEFAULT_MAX_SIGNATURES: usize = 1_000_000;
 
 /// Number of bytes before a vtable's first function pointer.
 const VTABLE_PREFIX_BYTES: u64 = 16;
@@ -126,6 +135,12 @@ pub struct InternalSummary {
     pub not_found: usize,
     /// Auto-generated signatures.
     pub signatures: usize,
+    /// Auto-generated signatures that matched exactly one function start.
+    pub signatures_unique: usize,
+    /// Virtual slots whose function has no size.
+    pub slots_with_size_zero: usize,
+    /// Data symbols moved out of the function table.
+    pub data_symbols: usize,
     /// Whether the signature cap truncated generation.
     pub truncated_signatures: bool,
     /// Absolute path of the NDJSON table, filled in by the JNI layer.
@@ -151,8 +166,10 @@ pub struct SlotRecord {
     pub size: u64,
     /// Slot name.
     pub name: String,
-    /// `virtual`, `pure_virtual`, or `thunk`.
+    /// `virtual`, `pure_virtual`, `thunk` or `import`.
     pub kind: String,
+    /// Which prologue form was recognised, or `leaf`/`none`.
+    pub prologue_kind: String,
     /// Whether the slot differs from the first base's slot.
     pub overrides: bool,
     /// Whether the slot is identical to the first base's slot.
@@ -186,9 +203,27 @@ pub struct ClassRecord {
     /// Virtual address of the `type_info` object.
     #[serde(serialize_with = "hex_u64")]
     pub type_info: u64,
-    /// Number of slots.
+    /// Number of slots in the primary group.
     pub slot_count: usize,
-    /// The slots themselves.
+    /// The slots of the primary vtable group.
+    pub slots: Vec<SlotRecord>,
+    /// Every vtable group of the class, including the primary one.
+    ///
+    /// Multiple inheritance gives a class one group per base subobject; the
+    /// primary group is the one the class pointer points at.
+    pub vtable_groups: Vec<VtableGroup>,
+}
+
+/// One vtable group of a class with multiple inheritance.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VtableGroup {
+    /// Offset from this subobject to the most-derived object.
+    pub offset_to_top: i64,
+    /// Virtual address of the group's vtable header.
+    #[serde(serialize_with = "hex_u64")]
+    pub address: u64,
+    /// The group's virtual slots.
     pub slots: Vec<SlotRecord>,
 }
 
@@ -228,6 +263,28 @@ pub struct FunctionRecord {
     /// Whether the signature matched exactly once.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_unique: Option<bool>,
+    /// Why the entry is marked `suspect`, when it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suspect_reason: Option<String>,
+}
+
+/// One data symbol, kept out of the function table.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataSymbolRecord {
+    /// Virtual address.
+    #[serde(serialize_with = "hex_u64")]
+    pub address: u64,
+    /// Size recorded by the linker, or zero.
+    pub size: u64,
+    /// Demangled name when possible.
+    pub name: String,
+    /// Mangled name as it appears in `.dynstr`.
+    pub mangled: String,
+    /// `data` for an object, `tls` for thread-local storage.
+    pub kind: String,
+    /// Why the symbol is data rather than a function.
+    pub reason: String,
 }
 
 /// A named address and its provenance.
@@ -259,6 +316,7 @@ pub fn analyze(
     map: &SectionMap,
     vtables: &VtableMap,
     named_symbols: &[NamedSymbol],
+    data_symbols: &[DataSymbol],
     options: &InternalOptions,
     control: &ScanControl,
     sink: Option<&dyn ProgressSink>,
@@ -369,9 +427,75 @@ pub fn analyze(
     drop(functions);
     let verifier = PrologueVerifier::new()?;
 
+    // Join every slot to the function at the same address, so a slot carries
+    // the same size, prologue form and status as the function table entry.
+    let mut slot_meta: HashMap<u64, (u64, String, String)> = HashMap::new();
+    for class in &classes {
+        for group in &class.record.vtable_groups {
+            for slot in &group.slots {
+                if slot.address == 0 || slot_meta.contains_key(&slot.address) {
+                    continue;
+                }
+                let size = fde_sizes
+                    .get(&slot.address)
+                    .copied()
+                    .or_else(|| named_size(named_symbols, slot.address, &slot.name))
+                    .unwrap_or(0);
+                let (prologue, _) = classify_function(map, image, slot.address, &verifier);
+                let status = if fde_sizes.contains_key(&slot.address) {
+                    "verified"
+                } else if is_executable(map, slot.address) {
+                    "fde_missing"
+                } else {
+                    "import"
+                };
+                slot_meta.insert(slot.address, (size, prologue, status.to_string()));
+            }
+        }
+    }
+
+    let mut slots_with_size_zero = 0usize;
+    for class in &mut classes {
+        for group in &mut class.record.vtable_groups {
+            for slot in &mut group.slots {
+                if slot.address == 0 {
+                    slot.status = "import".to_string();
+                    slots_with_size_zero += 1;
+                } else if let Some((size, prologue, status)) = slot_meta.get(&slot.address) {
+                    slot.size = *size;
+                    slot.prologue_kind = prologue.clone();
+                    slot.status = status.clone();
+                    if *size == 0 {
+                        slots_with_size_zero += 1;
+                    }
+                }
+                if let Some((signature, unique)) = signatures.get(&slot.address) {
+                    slot.signature = Some(signature.clone());
+                    slot.signature_unique = Some(*unique);
+                }
+            }
+        }
+        if let Some(primary) = class.record.vtable_groups.first() {
+            class.record.slots = primary.slots.clone();
+        }
+    }
+
+    let signatures_unique = signatures.values().filter(|(_, unique)| *unique).count();
+    let vtable_slots = classes
+        .iter()
+        .map(|class| {
+            class
+                .record
+                .vtable_groups
+                .iter()
+                .map(|group| group.slots.len())
+                .sum::<usize>()
+        })
+        .sum();
+
     let mut stats = InternalSummary {
         classes: classes.len(),
-        vtable_slots: classes.iter().map(|class| class.record.slot_count).sum(),
+        vtable_slots,
         functions: addresses.len(),
         named: 0,
         auto_named: 0,
@@ -379,6 +503,9 @@ pub fn analyze(
         ambiguous,
         not_found,
         signatures: signatures.len(),
+        signatures_unique,
+        slots_with_size_zero,
+        data_symbols: data_symbols.len(),
         truncated_signatures,
         path: String::new(),
     };
@@ -395,17 +522,26 @@ pub fn analyze(
     )?;
 
     for class in &classes {
-        let mut record = class.record.clone();
-        for (index, slot) in record.slots.iter_mut().enumerate() {
-            if let Some((signature, unique)) = signatures.get(&class.addresses[index]) {
-                slot.signature = Some(signature.clone());
-                slot.signature_unique = Some(*unique);
-            }
-        }
         writeln!(
             out,
             "{}",
-            serde_json::json!({ "type": "class", "class": record })
+            serde_json::json!({ "type": "class", "class": class.record })
+        )?;
+    }
+
+    for symbol in data_symbols {
+        let record = DataSymbolRecord {
+            address: symbol.address,
+            size: symbol.size,
+            name: symbol.name.clone(),
+            mangled: symbol.mangled.clone(),
+            kind: symbol.kind.clone(),
+            reason: symbol.reason.clone(),
+        };
+        writeln!(
+            out,
+            "{}",
+            serde_json::json!({ "type": "symbol", "symbol": record })
         )?;
     }
 
@@ -466,6 +602,17 @@ pub fn analyze(
         } else {
             status
         };
+        let suspect_reason = if suspect.contains(address) {
+            Some("overlapping_fde".to_string())
+        } else if status == "suspect" {
+            Some(if from_fde {
+                "unverified_name".to_string()
+            } else {
+                "no_fde_no_prologue".to_string()
+            })
+        } else {
+            None
+        };
         if source == "auto" {
             stats.auto_named += 1;
         } else {
@@ -502,6 +649,7 @@ pub fn analyze(
             target: thunk_target,
             signature,
             signature_unique,
+            suspect_reason,
         };
         writeln!(
             out,
@@ -566,94 +714,151 @@ fn collect_class_slots(
     control: &ScanControl,
 ) -> CoreResult<Vec<ClassSlots>> {
     let limit = max_slots.min(MAX_SLOTS_PER_CLASS);
-    let mut ordered: Vec<_> = vtables.entries.values().collect();
-    ordered.sort_by_key(|vtable| vtable.vtable_address);
+    // A class with multiple inheritance owns one vtable per base subobject. The
+    // wire format keeps one entry per class name, so the full list is walked
+    // here instead of `entries`.
+    let all: Vec<&crate::rtti::TypeVTable> = if vtables.all.is_empty() {
+        vtables.entries.values().collect()
+    } else {
+        vtables.all.iter().collect()
+    };
 
-    let mut classes = Vec::with_capacity(ordered.len());
-    for (index, vtable) in ordered.iter().enumerate() {
+    // A slot run must stop before it walks into the next class's vtable header
+    // (the offset-to-top or the type_info pointer), which is the only reliable
+    // terminator when two vtables are adjacent in `.data.rel.ro`.
+    let mut headers: HashSet<u64> = HashSet::with_capacity(all.len() * 2);
+    for vtable in &all {
+        headers.insert(vtable.vtable_address);
+        headers.insert(vtable.vtable_address.saturating_add(8));
+    }
+
+    let mut by_name: BTreeMap<String, Vec<&crate::rtti::TypeVTable>> = BTreeMap::new();
+    for vtable in all {
+        by_name.entry(vtable.name.clone()).or_default().push(vtable);
+    }
+
+    let mut classes = Vec::with_capacity(by_name.len());
+    for (name, mut groups) in by_name {
         check_cancelled(control)?;
-        let next_header = ordered.get(index + 1).map(|next| next.vtable_address);
-        let first_slot = vtable.vtable_address + VTABLE_PREFIX_BYTES;
-        let mut addresses = Vec::new();
-        for slot in 0..limit {
-            let slot_address = first_slot + (slot as u64) * 8;
-            if let Some(next) = next_header {
-                if slot_address >= next {
+        groups.sort_by_key(|vtable| vtable.vtable_address);
+        let mut group_addresses: Vec<Vec<u64>> = Vec::with_capacity(groups.len());
+        let mut group_slots: Vec<Vec<SlotRecord>> = Vec::with_capacity(groups.len());
+        let mut group_meta: Vec<(i64, u64)> = Vec::with_capacity(groups.len());
+
+        for vtable in &groups {
+            let first_slot = vtable.vtable_address.saturating_add(VTABLE_PREFIX_BYTES);
+            let mut addresses: Vec<u64> = Vec::new();
+            for slot in 0..limit {
+                let slot_address = first_slot.saturating_add((slot as u64) * 8);
+                if headers.contains(&slot_address) {
+                    // The run reached another class's header.
                     break;
                 }
+                let raw = read_at(map, image, slot_address);
+                let relocated = relocation.target_of(slot_address);
+                let target = relocated.unwrap_or_else(|| raw.unwrap_or(0));
+                if target == 0 {
+                    if relocated.is_some() {
+                        // An imported symbol (GLOB_DAT/JUMP_SLOT) has a zero
+                        // addend because the loader fills it from the GOT. It is
+                        // still a slot, so record it and keep going.
+                        addresses.push(0);
+                        continue;
+                    }
+                    // No relocation and no in-place pointer: the run ended.
+                    break;
+                }
+                if !is_executable(map, target) {
+                    if relocated.is_some() {
+                        // A pointer outside `.text` is an unresolved import or a
+                        // deleted-function stub, not the end of the vtable.
+                        addresses.push(target);
+                        continue;
+                    }
+                    break;
+                }
+                addresses.push(target);
             }
-            let Some(raw) = read_at(map, image, slot_address) else {
-                break;
+
+            let class_name = unqualified(&vtable.name);
+            let destructor_pair = addresses.len() >= 2
+                && addresses[0] != 0
+                && addresses[1] != 0
+                && (addresses[0] == addresses[1]
+                    || is_thunk_to(map, image, addresses[1], addresses[0])
+                    || calls_target(map, image, addresses[1], addresses[0]));
+
+            let slots: Vec<SlotRecord> = addresses
+                .iter()
+                .enumerate()
+                .map(|(slot, address)| {
+                    let (slot_name, kind) = if *address == 0 {
+                        (format!("{}::vfunc_{slot}", vtable.name), "import")
+                    } else if pure_virtual == Some(*address) {
+                        (format!("{}::vfunc_{slot}", vtable.name), "pure_virtual")
+                    } else if destructor_pair && slot == 0 {
+                        (format!("{class_name}::~{class_name}"), "virtual")
+                    } else if destructor_pair && slot == 1 {
+                        (format!("{class_name}::~{class_name}_deleting"), "virtual")
+                    } else if !is_executable(map, *address) {
+                        (format!("{}::vfunc_{slot}", vtable.name), "import")
+                    } else {
+                        (format!("{}::vfunc_{slot}", vtable.name), "virtual")
+                    };
+                    SlotRecord {
+                        slot,
+                        offset: (slot as u64) * 8,
+                        address: *address,
+                        file_offset: file_offset_of(map, *address).unwrap_or(0),
+                        size: 0,
+                        name: slot_name,
+                        kind: kind.to_string(),
+                        prologue_kind: "none".to_string(),
+                        overrides: false,
+                        inherited: false,
+                        status: "pending".to_string(),
+                        signature: None,
+                        signature_unique: None,
+                    }
+                })
+                .collect();
+
+            let offset_to_top = {
+                let raw = read_at(map, image, vtable.vtable_address).unwrap_or(0);
+                relocation.target_of(vtable.vtable_address).unwrap_or(raw) as i64
             };
-            let target = relocation.target_of(slot_address).unwrap_or(raw);
-            if target == 0 || !is_executable(map, target) {
-                break;
-            }
-            addresses.push(target);
+            group_meta.push((offset_to_top, vtable.vtable_address));
+            group_addresses.push(addresses);
+            group_slots.push(slots);
         }
 
-        let mut names = Vec::with_capacity(addresses.len());
-        let mut kinds = Vec::with_capacity(addresses.len());
-        let destructor_pair = addresses.len() >= 2
-            && (addresses[0] == addresses[1]
-                || is_thunk_to(map, image, addresses[1], addresses[0]));
-        for (slot, address) in addresses.iter().enumerate() {
-            let (name, kind) = if destructor_pair && slot == 0 {
-                (format!("{}::~{}", vtable.name, vtable.name), "virtual")
-            } else if destructor_pair && slot == 1 {
-                (
-                    format!("{}::~{}_deleting", vtable.name, vtable.name),
-                    "virtual",
-                )
-            } else {
-                (format!("{}::vfunc_{slot}", vtable.name), "virtual")
-            };
-            let kind = if pure_virtual == Some(*address) {
-                "pure_virtual"
-            } else {
-                kind
-            };
-            names.push(name);
-            kinds.push(kind);
-        }
-
-        let slots: Vec<SlotRecord> = addresses
-            .iter()
-            .enumerate()
-            .map(|(slot, address)| SlotRecord {
-                slot,
-                offset: (slot as u64) * 8,
-                address: *address,
-                file_offset: file_offset_of(map, *address).unwrap_or(0),
-                size: 0,
-                name: names[slot].clone(),
-                kind: kinds[slot].to_string(),
-                overrides: false,
-                inherited: false,
-                status: "verified".to_string(),
-                signature: None,
-                signature_unique: None,
-            })
-            .collect();
-
+        let primary = &group_slots[0];
+        let record = ClassRecord {
+            name: name.clone(),
+            mangled: groups[0].mangled.clone(),
+            bases: Vec::new(),
+            vtable: groups[0].vtable_address,
+            vtable_offset: groups[0].vtable_offset,
+            type_info: groups[0].type_info_address,
+            slot_count: primary.len(),
+            slots: primary.clone(),
+            vtable_groups: group_meta
+                .iter()
+                .zip(group_slots.iter())
+                .map(|((offset_to_top, address), slots)| VtableGroup {
+                    offset_to_top: *offset_to_top,
+                    address: *address,
+                    slots: slots.clone(),
+                })
+                .collect(),
+        };
         classes.push(ClassSlots {
-            record: ClassRecord {
-                name: vtable.name.clone(),
-                mangled: vtable.mangled.clone(),
-                bases: Vec::new(),
-                vtable: vtable.vtable_address,
-                vtable_offset: vtable.vtable_offset,
-                type_info: vtable.type_info_address,
-                slot_count: slots.len(),
-                slots,
-            },
-            addresses,
+            record,
+            addresses: group_addresses[0].clone(),
         });
     }
     Ok(classes)
 }
-
-/// Reads the `type_info` inheritance chain for every resolved class.
 fn resolve_bases(
     map: &SectionMap,
     image: &[u8],
@@ -701,32 +906,93 @@ fn resolve_bases(
     bases
 }
 
-/// Fills the `overrides`/`inherited` flags against the first base class.
+/// Fills the `overrides`/`inherited` flags and copies real base names.
+///
+/// A slot is *inherited* when its address equals the same index in any base
+/// that declares that index, and *overridden* when it differs. Comparing every
+/// base rather than only the first one is what makes multiple inheritance
+/// correct: the secondary vtable group of a class belongs to a base that is not
+/// the first in the list.
 fn apply_inheritance(classes: &mut [ClassSlots], bases: &HashMap<String, Vec<String>>) {
     let by_name: HashMap<String, Vec<u64>> = classes
         .iter()
         .map(|class| (class.record.name.clone(), class.addresses.clone()))
         .collect();
+    let slot_names: HashMap<String, Vec<String>> = classes
+        .iter()
+        .map(|class| {
+            (
+                class.record.name.clone(),
+                class
+                    .record
+                    .slots
+                    .iter()
+                    .map(|slot| slot.name.clone())
+                    .collect(),
+            )
+        })
+        .collect();
+
     for class in classes.iter_mut() {
-        let Some(first_base) = bases
-            .get(&class.record.name)
-            .and_then(|list| list.first())
-            .cloned()
-        else {
+        let base_names = bases.get(&class.record.name).cloned().unwrap_or_default();
+        class.record.bases = base_names.clone();
+        let base_slots: Vec<&Vec<u64>> = base_names
+            .iter()
+            .filter_map(|name| by_name.get(name))
+            .collect();
+        let base_slot_names: Vec<Option<&Vec<String>>> =
+            base_names.iter().map(|name| slot_names.get(name)).collect();
+        if base_slots.is_empty() {
             continue;
-        };
-        class.record.bases = bases.get(&class.record.name).cloned().unwrap_or_default();
-        let Some(base_slots) = by_name.get(&first_base) else {
-            continue;
-        };
-        for (index, slot) in class.record.slots.iter_mut().enumerate() {
-            if let Some(base_address) = base_slots.get(index) {
-                let same = *base_address == class.addresses[index];
-                slot.inherited = same;
-                slot.overrides = !same;
+        }
+
+        for group in class.record.vtable_groups.iter_mut() {
+            for (index, slot) in group.slots.iter_mut().enumerate() {
+                let mut has_base = false;
+                let mut inherited_name: Option<&String> = None;
+                for (base_index, slots) in base_slots.iter().enumerate() {
+                    let Some(address) = slots.get(index) else {
+                        continue;
+                    };
+                    has_base = true;
+                    if *address == slot.address {
+                        inherited_name = base_slot_names
+                            .get(base_index)
+                            .copied()
+                            .flatten()
+                            .and_then(|names| names.get(index));
+                        break;
+                    }
+                }
+                if !has_base {
+                    continue;
+                }
+                slot.inherited = inherited_name.is_some();
+                slot.overrides = inherited_name.is_none();
+                if let Some(name) = inherited_name {
+                    if !is_placeholder_slot_name(name) {
+                        slot.name = name.clone();
+                    }
+                }
             }
         }
+        if let Some(primary) = class.record.vtable_groups.first() {
+            class.record.slots = primary.slots.clone();
+        }
     }
+}
+
+/// Whether a slot name is the generated `Class::vfunc_N` placeholder.
+fn is_placeholder_slot_name(name: &str) -> bool {
+    match name.rsplit_once("::vfunc_") {
+        Some((_, suffix)) => !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()),
+        None => false,
+    }
+}
+
+/// The unqualified part of a C++ name, used for destructor spellings.
+fn unqualified(name: &str) -> &str {
+    name.rsplit_once("::").map(|(_, tail)| tail).unwrap_or(name)
 }
 
 /// Inserts the exported symbol names into the table.
@@ -752,20 +1018,26 @@ fn insert_symbol_names(names: &mut HashMap<u64, NamedEntry>, symbols: &[NamedSym
 /// Inserts every vtable slot name into the table.
 fn insert_slot_names(names: &mut HashMap<u64, NamedEntry>, classes: &[ClassSlots]) {
     for class in classes {
-        for slot in &class.record.slots {
-            insert_name(
-                names,
-                slot.address,
-                slot.name.clone(),
-                "vtable",
-                if slot.kind == "pure_virtual" {
-                    "pure_virtual"
-                } else {
-                    "function"
-                },
-                None,
-                None,
-            );
+        for group in &class.record.vtable_groups {
+            for slot in &group.slots {
+                if slot.address == 0 {
+                    // An unresolved import has no address to name.
+                    continue;
+                }
+                insert_name(
+                    names,
+                    slot.address,
+                    slot.name.clone(),
+                    "vtable",
+                    if slot.kind == "pure_virtual" {
+                        "pure_virtual"
+                    } else {
+                        "function"
+                    },
+                    None,
+                    None,
+                );
+            }
         }
     }
 }
@@ -1082,6 +1354,13 @@ fn find_string_xrefs(
 /// Generates a wildcarded signature per named function and checks uniqueness.
 type SignatureMap = HashMap<u64, (String, bool)>;
 
+/// Builds and extends a signature for every named function and every slot.
+///
+/// A signature starts at 48 bytes. When it is not unique among function starts
+/// the pattern is extended by 16 bytes at a time, up to 128, and re-checked
+/// against the real matcher. A pattern that is still ambiguous at 128 bytes is
+/// kept with `signatureUnique: false` rather than dropped, so a client can see
+/// what the engine managed.
 #[allow(clippy::too_many_arguments)]
 fn generate_signatures(
     map: &SectionMap,
@@ -1097,86 +1376,165 @@ fn generate_signatures(
     if text.is_empty() {
         return Ok((HashMap::new(), false));
     }
+
     let mut addresses: Vec<u64> = names
         .iter()
-        .filter(|(_, entry)| entry.source != "auto")
+        .filter(|(address, entry)| entry.source != "auto" && **address != 0)
         .map(|(address, _)| *address)
         .collect();
     addresses.sort_unstable();
-    let limit = max_signatures.min(DEFAULT_MAX_SIGNATURES);
+    addresses.dedup();
+    let limit = max_signatures.max(1);
     let truncated = addresses.len() > limit;
     addresses.truncate(limit);
 
-    let mut specs: Vec<(u64, String)> = Vec::new();
-    for address in addresses {
+    let mut candidates: Vec<(u64, String)> = Vec::with_capacity(addresses.len());
+    for address in &addresses {
         if control.is_cancelled() {
             return Err(CoreError::Cancelled);
         }
-        let Some(file_offset) = file_offset_of(map, address) else {
+        let Some(file_offset) = file_offset_of(map, *address) else {
             continue;
         };
-        let Some(pattern) = wildcard_signature(map, image, file_offset) else {
+        let Some(pattern) = wildcard_signature(map, image, file_offset, MAX_SIGNATURE_BYTES) else {
             continue;
         };
-        // A signature whose longest fixed run is tiny matches thousands of
-        // functions; checking it would flood the automaton and can exhaust the
-        // process on a 340 MB library. Such a signature cannot be unique in
-        // practice, so it is not emitted.
         let Ok(compiled) = crate::patterns::compile(&address.to_string(), &pattern) else {
             continue;
         };
+        // A signature whose longest fixed run is tiny matches thousands of
+        // functions; extending it would not converge.
         if compiled.longest_literal_run() < MIN_SIGNATURE_RUN {
             continue;
         }
-        specs.push((address, pattern));
+        candidates.push((*address, pattern));
     }
-    if specs.is_empty() {
+    if candidates.is_empty() {
         return Ok((HashMap::new(), truncated));
     }
 
-    let compiled: Vec<(String, String)> = specs
-        .iter()
-        .enumerate()
-        .map(|(index, (_, pattern))| (index.to_string(), pattern.clone()))
-        .collect();
-    report(
-        sink,
-        81,
-        &format!("Signatures: {} candidates, building matcher", specs.len()),
-    );
-    let set = PatternSet::new(&compiled)?;
-    report(
-        sink,
-        82,
-        "Signatures: matcher built, scanning function starts",
-    );
+    let mut lengths = vec![MAX_SIGNATURE_BYTES];
+    let mut next = MAX_SIGNATURE_BYTES;
+    while next < MAX_SIGNATURE_EXTENDED_BYTES {
+        next = (next + 16).min(MAX_SIGNATURE_EXTENDED_BYTES);
+        lengths.push(next);
+    }
 
-    let mut counts = vec![0u8; specs.len()];
-    // Uniqueness is measured against function starts, not every byte: a
-    // signature only has to identify a function. Packing one 48-byte prefix per
-    // 64-byte stride keeps the scan around 25 MB for 400k functions instead of
-    // the whole 241 MB `.text`, and it removes the millions of mid-function
-    // false candidates that made the pass crawl on a phone.
-    const STRIDE: usize = 64;
-    const PREFIX: usize = 48;
-    const CHUNK: usize = 4096;
-    let mut buffer: Vec<u8> = Vec::with_capacity(CHUNK * STRIDE);
-    for chunk in functions.chunks(CHUNK) {
+    let mut unique = vec![false; candidates.len()];
+    for (round, length) in lengths.iter().enumerate() {
         if control.is_cancelled() {
             return Err(CoreError::Cancelled);
         }
-        buffer.clear();
-        for (address, _) in chunk {
-            let offset = address.saturating_sub(map.text.address) as usize;
-            let end = (offset + PREFIX).min(text.len());
-            if offset < end {
-                buffer.extend_from_slice(&text[offset..end]);
+        if *length > MAX_SIGNATURE_BYTES {
+            for (index, (address, pattern)) in candidates.iter_mut().enumerate() {
+                if unique[index] {
+                    continue;
+                }
+                let Some(file_offset) = file_offset_of(map, *address) else {
+                    continue;
+                };
+                if let Some(extended) = wildcard_signature(map, image, file_offset, *length) {
+                    *pattern = extended;
+                }
             }
-            buffer.resize(buffer.len().next_multiple_of(STRIDE), 0);
         }
-        set.count_matches_at(&buffer, STRIDE, &mut counts);
+
+        let active: Vec<(usize, String)> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !unique[*index])
+            .map(|(index, (_, pattern))| (index, pattern.clone()))
+            .collect();
+        if active.is_empty() {
+            break;
+        }
+        let percent = 80 + (round as u32).min(8) * 2;
+        report(
+            sink,
+            percent,
+            &format!(
+                "Signatures: round {} ({} bytes, {} candidates)",
+                round + 1,
+                length,
+                active.len()
+            ),
+        );
+        let counts = count_at_function_starts(map, image, functions, &active, control, releaser)?;
+        for (index, count) in counts.iter().enumerate() {
+            if *count == 1 {
+                unique[active[index].0] = true;
+            }
+        }
+    }
+
+    let mut signatures = HashMap::with_capacity(candidates.len());
+    for (index, (address, pattern)) in candidates.into_iter().enumerate() {
+        signatures.insert(address, (pattern, unique[index]));
+    }
+    Ok((signatures, truncated))
+}
+
+/// Counts how many function starts each pattern matches, capped at two.
+///
+/// The scan packs one prefix per function start and runs the real matcher over
+/// that buffer, so a count is the number of distinct functions a signature
+/// would select. The work is split across Rayon workers in waves, and each wave
+/// is offered for page release afterwards.
+fn count_at_function_starts(
+    map: &SectionMap,
+    image: &[u8],
+    functions: &[(u64, u64)],
+    active: &[(usize, String)],
+    control: &ScanControl,
+    releaser: Option<&dyn PageReleaser>,
+) -> CoreResult<Vec<u8>> {
+    let text = map.bytes_of(TEXT_SECTION, image);
+    let specs: Vec<(String, String)> = active
+        .iter()
+        .map(|(index, pattern)| (index.to_string(), pattern.clone()))
+        .collect();
+    let set = PatternSet::new(&specs)?;
+
+    const STRIDE: usize = 64;
+    const PREFIX: usize = MAX_SIGNATURE_EXTENDED_BYTES;
+    const CHUNK: usize = 4096;
+    const WAVE: usize = 64;
+
+    let chunks: Vec<&[(u64, u64)]> = functions.chunks(CHUNK).collect();
+    let mut counts = vec![0u8; active.len()];
+    for wave in chunks.chunks(WAVE) {
+        if control.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        let local: Vec<Vec<u8>> = wave
+            .par_iter()
+            .map(|chunk| {
+                let mut buffer: Vec<u8> = Vec::with_capacity(CHUNK * STRIDE);
+                for (address, _) in chunk.iter() {
+                    let offset = address.saturating_sub(map.text.address) as usize;
+                    let end = (offset + PREFIX).min(text.len());
+                    if offset < end {
+                        buffer.extend_from_slice(&text[offset..end]);
+                    }
+                    buffer.resize(buffer.len().next_multiple_of(STRIDE), 0);
+                }
+                let mut chunk_counts = vec![0u8; active.len()];
+                set.count_matches_at(&buffer, STRIDE, &mut chunk_counts);
+                chunk_counts
+            })
+            .collect();
+        for chunk_counts in local {
+            for (index, count) in chunk_counts.iter().enumerate() {
+                if *count > counts[index] {
+                    counts[index] = *count;
+                }
+            }
+        }
         if let Some(releaser) = releaser {
-            if let (Some((first, _)), Some((last, _))) = (chunk.first(), chunk.last()) {
+            if let (Some((first, _)), Some((last, _))) = (
+                wave.first().and_then(|chunk| chunk.first()),
+                wave.last().and_then(|chunk| chunk.last()),
+            ) {
                 let start = first.saturating_sub(map.text.address) as usize;
                 let end = last
                     .saturating_sub(map.text.address)
@@ -1188,14 +1546,7 @@ fn generate_signatures(
             }
         }
     }
-    report(sink, 85, &format!("Signatures: {} candidates", specs.len()));
-
-    let mut signatures = HashMap::new();
-    for (index, (address, pattern)) in specs.into_iter().enumerate() {
-        let unique = counts.get(index).copied().unwrap_or(0) == 1;
-        signatures.insert(address, (pattern, unique));
-    }
-    Ok((signatures, truncated))
+    Ok(counts)
 }
 
 /// Peak resident set size of the process, in MiB, when the OS exposes it.
@@ -1210,14 +1561,19 @@ fn peak_resident_mb() -> Option<u64> {
 const MIN_SIGNATURE_RUN: usize = 10;
 
 /// Builds a wildcarded hex signature from the first bytes of a function.
-fn wildcard_signature(map: &SectionMap, image: &[u8], file_offset: u64) -> Option<String> {
+fn wildcard_signature(
+    map: &SectionMap,
+    image: &[u8],
+    file_offset: u64,
+    length: usize,
+) -> Option<String> {
     let text_offset = (file_offset.saturating_sub(map.text.offset)) as usize;
     let text = map.bytes_of(TEXT_SECTION, image);
     let available = text.len().saturating_sub(text_offset);
     if available < 4 {
         return None;
     }
-    let length = available.min(MAX_SIGNATURE_BYTES);
+    let length = available.min(length).max(4);
     let bytes = &text[text_offset..text_offset + length];
     let mut tokens = Vec::with_capacity(length);
     let mut index = 0usize;
@@ -1334,6 +1690,38 @@ fn is_thunk_to(map: &SectionMap, image: &[u8], from: u64, to: u64) -> bool {
     thunk_target(text, text_offset, from) == Some(to)
 }
 
+/// Whether the function at `from` calls `to` within its first few instructions.
+///
+/// The deleting destructor (`D0`) is not a plain tail call: it calls the
+/// complete destructor (`D1`) and then `operator delete`. Looking for a `bl`
+/// to the first slot catches that shape without decoding the whole function.
+fn calls_target(map: &SectionMap, image: &[u8], from: u64, to: u64) -> bool {
+    const INSTRUCTIONS: usize = 12;
+    let Some(file_offset) = file_offset_of(map, from) else {
+        return false;
+    };
+    let text_offset = (file_offset.saturating_sub(map.text.offset)) as usize;
+    let text = map.bytes_of(TEXT_SECTION, image);
+    let end = text_offset.saturating_add(INSTRUCTIONS * 4).min(text.len());
+    let mut offset = text_offset;
+    while offset + 4 <= end {
+        let word = u32::from_le_bytes([
+            text[offset],
+            text[offset + 1],
+            text[offset + 2],
+            text[offset + 3],
+        ]);
+        if word & 0xFC00_0000 == 0x9400_0000 {
+            let immediate = sign_extend((word & 0x03FF_FFFF) as i64, 26) << 2;
+            if (from as i64 + immediate) as u64 == to {
+                return true;
+            }
+        }
+        offset += 4;
+    }
+    false
+}
+
 /// Maps a prologue kind onto the JSON spelling.
 fn prologue_name(kind: PrologueKind) -> String {
     match kind {
@@ -1361,7 +1749,7 @@ fn enclosing_function(functions: &[(u64, u64)], address: u64) -> Option<(u64, u6
 }
 
 /// Reads a little-endian `u64` at a virtual address.
-fn read_at(map: &SectionMap, image: &[u8], address: u64) -> Option<u64> {
+pub(crate) fn read_at(map: &SectionMap, image: &[u8], address: u64) -> Option<u64> {
     let section = map.sections.iter().find(|section| {
         section.occupies_file
             && address >= section.address
@@ -1403,7 +1791,7 @@ fn file_offset_of(map: &SectionMap, address: u64) -> Option<u64> {
 }
 
 /// Whether `address` lies inside an executable section.
-fn is_executable(map: &SectionMap, address: u64) -> bool {
+pub(crate) fn is_executable(map: &SectionMap, address: u64) -> bool {
     map.sections.iter().any(|section| {
         section.executable
             && address >= section.address
@@ -2051,7 +2439,8 @@ mod tests {
         image[0x1000..0x1004].copy_from_slice(&0xA9BF_7BFDu32.to_le_bytes());
         image[0x1004..0x1008].copy_from_slice(&0x9400_0010u32.to_le_bytes());
 
-        let signature = wildcard_signature(&map, &image, 0x1000).expect("signature");
+        let signature =
+            wildcard_signature(&map, &image, 0x1000, MAX_SIGNATURE_BYTES).expect("signature");
 
         assert!(signature.starts_with("FD 7B BF A9"), "{signature}");
         assert!(signature.contains("??"), "{signature}");
@@ -2084,11 +2473,13 @@ mod tests {
     }
 
     fn vtables(entries: Vec<crate::rtti::TypeVTable>) -> crate::rtti::VtableMap {
+        let all = entries.clone();
         crate::rtti::VtableMap {
             source: crate::rtti::VtableSource::Relocations,
             type_info_candidates: entries.len(),
             relocations_examined: 0,
             entries: entries.into_iter().map(|v| (v.name.clone(), v)).collect(),
+            all,
         }
     }
 
@@ -2129,7 +2520,7 @@ mod tests {
     }
 
     fn class(name: &str, addresses: Vec<u64>) -> ClassSlots {
-        let slots = addresses
+        let slots: Vec<SlotRecord> = addresses
             .iter()
             .enumerate()
             .map(|(index, address)| SlotRecord {
@@ -2140,6 +2531,7 @@ mod tests {
                 size: 4,
                 name: format!("{name}::vfunc_{index}"),
                 kind: "virtual".to_string(),
+                prologue_kind: "none".to_string(),
                 overrides: false,
                 inherited: false,
                 status: "verified".to_string(),
@@ -2156,7 +2548,12 @@ mod tests {
                 vtable_offset: 0,
                 type_info: 0,
                 slot_count: addresses.len(),
-                slots,
+                slots: slots.clone(),
+                vtable_groups: vec![VtableGroup {
+                    offset_to_top: 0,
+                    address: 0,
+                    slots,
+                }],
             },
             addresses,
         }
@@ -2179,5 +2576,144 @@ mod tests {
         assert!(derived.slots[1].overrides);
         assert!(!derived.slots[1].inherited);
         assert_eq!(derived.bases, vec!["Base".to_string()]);
+    }
+
+    fn type_vtable(name: &str, vtable_address: u64, type_info: u64) -> crate::rtti::TypeVTable {
+        crate::rtti::TypeVTable {
+            name: name.to_string(),
+            mangled: name.to_string(),
+            vtable_address,
+            vtable_hex: format!("0x{vtable_address:x}"),
+            vtable_offset: vtable_address,
+            type_info_address: type_info,
+        }
+    }
+
+    fn data_map() -> SectionMap {
+        map_with(
+            section(".text", 0x1000, 0x1000, 0x100, true),
+            vec![section(".data.rel.ro", 0x3000, 0x3000, 0x400, false)],
+        )
+    }
+
+    #[test]
+    fn a_pure_virtual_first_slot_does_not_end_the_vtable() {
+        let map = data_map();
+        let image = vec![0u8; 0x4000];
+        // 0x1000 is `__cxa_pure_virtual`; the run must continue to 0x1010 and
+        // only stop when a slot has no relocation at all.
+        let relocations =
+            crate::rtti::RelocationIndex::for_tests(vec![(0x3010, 0x1000), (0x3018, 0x1010)]);
+        let vtables = vtables(vec![type_vtable("Actor", 0x3000, 0x2f00)]);
+
+        let classes = collect_class_slots(
+            &map,
+            &image,
+            &vtables,
+            &relocations,
+            Some(0x1000),
+            4096,
+            &crate::scanner::ScanControl::new(),
+        )
+        .expect("slots");
+
+        let slots = &classes[0].record.slots;
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].kind, "pure_virtual");
+        assert_eq!(slots[1].kind, "virtual");
+    }
+
+    #[test]
+    fn an_unresolved_import_slot_is_kept_and_the_run_continues() {
+        let map = data_map();
+        let image = vec![0u8; 0x4000];
+        let relocations = crate::rtti::RelocationIndex::for_tests(vec![
+            (0x3010, 0x1000),
+            (0x3018, 0),
+            (0x3020, 0x1010),
+        ]);
+        let vtables = vtables(vec![type_vtable("Mob", 0x3000, 0x2f00)]);
+
+        let classes = collect_class_slots(
+            &map,
+            &image,
+            &vtables,
+            &relocations,
+            None,
+            4096,
+            &crate::scanner::ScanControl::new(),
+        )
+        .expect("slots");
+
+        let slots = &classes[0].record.slots;
+        assert_eq!(slots.len(), 3);
+        assert_eq!(slots[1].kind, "import");
+        assert_eq!(slots[1].address, 0);
+        assert_eq!(slots[2].address, 0x1010);
+    }
+
+    #[test]
+    fn multiple_inheritance_keeps_every_vtable_group() {
+        let map = data_map();
+        let image = vec![0u8; 0x4000];
+        let relocations =
+            crate::rtti::RelocationIndex::for_tests(vec![(0x3010, 0x1000), (0x3210, 0x1010)]);
+        let vtables = vtables(vec![
+            type_vtable("Player", 0x3000, 0x2f00),
+            type_vtable("Player", 0x3200, 0x2f00),
+        ]);
+
+        let classes = collect_class_slots(
+            &map,
+            &image,
+            &vtables,
+            &relocations,
+            None,
+            4096,
+            &crate::scanner::ScanControl::new(),
+        )
+        .expect("slots");
+
+        assert_eq!(classes.len(), 1);
+        let groups = &classes[0].record.vtable_groups;
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].slots.len(), 1);
+        assert_eq!(groups[1].slots.len(), 1);
+        assert_eq!(groups[1].slots[0].address, 0x1010);
+    }
+
+    #[test]
+    fn a_slot_run_stops_before_the_next_vtable_header() {
+        let map = data_map();
+        let image = vec![0u8; 0x4000];
+        // Every slot between 0x3010 and 0x30f8 has a relocation, but 0x3080 is
+        // the header of another class and must terminate the first run.
+        let mut relocations = Vec::new();
+        for slot in 0..16 {
+            relocations.push((0x3010 + slot * 8, 0x1000 + slot * 4));
+        }
+        let relocations = crate::rtti::RelocationIndex::for_tests(relocations);
+        let vtables = vtables(vec![
+            type_vtable("First", 0x3000, 0x2f00),
+            type_vtable("Second", 0x3080, 0x2f10),
+        ]);
+
+        let classes = collect_class_slots(
+            &map,
+            &image,
+            &vtables,
+            &relocations,
+            None,
+            4096,
+            &crate::scanner::ScanControl::new(),
+        )
+        .expect("slots");
+
+        let first = classes
+            .iter()
+            .find(|class| class.record.name == "First")
+            .expect("First");
+        // 0x3010 .. 0x3078 is 14 slots; 0x3080 is the next header.
+        assert_eq!(first.record.slots.len(), 14);
     }
 }

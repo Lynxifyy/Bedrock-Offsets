@@ -197,15 +197,19 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
 
 ## Bedrock-Offsets (this repo)
-- Verify: `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest` (206 tests),
-  `cargo fmt --check && cargo clippy --all-targets --release -- -D warnings && cargo test --release`,
+- Verify: `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :app:testDebugUnitTest` (234 tests),
+  `./gradlew ktlintCheck`, `./gradlew lintDebug`,
+  `cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test`,
   `python3 -m unittest discover -s scripts/tests`, `python3 scripts/verify_release.py` (needs
   `:app:assembleRelease`; `GSON_MODEL_CLASSES` descriptors must match the real nested class names:
   `SignaturePack$InternalEntry`, not `SignaturePack$PackDocument$InternalEntry`).
-- Real 26.70.26 run: 838,500 functions (90,450 named, 748,050 `sub_*`), 105 RTTI classes,
-  496 vtable slots, 255 generated signatures; `INTERNALCPP_OFFSETS_26.70.26.json` ~103 MB,
-  `JNI_OFFSETS_26.70.26.json` ~42 KB. Release peak RSS 497 MB, debug 552 MB — the 160 MB target
-  is not met; `.text` page residency dominates even with `MADV_DONTNEED`. Raising the signature
-  cap from 256 to 100k produced 19.7k candidates and the app was killed on the test phone.
+- Real 26.60 run (xbox apk): 7396 classes, 140501 slots, 803306 functions; before F1-F7 1432 classes
+  had 0 slots, all slots had size 0, 255 signatures (none unique). After: see latest run log.
+- `:app:lintDebug` fails on `UsableSpace` for `File.usableSpace` (suppress with
+  `@SuppressLint("UsableSpace")`) and on `ObsoleteSdkInt` checks below minSdk 28.
+- `ktlintCheck` enforces 100-char lines and "body expression on same line"; `ktlintFormat` fixes most.
+- The Rust engine has an ignored diagnostic test `rtti::tests::dump_vtable_context` that needs
+  `BEDROCK_LIB=/path/libminecraftpe.so`; it dumps Actor/Level/Player vtable headers, raw slots and
+  relocation targets.
 - Mobilebox: `POST /v1/phones/{id}/apps` (APK body), `/actions`, `/apps/{pkg}/logs`,
   `DELETE /v1/phones/{id}` (204). Reinstalling may clear the app cache, forcing a re-download.

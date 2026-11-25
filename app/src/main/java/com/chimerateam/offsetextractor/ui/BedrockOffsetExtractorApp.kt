@@ -1,16 +1,20 @@
 package com.chimerateam.offsetextractor.ui
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,9 +44,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -51,13 +55,20 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.chimerateam.offsetextractor.data.export.CategoryCatalog
+import com.chimerateam.offsetextractor.data.export.ExportJobRepository
 import com.chimerateam.offsetextractor.data.export.ExportKind
+import com.chimerateam.offsetextractor.data.export.ExportState
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
+import com.chimerateam.offsetextractor.export.ExportService
 import com.chimerateam.offsetextractor.ui.components.BatchProgressDialog
 import com.chimerateam.offsetextractor.ui.components.BatchSummaryDialog
+import com.chimerateam.offsetextractor.ui.components.ExportProgressToast
 import com.chimerateam.offsetextractor.ui.components.LowMemoryDialog
 import com.chimerateam.offsetextractor.ui.log.LogTimestamp
 import com.chimerateam.offsetextractor.ui.screens.ApksScreen
@@ -72,10 +83,7 @@ import com.chimerateam.offsetextractor.ui.theme.ThemeMode
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
 import com.chimerateam.offsetextractor.util.formatBytes
 import java.io.File
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Root composable of the application.
@@ -103,7 +111,9 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val includeAllFunctions by viewModel.includeAllFunctions.collectAsStateWithLifecycle()
     val generateSignatures by viewModel.generateSignatures.collectAsStateWithLifecycle()
     val maxSlotsPerClass by viewModel.maxSlotsPerClass.collectAsStateWithLifecycle()
+    val includeCombined by viewModel.includeCombined.collectAsStateWithLifecycle()
     val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
+    val exportProgress by ExportJobRepository.progress.collectAsStateWithLifecycle()
 
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -136,6 +146,42 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val saveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? -> viewModel.onExportDestinationChosen(uri, pendingExportKind) }
+
+    val saveZipLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+        }
+        viewModel.onZipDestinationChosen(uri)
+    }
+
+    var pendingZipName by remember { mutableStateOf<String?>(null) }
+    val notificationPermission = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) {
+        pendingZipName?.let { saveZipLauncher.launch(it) }
+        pendingZipName = null
+    }
+
+    val categoryPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val imported = CategoryCatalog.import(context, uri)
+            if (imported) {
+                viewModel.setCategories(CategoryCatalog.load(context))
+                viewModel.onExportActionTaken("Category rules imported.")
+            } else {
+                viewModel.onExportActionTaken("That file is not a valid category rule set.")
+            }
+        }
+    }
 
     state.batch?.let { batch ->
         BatchProgressDialog(
@@ -230,56 +276,41 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
             saveLauncher.launch(name)
         }
     }
-    val downloadInternal = {
-        val name = viewModel.defaultExportFileName(ExportKind.Internal)
+    val downloadZip = {
+        val name = viewModel.defaultZipFileName()
         if (name == null) {
             viewModel.onExportActionTaken("The internal offsets are not ready yet.")
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingZipName = name
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            pendingExportKind = ExportKind.Internal
-            saveLauncher.launch(name)
+            saveZipLauncher.launch(name)
         }
     }
-    val shareScope = rememberCoroutineScope()
-    val shareInternal: () -> Unit = {
-        val result = state.result
-        if (result == null || !result.internalResolved) {
-            viewModel.onExportActionTaken("The internal offsets are not ready yet.")
+    val shareZip: (String) -> Unit = { path ->
+        val file = File(path)
+        if (!file.isFile) {
+            viewModel.onExportActionTaken("The cached archive is missing.")
         } else {
-            shareScope.launch {
-                val outcome = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val directory = File(context.cacheDir, "exports").apply { mkdirs() }
-                        val file = File(
-                            directory,
-                            OffsetExporter.internalFileName(result)
-                        )
-                        file.bufferedWriter().use { writer ->
-                            OffsetExporter.writeInternal(result, writer)
-                        }
-                        FileProvider.getUriForFile(
-                            context,
-                            "${context.packageName}.fileprovider",
-                            file
-                        )
-                    }
+            runCatching {
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
+                )
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/zip"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                outcome.onSuccess { uri ->
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "application/json"
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    context.startActivity(
-                        Intent.createChooser(intent, "Share internal offsets")
-                    )
-                    viewModel.onExportActionTaken(
-                        "Internal offsets handed to the share sheet."
-                    )
-                }.onFailure {
-                    viewModel.onExportActionTaken(
-                        "Could not share the internal file: ${it.message}"
-                    )
-                }
+                context.startActivity(Intent.createChooser(intent, "Share offsets"))
+            }.onFailure {
+                viewModel.onExportActionTaken("Could not share the archive: ${it.message}")
             }
         }
     }
@@ -392,52 +423,83 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                 }
             }
         ) { innerPadding ->
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                when (tab) {
-                    AppTab.Scanner -> ScannerScreen(
-                        state = state,
-                        entries = logEntries,
-                        onCopyLog = copyLog,
-                        onClearLog = { viewModel.clearLog() },
-                        onSelectApk = { picker.launch(arrayOf(APK_MIME_TYPE)) },
-                        onSelectApks = { batchPicker.launch(arrayOf(APK_MIME_TYPE)) },
-                        onCancelSelection = { viewModel.cancel() },
-                        onRetry = { viewModel.retry() },
-                        onCopyJson = copyJson,
-                        onShareJson = shareJson,
-                        onSaveJson = saveJson,
-                        onDownloadJni = downloadJni,
-                        onDownloadInternal = downloadInternal,
-                        onRetryInternal = { viewModel.retryInternalExtraction() },
-                        internalBusy = false,
-                        onShareInternal = shareInternal
-                    )
+                Column(modifier = Modifier.fillMaxSize()) {
+                    when (tab) {
+                        AppTab.Scanner -> ScannerScreen(
+                            state = state,
+                            entries = logEntries,
+                            onCopyLog = copyLog,
+                            onClearLog = { viewModel.clearLog() },
+                            onSelectApk = { picker.launch(arrayOf(APK_MIME_TYPE)) },
+                            onSelectApks = { batchPicker.launch(arrayOf(APK_MIME_TYPE)) },
+                            onCancelSelection = { viewModel.cancel() },
+                            onRetry = { viewModel.retry() },
+                            onCopyJson = copyJson,
+                            onShareJson = shareJson,
+                            onSaveJson = saveJson,
+                            onDownloadZip = downloadZip,
+                            onRetryInternal = { viewModel.retryInternalExtraction() },
+                            internalBusy = false,
+                            exportProgress = exportProgress,
+                            onRetryExport = { ExportService.retry(context) },
+                            onDiscardExport = { ExportService.discard(context) }
+                        )
 
-                    AppTab.Apks -> ApksScreen(
-                        onExtract = { file ->
-                            tab = AppTab.Scanner
-                            viewModel.onApkFileSelected(file)
-                        }
-                    )
+                        AppTab.Apks -> ApksScreen(
+                            onExtract = { file ->
+                                tab = AppTab.Scanner
+                                viewModel.onApkFileSelected(file)
+                            }
+                        )
 
-                    AppTab.Settings -> SettingsScreen(
-                        themeMode = themeMode,
-                        onThemeModeChange = { viewModel.setThemeMode(it.name) },
-                        cacheSizeLabel = formatBytes(cacheSizeBytes),
-                        forceRescan = forceRescan,
-                        onForceRescanChange = { viewModel.setForceRescan(it) },
-                        onClearCache = { viewModel.clearCache() },
-                        lastBuildId = lastBuildId,
-                        includeAllFunctions = includeAllFunctions,
-                        generateSignatures = generateSignatures,
-                        maxSlotsPerClass = maxSlotsPerClass,
-                        onIncludeAllFunctionsChange = { viewModel.setIncludeAllFunctions(it) },
-                        onGenerateSignaturesChange = { viewModel.setGenerateSignatures(it) },
-                        onMaxSlotsPerClassChange = { viewModel.setMaxSlotsPerClass(it) }
+                        AppTab.Settings -> SettingsScreen(
+                            themeMode = themeMode,
+                            onThemeModeChange = { viewModel.setThemeMode(it.name) },
+                            cacheSizeLabel = formatBytes(cacheSizeBytes),
+                            forceRescan = forceRescan,
+                            onForceRescanChange = { viewModel.setForceRescan(it) },
+                            onClearCache = { viewModel.clearCache() },
+                            lastBuildId = lastBuildId,
+                            includeAllFunctions = includeAllFunctions,
+                            generateSignatures = generateSignatures,
+                            maxSlotsPerClass = maxSlotsPerClass,
+                            onIncludeAllFunctionsChange = { viewModel.setIncludeAllFunctions(it) },
+                            onGenerateSignaturesChange = { viewModel.setGenerateSignatures(it) },
+                            onMaxSlotsPerClassChange = { viewModel.setMaxSlotsPerClass(it) },
+                            includeCombined = includeCombined,
+                            onIncludeCombinedChange = { viewModel.setIncludeCombined(it) },
+                            onImportCategories = {
+                                categoryPicker.launch(
+                                    arrayOf("application/json")
+                                )
+                            },
+                            onResetCategories = {
+                                CategoryCatalog.reset(context)
+                                viewModel.setCategories(CategoryCatalog.load(context))
+                                viewModel.onExportActionTaken(
+                                    "Default category rules restored."
+                                )
+                            }
+                        )
+                    }
+                }
+                if (exportProgress.state != ExportState.Idle &&
+                    exportProgress.state != ExportState.Cancelled
+                ) {
+                    ExportProgressToast(
+                        progress = exportProgress,
+                        onCancel = { ExportService.cancel(context) },
+                        onRetry = { ExportService.retry(context) },
+                        onShare = shareZip,
+                        onDismiss = { ExportJobRepository.clear() },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(16.dp)
                     )
                 }
             }

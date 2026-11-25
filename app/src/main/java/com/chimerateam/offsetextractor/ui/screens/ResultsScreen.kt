@@ -64,11 +64,8 @@ internal const val SEARCH_FIELD_TAG = "results-search"
 /** Test tag of the scrolling results list. */
 internal const val RESULTS_LIST_TAG = "results-list"
 
-/** Test tag of the JNI download button. */
-internal const val DOWNLOAD_JNI_TAG = "download-jni"
-
-/** Test tag of the internal download button. */
-internal const val DOWNLOAD_INTERNAL_TAG = "download-internal"
+/** Test tag of the single ZIP download button. */
+internal const val DOWNLOAD_ZIP_TAG = "download-zip"
 
 /**
  * Scrollable list of every offset the scan produced.
@@ -93,8 +90,7 @@ internal const val DOWNLOAD_INTERNAL_TAG = "download-internal"
  * @param header content shown above the results, normally the summary panel.
  * @param internalIndex index over the internal table; when omitted one is built
  *   from [ScanResultSummary.internal].
- * @param onDownloadJni opens the save dialog for the JNI document.
- * @param onDownloadInternal opens the save dialog for the internal document.
+ * @param onDownloadZip opens the save dialog for the single ZIP.
  * @param onRetryInternal re-runs only the internal pass.
  * @param internalBusy whether Part 2 is still running.
  * @param onCopyName copies a long name from a row.
@@ -110,11 +106,9 @@ fun ResultsScreen(
     fillHeight: Boolean = false,
     header: @Composable () -> Unit = {},
     internalIndex: InternalIndex? = null,
-    onDownloadJni: (() -> Unit)? = null,
-    onDownloadInternal: (() -> Unit)? = null,
+    onDownloadZip: (() -> Unit)? = null,
     onRetryInternal: (() -> Unit)? = null,
     internalBusy: Boolean = false,
-    onShareInternal: (() -> Unit)? = null,
     onCopyName: (String) -> Unit = {}
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -222,18 +216,18 @@ fun ResultsScreen(
             onShareJson = onShareJson,
             onSaveJson = onSaveJson,
             onStartNewScan = onStartNewScan,
-            onDownloadJni = onDownloadJni,
-            onDownloadInternal = onDownloadInternal,
+            onDownloadZip = onDownloadZip,
             onRetryInternal = onRetryInternal,
-            internalBusy = internalBusy,
-            onShareInternal = onShareInternal
+            internalBusy = internalBusy
         )
     }
 }
 
 /**
- * Pinned action bar. Both download buttons are full-width so their labels stay
- * readable and can never be pushed off-screen.
+ * Pinned action bar with the single ZIP download.
+ *
+ * The button is full-width so its label stays readable and can never be pushed
+ * off-screen, including at 1920x1200 in landscape.
  */
 @Composable
 private fun ExportBar(
@@ -242,33 +236,16 @@ private fun ExportBar(
     onShareJson: () -> Unit,
     onSaveJson: () -> Unit,
     onStartNewScan: () -> Unit,
-    onDownloadJni: (() -> Unit)?,
-    onDownloadInternal: (() -> Unit)?,
+    onDownloadZip: (() -> Unit)?,
     onRetryInternal: (() -> Unit)?,
-    internalBusy: Boolean,
-    onShareInternal: (() -> Unit)?
+    internalBusy: Boolean
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        Button(
-            onClick = { onDownloadJni?.invoke() },
-            enabled = onDownloadJni != null,
-            modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_JNI_TAG)
-        ) {
-            Icon(Icons.Filled.Download, contentDescription = null)
-            Text(
-                text = "Download ${OffsetExporter.jniFileName(result)}",
-                modifier = Modifier.padding(start = 8.dp).weight(1f),
-                maxLines = 2,
-                textAlign = TextAlign.Center,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        Spacer(Modifier.height(8.dp))
         when {
             internalBusy -> Button(
                 onClick = {},
                 enabled = false,
-                modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_INTERNAL_TAG)
+                modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_ZIP_TAG)
             ) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(16.dp),
@@ -276,7 +253,7 @@ private fun ExportBar(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "Extracting internal offsets...",
+                    text = "Building internal table...",
                     modifier = Modifier.padding(start = 8.dp)
                 )
             }
@@ -284,7 +261,7 @@ private fun ExportBar(
             !result.internalResolved && result.internalError != null -> Button(
                 onClick = { onRetryInternal?.invoke() },
                 enabled = onRetryInternal != null,
-                modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_INTERNAL_TAG)
+                modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_ZIP_TAG)
             ) {
                 Icon(Icons.Filled.Warning, contentDescription = null)
                 Text(
@@ -294,13 +271,13 @@ private fun ExportBar(
             }
 
             else -> Button(
-                onClick = { onDownloadInternal?.invoke() },
-                enabled = result.internalResolved && onDownloadInternal != null,
-                modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_INTERNAL_TAG)
+                onClick = { onDownloadZip?.invoke() },
+                enabled = result.internalResolved && onDownloadZip != null,
+                modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_ZIP_TAG)
             ) {
                 Icon(Icons.Filled.Download, contentDescription = null)
                 Text(
-                    text = "Download ${OffsetExporter.internalFileName(result)}",
+                    text = "Download ${OffsetExporter.zipFileName(result)}",
                     modifier = Modifier.padding(start = 8.dp).weight(1f),
                     maxLines = 2,
                     textAlign = TextAlign.Center,
@@ -312,21 +289,14 @@ private fun ExportBar(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onCopyJson, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null)
-                Text("Copy", modifier = Modifier.padding(start = 6.dp))
+                Text("Copy JNI", modifier = Modifier.padding(start = 6.dp))
             }
             OutlinedButton(onClick = onShareJson, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Filled.Share, contentDescription = null)
-                Text("Share", modifier = Modifier.padding(start = 6.dp))
+                Text("Share JNI", modifier = Modifier.padding(start = 6.dp))
             }
             OutlinedButton(onClick = onSaveJson, modifier = Modifier.weight(1f)) {
-                Text("Save")
-            }
-        }
-        if (result.internalResolved && onShareInternal != null) {
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onShareInternal, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Share, contentDescription = null)
-                Text("Share internal file", modifier = Modifier.padding(start = 8.dp))
+                Text("Save JNI")
             }
         }
         Spacer(Modifier.height(8.dp))
