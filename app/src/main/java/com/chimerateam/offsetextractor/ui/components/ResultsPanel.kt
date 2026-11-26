@@ -78,6 +78,7 @@ fun ResultsPanel(
             Text(text = "Internal C++", style = MonoText.headline)
             Spacer(Modifier.height(4.dp))
             Field("Functions", internal.functions.toString())
+            Field("Complete", internal.coverage.summaryLine)
             Field("Classes", internal.classes.toString())
             Field("Virtual slots", internal.vtableSlots.toString())
             Field("Named", internal.named.toString())
@@ -94,6 +95,14 @@ fun ResultsPanel(
                 Text(
                     text = "The internal data was cleared. Extract it again before " +
                         "downloading, or the archive will not contain it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            if (!internal.coverage.functionsMatchFdes) {
+                Text(
+                    text = "${internal.coverage.fdeMissing} functions from .eh_frame did not " +
+                        "reach the table; the archive says so in its coverage block.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
                 )

@@ -44,13 +44,55 @@ data class InternalSummary(
     @SerializedName("classMapPath") val classMapPath: String = "",
     @SerializedName("categoriesApplied") val categoriesApplied: Boolean = false,
     @SerializedName("truncatedSlots") val truncatedSlots: Boolean = false,
-    @SerializedName("truncatedSlotClasses") val truncatedSlotClasses: Int = 0
+    @SerializedName("truncatedSlotClasses") val truncatedSlotClasses: Int = 0,
+    val coverage: InternalCoverage = InternalCoverage()
 ) {
     /** Whether the table holds anything worth showing. */
     val isEmpty: Boolean get() = functions == 0 && classes == 0
 
     /** Records across every category file. */
     val shardRows: Int get() = shards.sumOf { it.entries }
+}
+
+/**
+ * How complete the internal half of a scan is.
+ *
+ * The function list is supposed to be the set of `.eh_frame` FDEs, so both
+ * counts are reported with the verdict instead of one being trusted.
+ *
+ * @property functions functions in the table.
+ * @property fdeFunctions frames read from `.eh_frame`.
+ * @property fdeMissing FDE starts absent from the table; zero means nothing
+ *   was dropped.
+ * @property functionsMatchFdes whether every FDE start reached the table.
+ * @property classes RTTI classes.
+ * @property slots virtual slots.
+ * @property dataSymbols data symbols.
+ * @property functionSource `eh_frame`, `prologue_scan` or `symbols`.
+ * @property truncated whether any cap cut output.
+ * @property truncatedSlotClasses classes the per-class slot cap cut.
+ * @property truncatedSignatures whether the signature cap cut generation.
+ */
+data class InternalCoverage(
+    val functions: Int = 0,
+    @SerializedName("fdeFunctions") val fdeFunctions: Int = 0,
+    @SerializedName("fdeMissing") val fdeMissing: Int = 0,
+    @SerializedName("functionsMatchFdes") val functionsMatchFdes: Boolean = true,
+    val classes: Int = 0,
+    val slots: Int = 0,
+    @SerializedName("dataSymbols") val dataSymbols: Int = 0,
+    @SerializedName("functionSource") val functionSource: String = "",
+    val truncated: Boolean = false,
+    @SerializedName("truncatedSlotClasses") val truncatedSlotClasses: Int = 0,
+    @SerializedName("truncatedSignatures") val truncatedSignatures: Boolean = false
+) {
+    /** One line for the results card, for example `883,574 of 883,574 functions`. */
+    val summaryLine: String
+        get() {
+            val found = if (fdeFunctions == 0) functions else functions - fdeMissing
+            val total = if (fdeFunctions == 0) functions else fdeFunctions
+            return "${"%,d".format(found)} of ${"%,d".format(total)} functions"
+        }
 }
 
 /**

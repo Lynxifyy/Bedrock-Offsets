@@ -173,6 +173,43 @@ pub struct InternalSummary {
     /// Number of classes the slot cap cut.
     #[serde(default)]
     pub truncated_slot_classes: usize,
+    /// Completeness counts: functions against FDEs, and every cap.
+    #[serde(default)]
+    pub coverage: InternalCoverage,
+}
+
+/// How complete the internal half of a scan is.
+///
+/// The function list is supposed to be the set of `.eh_frame` FDEs: the unwind
+/// table names every function the compiler emitted, so a count that disagrees
+/// means a pass dropped rows. The two counts are both reported, with the
+/// verdict, rather than one being asserted away.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InternalCoverage {
+    /// Functions written to the table.
+    pub functions: usize,
+    /// Frames read from `.eh_frame`, before duplicate starts were merged.
+    pub fde_functions: usize,
+    /// FDE starts that are missing from the table; zero means nothing was
+    /// dropped.
+    pub fde_missing: usize,
+    /// Whether every FDE start reached the table.
+    pub functions_match_fdes: bool,
+    /// RTTI classes written.
+    pub classes: usize,
+    /// Virtual slots written.
+    pub slots: usize,
+    /// Data symbols written.
+    pub data_symbols: usize,
+    /// `eh_frame`, `prologue_scan` or `symbols`.
+    pub function_source: String,
+    /// Whether any cap cut output.
+    pub truncated: bool,
+    /// Classes the per-class slot cap cut.
+    pub truncated_slot_classes: usize,
+    /// Whether the signature cap cut generation.
+    pub truncated_signatures: bool,
 }
 
 /// One category file the engine wrote.
@@ -432,10 +469,10 @@ pub fn analyze_with_writer(
 
     check_cancelled(control)?;
     report(sink, 30, "Pass B: reading .eh_frame");
-    let (mut functions, function_source) = if options.include_all_functions {
+    let (mut functions, function_source, fde_functions) = if options.include_all_functions {
         collect_functions(map, image, control)?
     } else {
-        (Vec::new(), "prologue_scan")
+        (Vec::new(), "prologue_scan", 0)
     };
     // `.eh_frame` records are not guaranteed to be in address order. Sorting
     // here makes every later pass (signature scan, merge, write) walk `.text`
@@ -512,6 +549,13 @@ pub fn analyze_with_writer(
     }
     report(sink, 90, "Writing the internal table");
     let (addresses, suspect) = merge_addresses(&functions, &names);
+    // Every FDE names a function, so every FDE start must appear in the table.
+    // Extra addresses are expected (PLT stubs, thunks and exports have no
+    // frame), a missing one is not: it means a pass dropped a row.
+    let fde_missing = functions
+        .iter()
+        .filter(|(start, _)| addresses.binary_search(start).is_err())
+        .count();
     const RELEASE_WINDOW: usize = 4 * 1024 * 1024;
     // `functions` is already sorted by address, so the FDE sizes need no hash
     // table: a binary search over the same pairs answers every lookup and costs
@@ -603,6 +647,19 @@ pub fn analyze_with_writer(
         table_bytes: 0,
         rows: classes.len() + addresses.len() + data_symbols.len(),
         ..Default::default()
+    };
+    stats.coverage = InternalCoverage {
+        functions: addresses.len(),
+        fde_functions,
+        fde_missing,
+        functions_match_fdes: fde_missing == 0,
+        classes: classes.len(),
+        slots: stats.vtable_slots,
+        data_symbols: data_symbols.len(),
+        function_source: function_source.to_string(),
+        truncated: truncated_signatures || stats.truncated_slots,
+        truncated_slot_classes: stats.truncated_slot_classes,
+        truncated_signatures,
     };
 
     writer.meta(&stats)?;
@@ -2331,20 +2388,23 @@ fn collect_functions(
     map: &SectionMap,
     image: &[u8],
     control: &ScanControl,
-) -> CoreResult<(Vec<(u64, u64)>, &'static str)> {
+) -> CoreResult<(Vec<(u64, u64)>, &'static str, usize)> {
     if map.find(".eh_frame").is_some() {
         if let Ok(mut functions) = parse_eh_frame(map, image) {
+            // Every FDE names one function, so the raw count is the number the
+            // table must match; the dedup below can only make it smaller.
+            let fde_functions = functions.len();
             // A few FDEs describe the same start (thunks and aliases); keeping
             // one entry per address halves the table on large libraries.
             functions.sort_unstable_by_key(|(start, _)| *start);
             functions.dedup_by_key(|(start, _)| *start);
             if !functions.is_empty() {
-                return Ok((functions, "eh_frame"));
+                return Ok((functions, "eh_frame", fde_functions));
             }
         }
     }
     let functions = scan_prologues(map, image, control)?;
-    Ok((functions, "prologue_scan"))
+    Ok((functions, "prologue_scan", 0))
 }
 
 /// Walks `.text` for recognisable prologues when no unwind table is present.
@@ -2589,6 +2649,26 @@ mod tests {
             parse_eh_frame(&map, &image).expect("parse"),
             vec![(0x1000, 0x40)]
         );
+    }
+
+    #[test]
+    fn collect_functions_reports_the_raw_fde_count() {
+        let eh = eh_frame_bytes(false);
+        let mut image = vec![0u8; 0x6000];
+        image[0x5000..0x5000 + eh.len()].copy_from_slice(&eh);
+        let map = map_with(
+            section(".text", 0x1000, 0x1000, 0x100, true),
+            vec![section(".eh_frame", 0x5000, 0x5000, eh.len() as u64, false)],
+        );
+        let control = ScanControl::new();
+
+        let (functions, source, fdes) = collect_functions(&map, &image, &control).expect("walk");
+
+        assert_eq!(source, "eh_frame");
+        assert_eq!(functions, vec![(0x1000, 0x40)]);
+        // The FDE count is the number the table has to match, so it must be
+        // the raw count and not the deduplicated one.
+        assert_eq!(fdes, 1);
     }
 
     #[test]
