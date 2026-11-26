@@ -138,7 +138,8 @@ Checked, because the brief asks: `Cargo.toml` has no `panic = "abort"`, and
 `android.rs:80` wraps every JNI entry in `panic::catch_unwind`, turning a panic
 into `EngineErrorKind::Unknown` with the payload text. So a panic is reported as
 an error with a real message, not as "file is gone". This one is a **pass**, and
-the test is `tests/jni_contract_test.rs`.
+the tests are `tests/jni_bridge_test.rs::catch_panics_returns_a_message_instead_of_unwinding`
+and `::catch_panics_passes_successful_values_through`.
 
 ---
 
