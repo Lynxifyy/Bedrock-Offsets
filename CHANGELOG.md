@@ -1,3 +1,31 @@
+## v1.1.0-pre.2
+
+### Bug Fixes
+
+- classes keep their full template identity: the demangler used to stop at the first `<`, so every `std::__function::__func`, `StrictTickingSystemFunctionAdapter` and `entt::basic_storage` instantiation collapsed into one row, 62,306 vtable groups into 6,386
+- vtable groups are keyed by their mangled name instead of by their demangled one, so a class with several base subobjects keeps all of its groups instead of the first one seen
+- a vtable slot is named after the class that declares it, and one address now carries one name across every class that inherits it, instead of `Mob::vfunc_0` and `Player::vfunc_0` disagreeing about the same function
+- new evidence sources were scored below the `Class::vfunc_N` placeholder they were meant to replace, so a lambda call operator could never win its own slot
+- the enclosing function of a lambda is read out of a template argument too, so `__func<Level::tick()::$_0, …>` yields `Level::tick()` rather than a truncated prefix
+
+### Features
+
+- a complete Itanium ABI demangler: substitutions, literals, packs, expressions, `Z` local names, lambdas, unnamed types, abi tags. Checked against `c++filt` on a 5,942-symbol corpus: 6,121 of 6,123 agree, and the two that do not are libc++'s own `1l` literal rendering
+- base classes are read from `__class_type_info`, `__si_class_type_info` and `__vmi_class_type_info`, with flags, offsets and virtual/public bits
+- a cross-reference pass over `.text`: `BL`, tail `B`, `ADRP`+`ADD` data references, `LDR` literal, `BLR`/`BR` indirect exits, per-function callers, callees and referrers
+- lambda call operators are named from the `std::function` wrapper's vtable, and the wrapper's only in-image callee is named as the lambda body
+- ECS adapter instantiations are parsed into a system name plus the `Include<…>`/`Exclude<…>` component lists
+- signatures extend to 512 bytes instead of 128: on an aarch64 `libc++_shared.so` with 1,591 signatures, unique ones went from 1,523 (95.7 %) to 1,583 (99.5 %), and slot signatures from 839 of 841 to 841 of 841
+- `scripts/coverage_report.py` measures what an export actually names, split into gameplay and third-party, and writes both a manifest block and a Markdown table
+- `AUDIT_REPORT.md` v2 with every finding quoted at its `path:line`, and `COVERAGE.md` with the baseline and the measured deltas
+
+### Tests
+
+- a demangler corpus test that re-runs `c++filt` comparison, plus fixture tests for `Z` local names, packs and substitutions
+- lambda naming tests, including one that fails if the evidence ranking puts a placeholder above a recovered name
+- xref decoding tests over a synthetic ELF with a known call graph
+- `scripts/tests/test_coverage_report.py`, and a `--self-test` inside the script itself
+
 ## v1.1.0-pre.1
 
 ### Bug Fixes
