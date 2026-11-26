@@ -14,6 +14,9 @@
 
 ### Features
 
+- the archive carries `README.txt`, and `manifest.json` carries a `coverage` block (internal functions against `.eh_frame` FDEs, JNI exports, registered natives, pattern status, union count), a `categories` array with each category's file and row counts, and a `completeness` block
+- after the archive is written it is re-opened and every category document is walked with a streaming reader, so the export fails unless `scan rows == table rows == category entries == entries re-read from the ZIP`; the results card and the log show the numbers
+- `scripts/verify_release.py` checks the README, both coverage halves and the re-read completeness of a downloaded archive
 - category documents are written by the engine with the same `categories.json` the UI uses, and a shared expectation set in the Kotlin and Rust tests keeps the two classifiers identical
 - motion tokens (`ui/theme/Motion.kt`): three durations, four easings, three named springs, a 4 dp spacing scale and a reduce-motion switch that collapses every animation to a snap
 - the JNI set is now the union of three sources instead of the signatures alone: every exported `Java_*` symbol, every `JNI_*` lifecycle export, and every entry of a `RegisterNatives` table found through the relocations, each with `source` and `confidence`

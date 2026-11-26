@@ -462,15 +462,46 @@ if __name__ == "__main__":
 class OffsetsZipTests(unittest.TestCase):
     """The offsets ZIP is checked against its own manifest."""
 
-    def _zip(self, directory: str, corrupt: bool = False) -> Path:
+    def _zip(self, directory: str, corrupt: bool = False, short: bool = False) -> Path:
         path = Path(directory) / "BEDROCK_OFFSETS_26.60.3.zip"
+        category = {
+            "category": "block_placement",
+            "classes": {"Block": {}},
+            "functions": [] if short else [{"name": "Block::placeBlock"}],
+            "symbols": [],
+        }
         payloads = {
+            "README.txt": b"BEDROCK_OFFSETS 26.60.3\n",
             "JNI/JNI_OFFSETS_26.60.3.json": b'{"offsets":{}}',
             "InternalCPP/INTERNALCPP_INDEX_26.60.3.json": b'{"categories":[]}',
+            "InternalCPP/INTERNALCPP_BLOCK_PLACEMENT_26.60.3.json": json.dumps(
+                category
+            ).encode("utf-8"),
         }
         manifest = {
             "version": "26.60.3",
             "entryCount": len(payloads),
+            "coverage": {
+                "internal": {"functions": 1, "fdeFunctions": 1, "truncated": False},
+                "jni": {"union": 0, "truncated": False},
+            },
+            "categories": [
+                {
+                    "id": "block_placement",
+                    "category": "block_placement",
+                    "file": "InternalCPP/INTERNALCPP_BLOCK_PLACEMENT_26.60.3.json",
+                    "classes": 1,
+                    "functions": 1,
+                    "symbols": 0,
+                    "entries": 2,
+                }
+            ],
+            "completeness": {
+                "expectedRows": 2,
+                "writtenRows": 2,
+                "categories": 1,
+                "complete": True,
+            },
             "files": [
                 {
                     "path": name,
@@ -493,6 +524,14 @@ class OffsetsZipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             results = verify_release.run_zip_checks(self._zip(directory))
         self.assertTrue(all(result.passed for result in results), results)
+
+    def test_a_category_that_lost_rows_fails_the_completeness_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            results = verify_release.run_zip_checks(self._zip(directory, short=True))
+        completeness = [r for r in results if r.name == "zip completeness"]
+        self.assertEqual(1, len(completeness))
+        self.assertFalse(completeness[0].passed)
+        self.assertIn("manifest says 2", completeness[0].detail)
 
     def test_a_tampered_entry_fails_the_digest_check(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

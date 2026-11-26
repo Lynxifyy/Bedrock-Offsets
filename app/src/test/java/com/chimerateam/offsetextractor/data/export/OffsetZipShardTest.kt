@@ -1,9 +1,11 @@
 package com.chimerateam.offsetextractor.data.export
 
+import com.chimerateam.offsetextractor.data.native.InternalCoverage
 import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.ShardPart
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import java.io.File
+import com.google.gson.JsonParser
 import java.util.zip.ZipFile
 import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
@@ -172,5 +174,74 @@ class OffsetZipShardTest {
     private companion object {
         /** Heap the copy-through path may add; parsing the rows needed hundreds. */
         const val HEAP_BUDGET_MB = 96
+    }
+
+    @Test
+    fun theArchiveCarriesAReadmeAndTheCoverageBlocks() {
+        val dir = createTempDirectory("shards-").toFile()
+        val shards = listOf(shard(dir, "block_placement", functions = 2, classes = 1))
+        val summary = summary(shards, mapOf("Block" to "block_placement"))
+            .let { base ->
+                base.copy(
+                    internal = base.internal?.copy(
+                        coverage = InternalCoverage(
+                            functions = 2,
+                            fdeFunctions = 2,
+                            functionsMatchFdes = true,
+                            classes = 1,
+                            slots = 1,
+                            dataSymbols = 0,
+                            functionSource = "eh_frame"
+                        )
+                    )
+                )
+            }
+        val target = File(createTempDirectory("zip-").toFile(), "BEDROCK_OFFSETS_26.60.3.zip")
+
+        val result = OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile())
+            .build(summary, target)
+
+        assertTrue(result.verified)
+        assertEquals(3, result.rereadRows)
+        ZipFile(target).use { zip ->
+            val readme = zip.getInputStream(zip.getEntry("README.txt")).bufferedReader().readText()
+            assertTrue("the guide must name the version", readme.contains("BEDROCK_OFFSETS 26.60.3"))
+            assertTrue("the guide must explain how to load", readme.contains("HOW TO LOAD"))
+            assertTrue("the guide must list the categories", readme.contains("block_placement"))
+
+            val manifest = zip.getInputStream(zip.getEntry("manifest.json"))
+                .bufferedReader()
+                .use { JsonParser.parseReader(it).asJsonObject }
+            val coverage = manifest.getAsJsonObject("coverage").getAsJsonObject("internal")
+            assertEquals(2, coverage.get("fdeFunctions").asInt)
+            assertTrue(coverage.get("functionsMatchFdes").asBoolean)
+            val categories = manifest.getAsJsonArray("categories")
+            assertEquals(1, categories.size())
+            assertEquals(3, categories[0].asJsonObject.get("entries").asInt)
+            val completeness = manifest.getAsJsonObject("completeness")
+            assertEquals(3, completeness.get("expectedRows").asInt)
+            assertTrue(completeness.get("complete").asBoolean)
+        }
+    }
+
+    @Test
+    fun aRowCountTheArchiveCannotBackUpFailsVerification() {
+        val dir = createTempDirectory("shards-").toFile()
+        val shards = listOf(shard(dir, "block_placement", functions = 2))
+        val summary = summary(shards, emptyMap())
+        val target = File(createTempDirectory("zip-").toFile(), "BEDROCK_OFFSETS_26.60.3.zip")
+        val builder = OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile())
+        val result = builder.build(summary, target)
+        val categories = result.manifest
+            .filter { it.path.startsWith("InternalCPP/INTERNALCPP_") && !it.path.contains("_INDEX_") }
+            .map { it.path }
+
+        // Re-reading the finished archive must catch a scan that claims more
+        // rows than the files hold, which a manifest-only check never could.
+        val outcome = builder.verify(target, result.manifest, categories, expectedInternalRows = 3)
+
+        assertTrue(!outcome.ok)
+        assertEquals(2, outcome.rereadRows)
+        assertTrue(outcome.detail.contains("2 rows"))
     }
 }

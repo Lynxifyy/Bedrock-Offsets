@@ -433,6 +433,7 @@ def run_zip_checks(archive_path: Path) -> list[CheckResult]:
         )
 
         required = [
+            "README.txt",
             f"JNI/JNI_OFFSETS_{version}.json",
             f"InternalCPP/INTERNALCPP_INDEX_{version}.json",
         ]
@@ -444,6 +445,9 @@ def run_zip_checks(archive_path: Path) -> list[CheckResult]:
                 detail="present" if not missing else f"missing {', '.join(missing)}",
             )
         )
+
+        results.append(_coverage_check(manifest))
+        results.append(_completeness_check(manifest, archive, names))
 
         unlisted = [name for name in names if name != "manifest.json" and name not in listed]
         results.append(
@@ -504,6 +508,108 @@ def run_zip_checks(archive_path: Path) -> list[CheckResult]:
             )
         )
     return results
+
+
+def _coverage_check(manifest: dict) -> CheckResult:
+    """Check that the manifest carries both coverage blocks.
+
+    The archive is only complete if the internal function count was compared
+    with the ``.eh_frame`` frames and the JNI union was compared with its
+    sources, so both blocks must be present.
+
+    Args:
+        manifest: the parsed ``manifest.json``.
+
+    Returns:
+        The check result.
+    """
+    coverage = manifest.get("coverage")
+    if not isinstance(coverage, dict):
+        return CheckResult("zip coverage", False, "the manifest has no coverage block")
+    internal = coverage.get("internal")
+    jni = coverage.get("jni")
+    if not isinstance(internal, dict) or not isinstance(jni, dict):
+        return CheckResult("zip coverage", False, "coverage is missing a half")
+    truncated = bool(internal.get("truncated")) or bool(jni.get("truncated"))
+    matches = bool(internal.get("functionsMatchFdes", True))
+    detail = (
+        f"{internal.get('functions')} functions, {internal.get('fdeFunctions')} FDEs, "
+        f"{jni.get('union')} JNI offsets, truncated={truncated}"
+    )
+    return CheckResult("zip coverage", matches and not truncated, detail)
+
+
+def _count_category_rows(archive: zipfile.ZipFile, name: str) -> int:
+    """Count the records inside one category document.
+
+    Args:
+        archive: open archive.
+        name: entry to read.
+
+    Returns:
+        Classes plus functions plus symbols in the entry.
+
+    Raises:
+        zipfile.BadZipFile: when the entry cannot be decompressed.
+    """
+    with archive.open(name) as handle:
+        document = json.load(handle)
+    if not isinstance(document, dict):
+        return 0
+    rows = 0
+    for key in ("classes", "functions", "symbols"):
+        section = document.get(key)
+        if isinstance(section, (dict, list)):
+            rows += len(section)
+    return rows
+
+
+def _completeness_check(
+    manifest: dict, archive: zipfile.ZipFile, names: list[str]
+) -> CheckResult:
+    """Check that the archive holds every row the manifest promises.
+
+    Re-reads each category document and compares the count with the manifest's
+    own number and with the scan's expected row total, so an archive that only
+    describes itself cannot pass.
+
+    Args:
+        manifest: the parsed ``manifest.json``.
+        archive: open archive.
+        names: every entry name in the archive.
+
+    Returns:
+        The check result.
+    """
+    completeness = manifest.get("completeness")
+    categories = manifest.get("categories")
+    if not isinstance(completeness, dict) or not isinstance(categories, list):
+        return CheckResult("zip completeness", False, "no completeness block")
+    expected = int(completeness.get("expectedRows", -1))
+    written = int(completeness.get("writtenRows", -1))
+    listed = {item.get("path") for item in manifest.get("files", []) if isinstance(item, dict)}
+    total = 0
+    bad: list[str] = []
+    for item in categories:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("file")
+        if not name:
+            # Older archives do not record the file name per category; match by
+            # the category identifier instead.
+            matches = [n for n in names if f"INTERNALCPP_{str(item.get('id', '')).upper()}_" in n]
+            name = sorted(matches)[0] if matches else None
+        if not name or name not in listed:
+            continue
+        counted = _count_category_rows(archive, name)
+        total += counted
+        if counted != int(item.get("entries", -1)):
+            bad.append(f"{name}: {counted} rows, manifest says {item.get('entries')}")
+    passed = not bad and total == expected == written and bool(completeness.get("complete"))
+    detail = f"{total} of {expected} rows re-read"
+    if bad:
+        detail = "; ".join(bad[:3])
+    return CheckResult("zip completeness", passed, detail)
 
 
 def run_checks(apk: Path) -> list[CheckResult]:

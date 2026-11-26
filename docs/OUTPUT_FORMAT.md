@@ -9,9 +9,11 @@ Kotlin assembles and streams them.
 
 ```
 BEDROCK_OFFSETS_<version>.zip
+├── README.txt
 ├── manifest.json
 ├── JNI/
-│   └── JNI_OFFSETS_<version>.json
+│   ├── JNI_OFFSETS_<version>.json
+│   └── JNI_<PACKAGE>_<version>.json
 └── InternalCPP/
     ├── INTERNALCPP_INDEX_<version>.json
     ├── INTERNALCPP_BLOCK_PLACEMENT_<version>.json
@@ -28,9 +30,17 @@ that are unsafe in a file name are removed and `+` is never used. The same
 string appears in every file name and in `source.apkVersion`, so a name can
 never disagree with the document.
 
+`README.txt` is the guide a developer reads first: what each folder holds, the
+build identity, the coverage lines, the category row counts and how to load an
+address. It is generated from the same values as the manifest, so the two cannot
+disagree.
+
 `manifest.json` lists every other entry with its size, its record count and its
 SHA-256. The archive is re-opened after writing and every CRC, size and digest
-is checked; a mismatch fails the download instead of shipping a broken file.
+is checked, then every category document is walked with a streaming reader and
+its records are counted: `scan rows == table rows == sum of category-file
+entries == entries re-read from the finished ZIP`. A mismatch fails the export
+instead of shipping a broken file, and the numbers are logged.
 
 ```json
 {
@@ -42,7 +52,51 @@ is checked; a mismatch fails the download instead of shipping a broken file.
   "apk": "minecraft-26-60-arm64-v8a-xbox.apk",
   "buildId": "...",
   "librarySha256": "...",
-  "entryCount": 17,
+  "entryCount": 19,
+  "coverage": {
+    "internal": {
+      "functions": 883574,
+      "fdeFunctions": 883574,
+      "fdeMissing": 0,
+      "functionsMatchFdes": true,
+      "classes": 6386,
+      "slots": 142310,
+      "dataSymbols": 8421,
+      "functionSource": "eh_frame",
+      "truncated": false,
+      "truncatedSlotClasses": 0,
+      "truncatedSignatures": false
+    },
+    "jni": {
+      "exports": 95,
+      "entryPoints": 2,
+      "registered": 214,
+      "patterns": 91,
+      "patternsMatched": 68,
+      "patternsAmbiguous": 0,
+      "patternsNotFound": 23,
+      "union": 268,
+      "truncated": false
+    }
+  },
+  "categories": [
+    {
+      "id": "block_placement",
+      "category": "block_placement",
+      "label": "Block placement",
+      "file": "InternalCPP/INTERNALCPP_BLOCK_PLACEMENT_26.60.3.json",
+      "classes": 41,
+      "functions": 5120,
+      "symbols": 12,
+      "entries": 5173
+    }
+  ],
+  "completeness": {
+    "expectedRows": 883574,
+    "writtenRows": 883574,
+    "categories": 17,
+    "complete": true
+  },
   "files": [
     {
       "path": "JNI/JNI_OFFSETS_26.60.3.json",
@@ -78,7 +132,8 @@ notice the loss. Three guards make that state unreachable:
   shorter than the scan reported, and refuses again when the category files do
   not add up to the table's rows;
 - the finished archive is re-opened, and every entry's CRC, size and digest is
-  checked along with the presence of every category file.
+  checked along with the presence of every category file, and the records
+  inside those files are counted and compared with the scan's own row total.
 
 The UI follows the same rule: once the data is gone, the download button becomes
 "Internal data was cleared. Extract it again to download", and the success toast

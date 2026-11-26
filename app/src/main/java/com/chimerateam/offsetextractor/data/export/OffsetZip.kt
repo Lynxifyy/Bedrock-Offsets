@@ -3,6 +3,8 @@ package com.chimerateam.offsetextractor.data.export
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.util.formatBytes
 import com.google.gson.JsonParser
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FilterOutputStream
@@ -33,6 +35,8 @@ data class ManifestEntry(
  * @property bytes size of the finished archive.
  * @property internalRows internal records written, zero for a JNI-only export.
  * @property categoryFiles number of `InternalCPP/` category files.
+ * @property rereadRows internal records counted inside the finished archive,
+ *   or `null` when the archive was not re-read.
  */
 data class ZipBuildResult(
     val file: File,
@@ -41,7 +45,8 @@ data class ZipBuildResult(
     val version: String,
     val bytes: Long = 0L,
     val internalRows: Int = 0,
-    val categoryFiles: Int = 0
+    val categoryFiles: Int = 0,
+    val rereadRows: Int? = null
 ) {
     /** Every file in the archive, including `manifest.json`. */
     val fileCount: Int get() = manifest.size + 1
@@ -105,12 +110,17 @@ class OffsetZipBuilder(
                 "into ${split.parts.size} category files"
         )
 
+        val expectedRows = InternalTable.expectedRows(summary)
         val manifest = mutableListOf<ManifestEntry>()
         val categoryPaths = mutableListOf<String>()
         ZipOutputStream(BufferedOutputStream(target.outputStream(), BUFFER_BYTES)).use { zip ->
             // Level 9 spends several times the CPU of level 6 for a few
             // percent of size on JSON that is mostly digits and identifiers.
             zip.setLevel(6)
+
+            manifest += writeEntry(zip, README_PATH, 0) { writer ->
+                OffsetExporter.writeReadme(summary, split, writer)
+            }
 
             manifest += writeEntry(
                 zip,
@@ -153,7 +163,9 @@ class OffsetZipBuilder(
                 ) { writer -> OffsetExporter.writeInternal(summary, writer) }
             }
 
-            val manifestText = buildManifest(summary, version, manifest)
+            val manifestText = buildManifest(
+                summary, version, manifest, split, expectedRows, categoryPaths
+            )
             val entry = ZipEntry("manifest.json")
             zip.putNextEntry(entry)
             zip.write(manifestText.toByteArray(Charsets.UTF_8))
@@ -165,22 +177,25 @@ class OffsetZipBuilder(
         )
 
         onProgress(0.95f, "Verifying the archive")
-        val expectedRows = InternalTable.expectedRows(summary)
-        val verified = verify(target, manifest, categoryPaths, expectedRows)
-        if (verified) {
-            log("ZIP: verified (${manifest.size + 1} files, $expectedRows internal rows)")
+        val outcome = verify(target, manifest, categoryPaths, expectedRows)
+        if (outcome.ok) {
+            log(
+                "ZIP: verified (${manifest.size + 1} files, ${outcome.rereadRows} of " +
+                    "$expectedRows internal rows re-read)"
+            )
         } else {
-            log("ZIP: verification FAILED for ${target.name}")
+            log("ZIP: verification FAILED for ${target.name}: ${outcome.detail}")
         }
-        onProgress(1f, if (verified) "Archive verified" else "Archive failed verification")
+        onProgress(1f, if (outcome.ok) "Archive verified" else "Archive failed verification")
         return ZipBuildResult(
             file = target,
             manifest = manifest,
-            verified = verified,
+            verified = outcome.ok,
             version = version,
             bytes = target.length(),
             internalRows = split.rows,
-            categoryFiles = categoryPaths.size
+            categoryFiles = categoryPaths.size,
+            rereadRows = if (outcome.ok) outcome.rereadRows else null
         )
     }
 
@@ -303,7 +318,10 @@ class OffsetZipBuilder(
     private fun buildManifest(
         summary: ScanResultSummary,
         version: String,
-        entries: List<ManifestEntry>
+        entries: List<ManifestEntry>,
+        split: SplitResult,
+        expectedRows: Int,
+        categoryPaths: List<String>
     ): String {
         val json = com.google.gson.JsonObject()
         json.addProperty("schemaVersion", OffsetExporter.SCHEMA_VERSION)
@@ -315,6 +333,7 @@ class OffsetZipBuilder(
         json.addProperty("buildId", summary.buildId)
         json.addProperty("librarySha256", summary.sha256)
         json.addProperty("entryCount", entries.size)
+        writeCoverage(json, summary, split, expectedRows, categoryPaths)
         val files = com.google.gson.JsonArray()
         for (entry in entries) {
             val item = com.google.gson.JsonObject()
@@ -326,6 +345,82 @@ class OffsetZipBuilder(
         }
         json.add("files", files)
         return json.toString()
+    }
+
+    /**
+     * Adds the coverage and completeness blocks to the manifest.
+     *
+     * `coverage` answers "was anything dropped" for both halves of the export:
+     * the internal function count against the `.eh_frame` frames, and the JNI
+     * union against its sources. `categories` is the row count of every
+     * category file, and `completeness` states the numbers that have to agree,
+     * so a reader can check the archive without trusting the app.
+     *
+     * @param json manifest under construction.
+     * @param summary the completed scan.
+     * @param split the category documents.
+     * @param expectedRows internal rows the scan promised.
+     */
+    private fun writeCoverage(
+        json: com.google.gson.JsonObject,
+        summary: ScanResultSummary,
+        split: SplitResult,
+        expectedRows: Int,
+        categoryPaths: List<String>
+    ) {
+        val coverage = com.google.gson.JsonObject()
+        val internal = com.google.gson.JsonObject()
+        summary.internal?.coverage?.let { block ->
+            internal.addProperty("functions", block.functions)
+            internal.addProperty("fdeFunctions", block.fdeFunctions)
+            internal.addProperty("fdeMissing", block.fdeMissing)
+            internal.addProperty("functionsMatchFdes", block.functionsMatchFdes)
+            internal.addProperty("classes", block.classes)
+            internal.addProperty("slots", block.slots)
+            internal.addProperty("dataSymbols", block.dataSymbols)
+            internal.addProperty("functionSource", block.functionSource)
+            internal.addProperty("truncated", block.truncated)
+            internal.addProperty("truncatedSlotClasses", block.truncatedSlotClasses)
+            internal.addProperty("truncatedSignatures", block.truncatedSignatures)
+        }
+        coverage.add("internal", internal)
+        val jni = com.google.gson.JsonObject()
+        summary.jni?.coverage?.let { block ->
+            jni.addProperty("exports", block.exports)
+            jni.addProperty("entryPoints", block.entryPoints)
+            jni.addProperty("registered", block.registered)
+            jni.addProperty("patterns", block.patterns)
+            jni.addProperty("patternsMatched", block.patternsMatched)
+            jni.addProperty("patternsAmbiguous", block.patternsAmbiguous)
+            jni.addProperty("patternsNotFound", block.patternsNotFound)
+            jni.addProperty("union", block.union)
+            jni.addProperty("truncated", block.truncated)
+        }
+        coverage.add("jni", jni)
+        json.add("coverage", coverage)
+
+        val pathById = split.parts.map { it.id }.zip(categoryPaths).toMap()
+        val categories = com.google.gson.JsonArray()
+        for (part in split.parts.sortedBy { it.id }) {
+            val item = com.google.gson.JsonObject()
+            item.addProperty("id", part.id)
+            item.addProperty("category", part.categoryId)
+            item.addProperty("label", part.label)
+            item.addProperty("file", pathById[part.id] ?: "")
+            item.addProperty("classes", part.counts.classes)
+            item.addProperty("functions", part.counts.functions)
+            item.addProperty("symbols", part.counts.symbols)
+            item.addProperty("entries", part.counts.total)
+            categories.add(item)
+        }
+        json.add("categories", categories)
+
+        val completeness = com.google.gson.JsonObject()
+        completeness.addProperty("expectedRows", expectedRows)
+        completeness.addProperty("writtenRows", split.rows)
+        completeness.addProperty("categories", split.parts.size)
+        completeness.addProperty("complete", split.rows == expectedRows && split.consistent)
+        json.add("completeness", completeness)
     }
 
     /**
@@ -342,31 +437,43 @@ class OffsetZipBuilder(
      * @param categoryPaths the `InternalCPP/` category files the build wrote.
      * @param expectedInternalRows rows the scan reported, or `null` to skip the
      *   internal checks.
-     * @return whether every entry matched.
+     * @return the outcome, with the number of rows counted inside the archive.
      */
     fun verify(
         archive: File,
         expected: List<ManifestEntry>,
         categoryPaths: List<String> = emptyList(),
         expectedInternalRows: Int? = null
-    ): Boolean {
-        if (!archive.isFile) return false
-        if ((expectedInternalRows ?: 0) > 0 && categoryPaths.isEmpty()) return false
+    ): VerifyOutcome {
+        if (!archive.isFile) return VerifyOutcome(false, 0, "the archive is gone")
+        if ((expectedInternalRows ?: 0) > 0 && categoryPaths.isEmpty()) {
+            return VerifyOutcome(false, 0, "the archive holds no category file")
+        }
         return runCatching {
             ZipFile(archive).use { zip ->
-                val manifestEntry = zip.getEntry("manifest.json") ?: return@use false
+                val manifestEntry = zip.getEntry("manifest.json")
+                    ?: return@use VerifyOutcome(false, 0, "manifest.json is missing")
                 val manifest = zip.getInputStream(manifestEntry)
                     .bufferedReader(Charsets.UTF_8)
                     .use { JsonParser.parseReader(it).asJsonObject }
                 val files = manifest.getAsJsonArray("files")
-                if (files.size() != expected.size) return@use false
-                if (manifest.get("entryCount")?.asInt != expected.size) return@use false
+                if (files.size() != expected.size) {
+                    return@use VerifyOutcome(
+                        false,
+                        0,
+                        "the manifest lists ${files.size()} files, ${expected.size} were written"
+                    )
+                }
+                if (manifest.get("entryCount")?.asInt != expected.size) {
+                    return@use VerifyOutcome(false, 0, "the manifest entry count is wrong")
+                }
                 for (index in 0 until files.size()) {
                     val item = files[index].asJsonObject
                     val path = item.get("path").asString
                     val size = item.get("size").asLong
                     val sha = item.get("sha256").asString
-                    val entry = zip.getEntry(path) ?: return@use false
+                    val entry = zip.getEntry(path)
+                        ?: return@use VerifyOutcome(false, 0, "$path is missing")
                     val digest = MessageDigest.getInstance("SHA-256")
                     var total = 0L
                     zip.getInputStream(entry).use { input ->
@@ -378,31 +485,121 @@ class OffsetZipBuilder(
                             total += read
                         }
                     }
-                    if (total != size) return@use false
-                    if (hex(digest.digest()) != sha) return@use false
+                    if (total != size) {
+                        return@use VerifyOutcome(false, 0, "$path is $total bytes, not $size")
+                    }
+                    if (hex(digest.digest()) != sha) {
+                        return@use VerifyOutcome(false, 0, "$path has a different digest")
+                    }
                 }
-                val rows = expectedInternalRows ?: return@use true
-                if (rows <= 0) return@use true
+                val rows = expectedInternalRows ?: return@use VerifyOutcome(true, 0, "")
+                if (rows <= 0) return@use VerifyOutcome(true, 0, "")
+                // The last check counts the records inside the finished
+                // archive, not the ones the build meant to write: a manifest
+                // that only describes itself would otherwise "verify" an empty
+                // export.
                 var written = 0
+                var reread = 0
                 for (path in categoryPaths) {
-                    val entry = expected.firstOrNull { it.path == path } ?: return@use false
-                    if (zip.getEntry(path) == null) return@use false
+                    val entry = expected.firstOrNull { it.path == path }
+                        ?: return@use VerifyOutcome(false, 0, "$path is not in the manifest")
+                    if (zip.getEntry(path) == null) {
+                        return@use VerifyOutcome(false, 0, "$path is missing")
+                    }
                     written += entry.entries
+                    reread += countRows(zip, path)
                 }
-                written == rows
+                if (written != rows) {
+                    return@use VerifyOutcome(
+                        false,
+                        reread,
+                        "the category files hold $written rows, the scan reported $rows"
+                    )
+                }
+                if (reread != rows) {
+                    return@use VerifyOutcome(
+                        false,
+                        reread,
+                        "$reread rows were re-read from the archive, the scan reported $rows"
+                    )
+                }
+                VerifyOutcome(true, reread, "")
             }
-        }.getOrDefault(false)
+        }.getOrElse { VerifyOutcome(false, 0, it.message ?: it.javaClass.simpleName) }
     }
 
-    private fun jniEntryCount(summary: ScanResultSummary): Int =
-        summary.vtables.size + summary.symbols.size + summary.expectedPatterns.size
+    /**
+     * Counts the records inside one category entry of a finished archive.
+     *
+     * The document is walked with a streaming reader, so a 100,000-row category
+     * costs a buffer and no objects.
+     *
+     * @param zip open archive.
+     * @param path entry to read.
+     * @return classes plus functions plus symbols in the entry.
+     */
+    private fun countRows(zip: ZipFile, path: String): Int {
+        val entry = zip.getEntry(path) ?: return 0
+        var rows = 0
+        zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { reader ->
+            val json = JsonReader(reader)
+            json.beginObject()
+            while (json.hasNext()) {
+                val name = json.nextName()
+                if (name != "classes" && name != "functions" && name != "symbols") {
+                    json.skipValue()
+                    continue
+                }
+                // The engine writes classes as a name-keyed object and the
+                // other two as arrays; a reader must accept either.
+                when (json.peek()) {
+                    JsonToken.BEGIN_ARRAY -> {
+                        json.beginArray()
+                        while (json.hasNext()) {
+                            json.skipValue()
+                            rows++
+                        }
+                        json.endArray()
+                    }
+                    JsonToken.BEGIN_OBJECT -> {
+                        json.beginObject()
+                        while (json.hasNext()) {
+                            json.nextName()
+                            json.skipValue()
+                            rows++
+                        }
+                        json.endObject()
+                    }
+                    else -> json.skipValue()
+                }
+            }
+            json.endObject()
+        }
+        return rows
+    }
+
+    private fun jniEntryCount(summary: ScanResultSummary): Int {
+        val union = summary.jni?.offsets?.size ?: 0
+        val legacy = summary.vtables.size + summary.symbols.size + summary.expectedPatterns.size
+        return maxOf(union, legacy)
+    }
 
     private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 
     private companion object {
         const val BUFFER_BYTES = 64 * 1024
+        const val README_PATH = "README.txt"
     }
 }
+
+/**
+ * Outcome of re-reading a finished archive.
+ *
+ * @property ok whether every check passed.
+ * @property rereadRows internal records counted inside the archive.
+ * @property detail the first failure, empty when [ok].
+ */
+data class VerifyOutcome(val ok: Boolean, val rereadRows: Int, val detail: String)
 
 /** Counts bytes and digests them on the way to the ZIP entry. */
 private class DigestCountStream(destination: OutputStream) : FilterOutputStream(destination) {
