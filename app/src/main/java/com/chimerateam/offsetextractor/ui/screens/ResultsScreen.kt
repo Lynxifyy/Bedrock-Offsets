@@ -53,6 +53,7 @@ import com.chimerateam.offsetextractor.data.export.OffsetRows
 import com.chimerateam.offsetextractor.data.native.VerificationStatus
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.ui.components.HoneycombCell
+import com.chimerateam.offsetextractor.ui.components.StatTiles
 import com.chimerateam.offsetextractor.ui.components.middleEllipsis
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.MonoText
@@ -159,6 +160,8 @@ fun ResultsScreen(
         LazyColumn(modifier = listModifier.testTag(RESULTS_LIST_TAG)) {
             item(key = "summary") {
                 header()
+                Spacer(Modifier.height(12.dp))
+                StatTiles(result = result)
                 Spacer(Modifier.height(12.dp))
                 ConfidenceBanner(verification = result.verification, conflicts = conflicts)
             }
