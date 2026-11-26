@@ -38,7 +38,9 @@ data class CategoryPart(
     val classFile: File? = null,
     val functionFiles: List<File> = emptyList(),
     val symbolFile: File? = null,
-    val counts: CategoryCounts = CategoryCounts()
+    val counts: CategoryCounts = CategoryCounts(),
+    /** Finished JSON document written by the engine, when it classified. */
+    val documentFile: File? = null
 )
 
 /**

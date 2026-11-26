@@ -12,9 +12,10 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::android::{catch_panics, install};
+use crate::categories::CategoryRules;
 use crate::elf::MappedLibrary;
 use crate::error::{CoreError, CoreResult};
-use crate::internal::{analyze, InternalOptions, InternalSummary};
+use crate::internal::{analyze, analyze_with_writer, InternalOptions, InternalSummary};
 use crate::memory::peak_resident_bytes;
 use crate::patterns::PatternSet;
 use crate::progress::JniProgressSink;
@@ -25,6 +26,7 @@ use crate::scanner::{
     ProgressSink, ScanOutcome,
 };
 use crate::sections::build_section_map;
+use crate::shards::ShardWriter;
 use crate::symbols::{build_symbol_report, read_named_symbols};
 use crate::zip_extract::{extract_so_from_zip, read_apk_version_name};
 
@@ -659,33 +661,63 @@ pub fn analyze_internal_json(
     let symbols = read_named_symbols(library.bytes())?;
 
     std::fs::create_dir_all(output_dir)?;
-    let target = Path::new(output_dir).join(format!("{sha256}.ndjson"));
-    let file = std::fs::File::create(&target)?;
-    let mut writer = BufWriter::new(file);
 
     // Register the pass so a "Cancel" tap on another thread can reach it, the
     // same contract the signature scan uses.
     let guard = begin_scan();
     let control = guard.control();
-    let mut summary = analyze(
-        library.bytes(),
-        &map,
-        &vtables,
-        &symbols.functions,
-        &symbols.data,
-        &options,
-        control,
-        sink,
-        Some(library.as_ref()),
-        &mut writer,
-    )?;
-    writer.flush()?;
-    // The table is the only copy of the internal offsets, and Kotlin refuses to
-    // export an archive without it, so make the bytes durable and report what
-    // actually landed on disk instead of trusting the writer.
-    writer.get_ref().sync_all()?;
-    summary.table_bytes = std::fs::metadata(&target)?.len();
-    summary.path = target.to_string_lossy().into_owned();
+    let summary = match options.categories.clone() {
+        Some(rules_json) => {
+            // With rules the engine classifies as it writes: one finished JSON
+            // document per category, copied into the archive byte for byte.
+            let rules = CategoryRules::parse(&rules_json.to_string())?;
+            let dir = Path::new(output_dir).join(format!("categories-{sha256}"));
+            let mut writer = ShardWriter::new(rules, &dir, options.source_header.clone())?;
+            let mut summary = analyze_with_writer(
+                library.bytes(),
+                &map,
+                &vtables,
+                &symbols.functions,
+                &symbols.data,
+                &options,
+                control,
+                sink,
+                Some(library.as_ref()),
+                &mut writer,
+            )?;
+            let class_map = dir.join("classmap.json");
+            writer.write_class_map(&class_map)?;
+            summary.shards = writer.parts();
+            summary.class_map_path = class_map.to_string_lossy().into_owned();
+            summary.categories_applied = true;
+            summary
+        }
+        None => {
+            let target = Path::new(output_dir).join(format!("{sha256}.ndjson"));
+            let file = std::fs::File::create(&target)?;
+            let mut writer = BufWriter::new(file);
+            let mut summary = analyze(
+                library.bytes(),
+                &map,
+                &vtables,
+                &symbols.functions,
+                &symbols.data,
+                &options,
+                control,
+                sink,
+                Some(library.as_ref()),
+                &mut writer,
+            )?;
+            writer.flush()?;
+            // The table is the only copy of the internal offsets, and Kotlin
+            // refuses to export an archive without it, so make the bytes
+            // durable and report what actually landed on disk.
+            writer.get_ref().sync_all()?;
+            summary.table_bytes = std::fs::metadata(&target)?.len();
+            summary.path = target.to_string_lossy().into_owned();
+            summary
+        }
+    };
     library.advise_pages_droppable();
 
     let payload = InternalPayload {

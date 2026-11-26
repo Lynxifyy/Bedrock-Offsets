@@ -31,6 +31,7 @@ use crate::prologue::{PrologueKind, PrologueVerifier};
 use crate::rtti::{read_u64, RelocationIndex, VtableMap};
 use crate::scanner::{scan_section_releasing_pages, PageReleaser, ProgressSink, ScanControl};
 use crate::sections::{SectionMap, RODATA_SECTION, TEXT_SECTION};
+use crate::shards::{NdjsonWriter, RecordWriter};
 use crate::symbols::{find_symbol_address, DataSymbol, NamedSymbol};
 
 /// Hard sanity limit on the slots read for one class.
@@ -69,6 +70,11 @@ pub struct InternalOptions {
     pub internal_patterns: Vec<InternalPattern>,
     /// `.rodata` string anchors.
     pub string_anchors: Vec<StringAnchor>,
+    /// Category rules; when present the engine writes one JSON document per
+    /// category instead of a single NDJSON table.
+    pub categories: Option<serde_json::Value>,
+    /// Extra top-level fields for a category document, already serialised.
+    pub source_header: String,
 }
 
 impl Default for InternalOptions {
@@ -80,6 +86,8 @@ impl Default for InternalOptions {
             max_signatures: DEFAULT_MAX_SIGNATURES,
             internal_patterns: Vec::new(),
             string_anchors: Vec::new(),
+            categories: None,
+            source_header: String::new(),
         }
     }
 }
@@ -115,7 +123,7 @@ fn default_resolve() -> String {
 }
 
 /// Counts and the path of the streamed table.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InternalSummary {
     /// Number of RTTI classes.
@@ -150,6 +158,43 @@ pub struct InternalSummary {
     pub table_bytes: u64,
     /// Records written: classes plus functions plus data symbols.
     pub rows: usize,
+    /// One entry per category file, empty for a single-table run.
+    #[serde(default)]
+    pub shards: Vec<ShardSummary>,
+    /// Absolute path of the class-to-category map, empty for a table run.
+    #[serde(default)]
+    pub class_map_path: String,
+    /// Whether the engine classified the records itself.
+    #[serde(default)]
+    pub categories_applied: bool,
+    /// Whether the per-class slot cap cut any class.
+    #[serde(default)]
+    pub truncated_slots: bool,
+    /// Number of classes the slot cap cut.
+    #[serde(default)]
+    pub truncated_slot_classes: usize,
+}
+
+/// One category file the engine wrote.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShardSummary {
+    /// File identifier, for example `block_placement` or `unnamed_part_02`.
+    pub id: String,
+    /// Logical category.
+    pub category: String,
+    /// Human-readable label.
+    pub label: String,
+    /// One-based part number.
+    pub part: usize,
+    /// Classes in the file.
+    pub classes: usize,
+    /// Functions in the file.
+    pub functions: usize,
+    /// Data symbols in the file.
+    pub symbols: usize,
+    /// Absolute path of the finished JSON document.
+    pub path: String,
 }
 
 /// One virtual slot.
@@ -330,6 +375,43 @@ pub fn analyze(
     sink: Option<&dyn ProgressSink>,
     releaser: Option<&dyn PageReleaser>,
     out: &mut dyn Write,
+) -> CoreResult<InternalSummary> {
+    let mut writer = NdjsonWriter::new(out);
+    analyze_with_writer(
+        image,
+        map,
+        vtables,
+        named_symbols,
+        data_symbols,
+        options,
+        control,
+        sink,
+        releaser,
+        &mut writer,
+    )
+}
+
+/// Reads every slot of every vtable and every function the binary exposes.
+///
+/// The records go to [writer], which either streams the NDJSON table or writes
+/// one finished JSON document per category.
+///
+/// # Errors
+///
+/// Returns [`CoreError::Cancelled`] when `control` is cancelled, and any ELF or
+/// I/O failure from the individual passes.
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_with_writer(
+    image: &[u8],
+    map: &SectionMap,
+    vtables: &VtableMap,
+    named_symbols: &[NamedSymbol],
+    data_symbols: &[DataSymbol],
+    options: &InternalOptions,
+    control: &ScanControl,
+    sink: Option<&dyn ProgressSink>,
+    releaser: Option<&dyn PageReleaser>,
+    writer: &mut dyn RecordWriter,
 ) -> CoreResult<InternalSummary> {
     report(sink, 0, "Pass A: reading vtable slots");
     let relocation = RelocationIndex::build(image)?;
@@ -520,34 +602,17 @@ pub fn analyze(
         path: String::new(),
         table_bytes: 0,
         rows: classes.len() + addresses.len() + data_symbols.len(),
+        ..Default::default()
     };
 
-    writeln!(
-        out,
-        "{}",
-        serde_json::json!({
-            "type": "meta",
-            "schemaVersion": 1,
-            "kind": "internal_cpp",
-            "stats": stats,
-        })
-    )?;
+    writer.meta(&stats)?;
 
     for class in &classes {
-        write_record(out, "class", "class", &class.record)?;
+        writer.class(&class.record)?;
     }
 
-    for symbol in data_symbols {
-        let record = DataSymbolRecord {
-            address: symbol.address,
-            size: symbol.size,
-            name: symbol.name.clone(),
-            mangled: symbol.mangled.clone(),
-            kind: symbol.kind.clone(),
-            reason: symbol.reason.clone(),
-        };
-        write_record(out, "symbol", "symbol", &record)?;
-    }
+    // Data symbols come last: the category documents open their sections in
+    // this order so each one is written in a single streaming pass.
 
     // The function loop walks `.text` from low to high, so pages behind the
     // current address are never read again. Hand them back as the loop
@@ -656,7 +721,19 @@ pub fn analyze(
             signature_unique,
             suspect_reason,
         };
-        write_record(out, "function", "function", &record)?;
+        writer.function(&record)?;
+    }
+
+    for symbol in data_symbols {
+        let record = DataSymbolRecord {
+            address: symbol.address,
+            size: symbol.size,
+            name: symbol.name.clone(),
+            mangled: symbol.mangled.clone(),
+            kind: symbol.kind.clone(),
+            reason: symbol.reason.clone(),
+        };
+        writer.symbol(&record)?;
     }
 
     if let Some(releaser) = releaser {
@@ -665,6 +742,7 @@ pub fn analyze(
         releaser.release(0, usize::MAX);
     }
     stats.named = stats.named.min(stats.functions);
+    writer.finish(&stats)?;
     if let Some(peak) = peak_resident_mb() {
         report(
             sink,
@@ -706,9 +784,13 @@ impl FdeSizes {
 
 /// Writes one NDJSON record without building a JSON tree first.
 ///
+/// Only the host tests use this directly; the analysis goes through a
+/// [`RecordWriter`].
+///
 /// `serde_json::json!` allocates a `Value` and then a `String` per record, which
 /// a table of a million records pays for twice; streaming the two fixed keys and
 /// the record itself keeps the write pass allocation-free.
+#[cfg(test)]
 fn write_record<T: Serialize>(
     out: &mut dyn Write,
     kind: &str,

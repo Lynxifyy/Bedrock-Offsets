@@ -133,6 +133,75 @@ object InternalTable {
     }
 
     /**
+     * Validates the category documents the engine wrote.
+     *
+     * @param summary the scan result.
+     * @return the category files and the class map, or `null` when the engine
+     *   wrote a single table instead.
+     * @throws InternalTableMissingException when a promised file is gone.
+     * @throws InternalCountMismatchException when the files disagree with the
+     *   counts the scan reported.
+     */
+    fun requireShards(summary: ScanResultSummary): SplitResult? {
+        val internal = summary.internal ?: return null
+        if (internal.shards.isEmpty()) return null
+        val parts = mutableListOf<CategoryPart>()
+        var total = 0
+        for (shard in internal.shards) {
+            val file = File(shard.path)
+            if (!file.isFile || file.length() <= 0L) {
+                throw InternalTableMissingException(
+                    "The ${shard.label} offsets file is gone (${shard.path}). " +
+                        "Re-run the internal extraction."
+                )
+            }
+            total += shard.entries
+            parts += CategoryPart(
+                id = shard.id,
+                categoryId = shard.category,
+                label = shard.label,
+                part = shard.part,
+                counts = CategoryCounts(
+                    classes = shard.classes,
+                    functions = shard.functions,
+                    symbols = shard.symbols
+                ),
+                documentFile = file
+            )
+        }
+        val expected = expectedRows(summary)
+        if (expected > 0 && total != expected) {
+            throw InternalCountMismatchException(
+                "The category files hold $total rows but the scan reported $expected."
+            )
+        }
+        return SplitResult(
+            parts = parts,
+            classToCategory = readClassMap(internal.classMapPath),
+            totalClasses = internal.classes,
+            totalFunctions = internal.functions,
+            totalSymbols = internal.dataSymbols
+        )
+    }
+
+    /**
+     * Reads the class-to-category map the engine wrote.
+     *
+     * @param path absolute path of the map, may be empty.
+     * @return the map, empty when the file is missing.
+     */
+    private fun readClassMap(path: String): Map<String, String> {
+        if (path.isBlank()) return emptyMap()
+        val file = File(path)
+        if (!file.isFile) return emptyMap()
+        return runCatching {
+            val type = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
+            com.google.gson.Gson().fromJson<Map<String, String>>(file.reader(), type)
+                ?: emptyMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    /**
      * Validates a table without throwing.
      *
      * @param summary the scan result.

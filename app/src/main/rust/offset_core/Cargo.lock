@@ -398,6 +398,7 @@ dependencies = [
  "log",
  "memmap2",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

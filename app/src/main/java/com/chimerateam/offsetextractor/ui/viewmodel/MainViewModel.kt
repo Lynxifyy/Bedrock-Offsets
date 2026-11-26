@@ -9,6 +9,7 @@ import com.chimerateam.offsetextractor.data.cache.ResultCache
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
 import com.chimerateam.offsetextractor.data.export.CategoryRule
+import com.chimerateam.offsetextractor.data.export.CategoryRulesJson
 import com.chimerateam.offsetextractor.data.export.Classifier
 import com.chimerateam.offsetextractor.data.export.ExportJobRepository
 import com.chimerateam.offsetextractor.data.export.ExportKind
@@ -73,7 +74,7 @@ private const val MAX_LOGGED_VTABLES = 10
  * oldest line is dropped once the cap is reached rather than growing without
  * limit on a memory-constrained device.
  */
-const val MAX_LOG_ENTRIES = 500
+const val MAX_LOG_ENTRIES = 2_000
 
 /** Origin tag used for storage-access lines. */
 private const val TAG_SAF = "SAF"
@@ -1462,7 +1463,23 @@ class MainViewModel(
             generateSignatures = generateSignatures.value,
             maxSlotsPerClass = maxSlotsPerClass.value,
             internalPatterns = internalPatterns,
-            stringAnchors = stringAnchors
+            stringAnchors = stringAnchors,
+            // The engine classifies as it streams, so the export copies its
+            // category documents instead of parsing 890,000 rows twice.
+            categories = if (categories.isEmpty()) {
+                null
+            } else {
+                com.google.gson.JsonParser.parseString(
+                    CategoryRulesJson.encode(categories)
+                )
+            },
+            sourceHeader = CategoryRulesJson.sourceHeader(
+                version = lastApkVersion.orEmpty().ifBlank { "unknown" },
+                apkName = _uiState.value.selectedApk?.displayName.orEmpty(),
+                sha256 = extracted.sha256,
+                architecture = "arm64-v8a",
+                buildId = _lastBuildId.value
+            )
         )
         val output = cache?.internalDir ?: File(cacheDir, "internal")
         return try {

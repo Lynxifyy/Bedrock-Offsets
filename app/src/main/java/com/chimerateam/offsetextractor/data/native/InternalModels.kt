@@ -39,10 +39,48 @@ data class InternalSummary(
     @SerializedName("truncatedSignatures") val truncatedSignatures: Boolean = false,
     val path: String = "",
     @SerializedName("tableBytes") val tableBytes: Long = 0,
-    val rows: Int = 0
+    val rows: Int = 0,
+    val shards: List<ShardPart> = emptyList(),
+    @SerializedName("classMapPath") val classMapPath: String = "",
+    @SerializedName("categoriesApplied") val categoriesApplied: Boolean = false,
+    @SerializedName("truncatedSlots") val truncatedSlots: Boolean = false,
+    @SerializedName("truncatedSlotClasses") val truncatedSlotClasses: Int = 0
 ) {
     /** Whether the table holds anything worth showing. */
     val isEmpty: Boolean get() = functions == 0 && classes == 0
+
+    /** Records across every category file. */
+    val shardRows: Int get() = shards.sumOf { it.entries }
+}
+
+/**
+ * One category document the engine wrote.
+ *
+ * The engine classifies as it streams, so these files are finished JSON
+ * documents: the export copies them into the archive byte for byte.
+ *
+ * @property id file identifier, for example `block_placement` or
+ *   `unnamed_part_02`.
+ * @property category logical category.
+ * @property label human-readable label.
+ * @property part one-based part number.
+ * @property classes classes in the file.
+ * @property functions functions in the file.
+ * @property symbols data symbols in the file.
+ * @property path absolute path of the document.
+ */
+data class ShardPart(
+    val id: String = "",
+    val category: String = "",
+    val label: String = "",
+    val part: Int = 1,
+    val classes: Int = 0,
+    val functions: Int = 0,
+    val symbols: Int = 0,
+    val path: String = ""
+) {
+    /** Records in the file. */
+    val entries: Int get() = classes + functions + symbols
 }
 
 /**
@@ -243,5 +281,7 @@ data class InternalOptions(
     val maxSlotsPerClass: Int = 4096,
     val maxSignatures: Int = 1_000_000,
     val internalPatterns: List<InternalPatternSpec> = emptyList(),
-    val stringAnchors: List<StringAnchorSpec> = emptyList()
+    val stringAnchors: List<StringAnchorSpec> = emptyList(),
+    val categories: com.google.gson.JsonElement? = null,
+    val sourceHeader: String = ""
 )

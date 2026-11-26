@@ -79,7 +79,69 @@ object OffsetExporter {
      * @param writer destination writer.
      */
     fun writeJni(summary: ScanResultSummary, writer: Writer) {
-        streamingGson.toJson(jniDocument(summary), writer)
+        // Streaming straight into the writer keeps the document off the heap.
+        // Building the object graph first held every vtable and symbol twice
+        // while the archive was being written, which is what turned a large
+        // export into an OutOfMemoryError.
+        val json = JsonWriter(writer)
+        json.setIndent("  ")
+        json.beginObject()
+        json.name("schemaVersion").value(SCHEMA_VERSION)
+        json.name("generatedBy").value("BedrockOffsetExtractor")
+        json.name("source").beginObject()
+        json.name("apk").value(summary.displayName)
+        json.name("apkVersion").value(versionLabel(summary))
+        json.name("apkSizeBytes").value(summary.apkSizeBytes)
+        json.name("architecture").value(summary.architecture)
+        json.name("librarySha256").value(summary.sha256)
+        json.name("librarySizeBytes").value(summary.sizeBytes)
+        json.name("buildId").value(summary.buildId)
+        json.name("buildIdSource").value(summary.buildIdSource)
+        json.name("entryPoint").value(summary.entryPoint)
+        summary.textSection?.let { text ->
+            json.name("textAddress").value(hex(text.address))
+            json.name("textSize").value(text.size)
+            json.name("textDelta").value(hex(text.delta))
+        }
+        json.endObject()
+        json.name("offsets").beginObject()
+        for ((name, offset) in buildOffsets(summary)) {
+            json.name(name).value(offset)
+        }
+        json.endObject()
+        json.name("verification").beginObject()
+        json.name("verified").value(summary.verification.verified)
+        json.name("conflicts").value(summary.verification.conflicts)
+        json.name("unverified").value(summary.verification.unverified)
+        json.name("confidencePercent").value(summary.verification.confidencePercent)
+        json.endObject()
+        json.name("vtables").beginObject()
+        for (vtable in summary.vtables.entries.values.sortedBy { it.vtableAddress }) {
+            json.name(vtable.name).beginObject()
+            json.name("address").value(vtable.vtableHex)
+            json.name("offset").value(OffsetRows.hex(vtable.vtableOffset))
+            json.name("typeInfo").value(OffsetRows.hex(vtable.typeInfoAddress))
+            json.endObject()
+        }
+        json.endObject()
+        json.name("symbols").beginObject()
+        for (symbol in summary.symbols.sortedBy { it.address }) {
+            json.name(symbol.name).value(symbol.addressHex)
+        }
+        json.endObject()
+        json.name("stats").beginObject()
+        json.name("expectedSignatures").value(summary.expectedPatterns.size)
+        json.name("matchedSignatures").value(summary.patternHits.map { it.name }.distinct().size)
+        json.name("discardedMatches").value(summary.discardedMatches)
+        json.name("vtables").value(summary.vtables.size)
+        json.name("symbols").value(summary.symbols.size)
+        json.name("verifiedOffsets").value(summary.verification.verified)
+        json.name("conflictingOffsets").value(summary.verification.conflicts)
+        json.name("unverifiedOffsets").value(summary.verification.unverified)
+        json.name("confidencePercent").value(summary.verification.confidencePercent)
+        json.endObject()
+        json.endObject()
+        json.flush()
         writer.write("\n")
         writer.flush()
     }

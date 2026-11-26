@@ -87,13 +87,19 @@ class OffsetZipBuilder(
         workDir.mkdirs()
         target.parentFile?.mkdirs()
         val version = OffsetExporter.versionLabel(summary)
-        val table = InternalTable.require(summary)
-        val split = table?.let { validated ->
+        // The engine classifies while it streams, so its category documents are
+        // copied into the archive byte for byte. Only a result scanned by an
+        // older engine still has a single table to split, and that path parses
+        // the rows a second time.
+        val shards = InternalTable.requireShards(summary)
+        val table = if (shards == null) InternalTable.require(summary) else null
+        val split = shards ?: table?.let { validated ->
+            log("ZIP: this result predates category shards, splitting the table")
             InternalTableSplitter(classifier, workDir).split(validated.file) { percent, message ->
                 onProgress(percent / 200f, message)
             }
         } ?: SplitResult(emptyList(), emptyMap(), 0, 0, 0)
-        requireCounts(summary, split, table)
+        requireCounts(summary, split, hasInternal = table != null || shards != null)
         log(
             "ZIP: classified ${split.totalClasses} classes / ${split.totalFunctions} functions " +
                 "into ${split.parts.size} category files"
@@ -121,8 +127,19 @@ class OffsetZipBuilder(
             for ((index, part) in split.parts.withIndex()) {
                 val name = "InternalCPP/${OffsetExporter.categoryFileName(part.id, summary)}"
                 categoryPaths += name
-                manifest += writeEntry(zip, name, part.counts.total) { writer ->
-                    OffsetExporter.writeCategory(summary, part, writer)
+                val document = part.documentFile
+                manifest += if (document != null) {
+                    writeStreamEntry(zip, name, part.counts.total) { out ->
+                        copyFile(document, out)
+                    }.also {
+                        // The archive holds the only copy now, so the shard is
+                        // deleted as soon as its entry is closed.
+                        document.delete()
+                    }
+                } else {
+                    writeEntry(zip, name, part.counts.total) { writer ->
+                        OffsetExporter.writeCategory(summary, part, writer)
+                    }
                 }
                 val fraction = 0.6f + 0.3f * ((index + 1).toFloat() / split.parts.size)
                 onProgress(fraction, "Writing ${part.label}")
@@ -172,15 +189,16 @@ class OffsetZipBuilder(
      *
      * @param summary the scan result.
      * @param split the category split.
-     * @param table the validated table, or `null` for a JNI-only export.
+     * @param hasInternal whether the scan produced an internal table or
+     *   category documents.
      */
     private fun requireCounts(
         summary: ScanResultSummary,
         split: SplitResult,
-        table: InternalTableFile?
+        hasInternal: Boolean
     ) {
         val internal = summary.internal
-        if (table == null) {
+        if (!hasInternal) {
             if (split.rows > 0) {
                 throw InternalCountMismatchException(
                     "The internal table holds ${split.rows} rows but the scan claims none."
@@ -236,6 +254,50 @@ class OffsetZipBuilder(
         buffered.flush()
         zip.closeEntry()
         return ManifestEntry(path, counter.bytes, entries, counter.sha256())
+    }
+
+    /**
+     * Writes an entry whose bytes are produced by [block] directly.
+     *
+     * Used for the category documents the engine already wrote: they are copied
+     * through a fixed buffer, so no record ever becomes an object on the heap.
+     *
+     * @param zip open archive.
+     * @param path entry name.
+     * @param entries record count the entry must hold.
+     * @param block writes the entry body.
+     * @return the manifest entry with the digest and size of the written bytes.
+     */
+    private fun writeStreamEntry(
+        zip: ZipOutputStream,
+        path: String,
+        entries: Int,
+        block: (java.io.OutputStream) -> Unit
+    ): ManifestEntry {
+        zip.putNextEntry(ZipEntry(path))
+        val counter = DigestCountStream(zip)
+        val buffered = BufferedOutputStream(counter, BUFFER_BYTES)
+        block(buffered)
+        buffered.flush()
+        zip.closeEntry()
+        return ManifestEntry(path, counter.bytes, entries, counter.sha256())
+    }
+
+    /**
+     * Copies one file into [out] through a 64 KB buffer.
+     *
+     * @param source file to copy.
+     * @param out destination stream.
+     */
+    private fun copyFile(source: File, out: java.io.OutputStream) {
+        source.inputStream().buffered(BUFFER_BYTES).use { input ->
+            val buffer = ByteArray(BUFFER_BYTES)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                out.write(buffer, 0, read)
+            }
+        }
     }
 
     private fun buildManifest(

@@ -8,6 +8,7 @@
 //! `mmap`, so peak resident memory stays flat regardless of input size.
 
 pub mod android;
+pub mod categories;
 pub mod elf;
 pub mod error;
 pub mod fd;
@@ -20,6 +21,7 @@ pub mod prologue;
 pub mod rtti;
 pub mod scanner;
 pub mod sections;
+pub mod shards;
 pub mod symbols;
 pub mod verify;
 pub mod zip_extract;
