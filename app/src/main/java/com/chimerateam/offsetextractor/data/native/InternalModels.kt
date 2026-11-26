@@ -213,7 +213,10 @@ data class VtableSlot(
  * @property mangled mangled name.
  * @property bases base classes.
  * @property vtable vtable header address.
- * @property vtableOffset vtable offset from the image base.
+ * @property fileOffset file offset of the vtable header, or null when the
+ *   vtable has no bytes in the file.
+ * @property vtableOffset vtable offset from the image base, which is neither a
+ *   virtual address nor a file offset. Use [fileOffset] to patch or read.
  * @property typeInfo `type_info` address.
  * @property slotCount number of slots in the primary group.
  * @property slots the primary group's slots.
@@ -224,6 +227,7 @@ data class ClassInfo(
     val mangled: String = "",
     val bases: List<String> = emptyList(),
     val vtable: String = "0x0",
+    @SerializedName("fileOffset") val fileOffset: String? = null,
     @SerializedName("vtableOffset") val vtableOffset: String = "0x0",
     @SerializedName("typeInfo") val typeInfo: String = "0x0",
     @SerializedName("slotCount") val slotCount: Int = 0,

@@ -500,6 +500,7 @@ mod tests {
             mangled: format!("_{name}"),
             bases: Vec::new(),
             vtable: 0x1000,
+            file_offset: Some(0x10),
             vtable_offset: 0x10,
             type_info: 0x2000,
             slot_count: 0,

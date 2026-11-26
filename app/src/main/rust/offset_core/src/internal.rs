@@ -298,7 +298,13 @@ pub struct ClassRecord {
     /// Virtual address of the vtable header.
     #[serde(serialize_with = "hex_u64")]
     pub vtable: u64,
-    /// Offset of the vtable from the image base.
+    /// File offset of the vtable header, absent when the vtable has no bytes
+    /// in the file. This is the number to patch or read at, unlike
+    /// `vtableOffset`, which is measured from the image base.
+    #[serde(serialize_with = "hex_option", skip_serializing_if = "Option::is_none")]
+    pub file_offset: Option<u64>,
+    /// Offset of the vtable from the image base (the lowest allocated
+    /// section), which is neither a virtual address nor a file offset.
     #[serde(serialize_with = "hex_u64")]
     pub vtable_offset: u64,
     /// Virtual address of the `type_info` object.
@@ -1066,6 +1072,7 @@ fn collect_class_slots(
             mangled: groups[0].mangled.clone(),
             bases: Vec::new(),
             vtable: groups[0].vtable_address,
+            file_offset: file_offset_of(map, groups[0].vtable_address),
             vtable_offset: groups[0].vtable_offset,
             type_info: groups[0].type_info_address,
             slot_count: primary.len(),
@@ -2780,6 +2787,46 @@ mod tests {
         assert!(signature.contains("??"), "{signature}");
     }
 
+    /// `vtableOffset` is measured from the image base, which is not the file
+    /// layout: `.data.rel.ro` starts 0x4000 after its file offset in the real
+    /// 26.60 library. A class record must carry the real file offset too, or a
+    /// consumer patching at `vtableOffset` writes into the wrong place.
+    #[test]
+    fn a_class_carries_a_file_offset_not_only_the_image_base_offset() {
+        let text = section(".text", 0x1000, 0x1000, 0x1000, true);
+        let rel_ro = section(".data.rel.ro", 0x8000, 0x4000, 0x1000, false);
+        let map = map_with(text, vec![rel_ro]);
+        let mut image = vec![0u8; 0x9000];
+        // vtable: offset-to-top 0, type_info pointer, one function pointer.
+        image[0x4000..0x4008].copy_from_slice(&0u64.to_le_bytes());
+        image[0x4008..0x4010].copy_from_slice(&0x7000u64.to_le_bytes());
+        image[0x4010..0x4018].copy_from_slice(&0x1100u64.to_le_bytes());
+        let vtables = vtables(vec![type_vtable("First", 0x8000, 0x7000)]);
+        let relocations =
+            crate::rtti::RelocationIndex::for_tests(vec![(0x8008, 0x7000), (0x8010, 0x1100)]);
+
+        let (classes, _) = collect_class_slots(
+            &map,
+            &image,
+            &vtables,
+            &relocations,
+            None,
+            4096,
+            &crate::scanner::ScanControl::new(),
+        )
+        .expect("slots");
+
+        let record = &classes[0].record;
+        assert_eq!(record.vtable, 0x8000);
+        // 0x8000 is 0x4000 into `.data.rel.ro`, which starts at file 0x0.
+        assert_eq!(record.file_offset, Some(0x4000), "{:?}", record.file_offset);
+        assert_ne!(
+            record.file_offset,
+            Some(record.vtable_offset),
+            "the image-base offset is not the file offset"
+        );
+    }
+
     #[test]
     fn addresses_round_trip_through_the_section_table() {
         let map = map_with(
@@ -2881,6 +2928,7 @@ mod tests {
                 mangled: name.to_string(),
                 bases: Vec::new(),
                 vtable: 0,
+                file_offset: Some(0),
                 vtable_offset: 0,
                 type_info: 0,
                 slot_count: addresses.len(),
