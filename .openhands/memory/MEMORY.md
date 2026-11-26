@@ -235,3 +235,14 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   xbox). It is an EnTT build: `StrictEntityContext`, `ViewT<...>`, `ITickingSystem`,
   `StrictTickingSystemFunctionAdapter` (643), `EntityComponentDefinition` (164),
   `entt::basic_storage` (1,406). Components have no vtable → invisible to RTTI.
+- `scripts/measure_surface.py` is the reproducible surface measurement (own ELF64 parser + NDJSON
+  streamer; writes JSON). Its numbers are published in `docs/CARAMEL_26.60_SURFACE.md` §7 and it has
+  5 unit tests. Python tests are `unittest` (no pytest in the image):
+  `python3 -m unittest discover -s scripts/tests -t .` → 131 tests.
+- The 26.60 component types **are** in the binary (`.rodata`): `entt::internal::pretty_function()
+  [Type = ActorOwnerComponent]` and `N4entt13basic_storageI19ActorOwnerComponent8EntityId…`. They are
+  not RTTI classes (plain structs). Grepping the *output* for them returns 0 and proves nothing.
+- String anchors: the engine names **all** candidates `status: "ambiguous"` (it does not pick one) —
+  that is the tested contract. On 26.60 a bare component name has 271/316/125/12 occurrences and
+  133/164/69/8 `ADRP`+`ADD/LDR` refsites (too many → ambiguity); the unique `pretty_function` string
+  has **0** refsites and **0** relocations (dead data). Anchors need a two-hop selector, not shipped yet.
