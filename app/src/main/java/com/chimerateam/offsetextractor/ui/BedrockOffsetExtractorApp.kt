@@ -512,8 +512,32 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         )
                     }
                 }
-                if (exportProgress.state != ExportState.Idle &&
-                    exportProgress.state != ExportState.Cancelled
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.chimerateam.offsetextractor.ui.theme.LocalReduceMotion
+                        .provides(reduceMotion)
+                ) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = exportProgress.state != ExportState.Idle &&
+                        exportProgress.state != ExportState.Cancelled,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    enter = androidx.compose.animation.fadeIn(
+                        com.chimerateam.offsetextractor.ui.theme.motionTween(
+                            com.chimerateam.offsetextractor.ui.theme.MotionDuration.Medium,
+                            reduceMotion = reduceMotion
+                        )
+                    ) + androidx.compose.animation.scaleIn(
+                        initialScale = 0.96f,
+                        animationSpec = com.chimerateam.offsetextractor.ui.theme.motionTween(
+                            com.chimerateam.offsetextractor.ui.theme.MotionDuration.Medium,
+                            reduceMotion = reduceMotion
+                        )
+                    ),
+                    exit = androidx.compose.animation.fadeOut(
+                        com.chimerateam.offsetextractor.ui.theme.motionTween(
+                            com.chimerateam.offsetextractor.ui.theme.MotionDuration.Short,
+                            reduceMotion = reduceMotion
+                        )
+                    )
                 ) {
                     ExportProgressToast(
                         progress = exportProgress,
@@ -522,13 +546,13 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         onShare = shareZip,
                         onDismiss = { ExportJobRepository.clear() },
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
                             // Clears the navigation bar and the pinned action
                             // row: the pill used to sit on top of Copy, Share
                             // and Start new scan.
                             .padding(horizontal = 16.dp)
                             .padding(bottom = TOAST_BOTTOM_INSET)
                     )
+                }
                 }
             }
         }

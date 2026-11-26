@@ -54,6 +54,14 @@ is checked; a mismatch fails the download instead of shipping a broken file.
 }
 ```
 
+The category documents are written by the Rust engine in one streaming pass:
+it receives the same `categories.json` the UI uses, classifies every record as
+it writes it, and closes one finished JSON document per category. The export
+copies those documents into the archive byte for byte and deletes each one once
+its entry is closed, so no row is ever parsed, re-serialised or held on the Java
+heap. An older cached result that still has a single NDJSON table is split by
+`InternalTableSplitter`; the log says so when that path is taken.
+
 The JNI document under `JNI/` is the v1 document described below and is
 unchanged. The `InternalCPP/` folder holds one file per category plus an index.
 

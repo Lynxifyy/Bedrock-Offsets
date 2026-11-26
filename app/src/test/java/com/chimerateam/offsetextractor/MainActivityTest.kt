@@ -56,7 +56,7 @@ class MainActivityTest {
     @Test
     fun bottomNavigationSwitchesToSettings() {
         composeTestRule.onNodeWithText("Settings").performClick()
-        composeTestRule.onNodeWithText("Appearance").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Dark mode").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Appearance").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Dark mode").performScrollTo().assertIsDisplayed()
     }
 }

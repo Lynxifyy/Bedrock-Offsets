@@ -21,7 +21,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -55,13 +63,22 @@ import com.chimerateam.offsetextractor.ui.theme.PanelCorner
  * @param onCopyLog copies the whole log to the clipboard.
  * @param onClearLog discards the log.
  * @param modifier layout modifier for the pane.
+ * @param collapsible whether the header offers an expand and collapse control.
+ * @param expanded whether the entries are shown; only read when collapsible.
+ * @param onToggle called when the header control is tapped.
  */
+/** Test tag of the log's expand and collapse control. */
+const val LIVE_LOG_TOGGLE_TAG = "live-log-toggle"
+
 @Composable
 fun LiveLogPane(
     entries: List<LogEntry>,
     onCopyLog: () -> Unit,
     onClearLog: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    collapsible: Boolean = false,
+    expanded: Boolean = true,
+    onToggle: (() -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
 
@@ -94,11 +111,27 @@ fun LiveLogPane(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Live log",
+                text = if (entries.isEmpty()) "Live log" else "Live log (${entries.size})",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f)
             )
+            if (collapsible) {
+                IconButton(
+                    onClick = { onToggle?.invoke() },
+                    modifier = Modifier.testTag(LIVE_LOG_TOGGLE_TAG)
+                ) {
+                    Icon(
+                        imageVector = if (expanded) {
+                            Icons.Filled.ExpandMore
+                        } else {
+                            Icons.Filled.ExpandLess
+                        },
+                        contentDescription = if (expanded) "Collapse log" else "Expand log",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             IconButton(onClick = onCopyLog) {
                 Icon(
                     imageVector = Icons.Filled.ContentCopy,
@@ -116,7 +149,7 @@ fun LiveLogPane(
         }
         Spacer(Modifier.height(4.dp))
 
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().let { if (expanded) it else it.height(0.dp) }) {
             if (entries.isEmpty()) {
                 Text(
                     text = "Live log will appear here.",

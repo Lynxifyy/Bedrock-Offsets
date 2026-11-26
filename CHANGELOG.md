@@ -1,3 +1,22 @@
+## v1.0.12
+
+### Bug Fixes
+
+- delete the downloaded APK once the library is extracted and hashed, and the extracted library once the internal table is validated, so one scan of a 1 GB build no longer leaves about 2 GB behind; "Delete downloaded APK after scan" is a Settings switch and the storage list shows what is left
+- remove the duplicate category split: the engine classifies every record while it streams and writes one finished JSON document per category, so the export no longer parses 890,000 rows twice or re-serialises them
+- copy those documents into the archive through a 64 KB buffer and delete each one as soon as its entry is closed, and write the JNI document with a `JsonWriter` instead of building the object graph first, which is what requested the 77 MB allocation that failed with 6 MB free
+- compress the archive at level 6 instead of 9
+- keep the result card whole: the results pane was measured wrap-content while it contained a weighted list, so it took the screen and pushed its own pinned controls out of view, cutting the card at the same pixel every time
+- move Copy, Share and Save JNI into one overflow menu so the pinned bar leaves the card room, and keep the progress pill clear of the navigation bar and the action row
+- translate every export failure into one plain sentence, with the technical text kept in the log
+- cap the in-memory log at 2,000 lines and raise it from 500 only because the log file now carries the rest
+- report a vtable slot cap in the internal summary instead of truncating silently
+
+### Features
+
+- category documents are written by the engine with the same `categories.json` the UI uses, and a shared expectation set in the Kotlin and Rust tests keeps the two classifiers identical
+- motion tokens (`ui/theme/Motion.kt`): three durations, four easings, three named springs, a 4 dp spacing scale and a reduce-motion switch that collapses every animation to a snap
+
 ## v1.0.11
 
 ### Bug Fixes

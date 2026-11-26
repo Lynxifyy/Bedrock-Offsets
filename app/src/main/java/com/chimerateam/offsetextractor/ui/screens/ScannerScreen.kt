@@ -17,11 +17,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.data.export.ExportProgress
@@ -31,6 +36,9 @@ import com.chimerateam.offsetextractor.ui.components.ResultsPanel
 import com.chimerateam.offsetextractor.ui.components.SelectedApkCard
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
+import com.chimerateam.offsetextractor.ui.theme.MotionDuration
+import com.chimerateam.offsetextractor.ui.theme.MotionEasing
+import com.chimerateam.offsetextractor.ui.theme.motionTween
 import com.chimerateam.offsetextractor.ui.state.ScannerUiState
 import com.chimerateam.offsetextractor.ui.theme.PanelGap
 
@@ -124,6 +132,9 @@ fun ScannerScreen(
                 )
             }
         } else {
+            // Collapsed by default on a phone: an expanded log stole the
+            // height the result card needs to show its own rows.
+            var logExpanded by rememberSaveable { mutableStateOf(false) }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -135,8 +146,7 @@ fun ScannerScreen(
                     // Bounded, because the pane holds a weighted list: a wrap-content pane
                     // took the whole screen and pushed the pinned controls out of view,
                     // which cut the result card off.
-                    fillHeight = true,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    fillHeight = false,
                     onSelectApk = onSelectApk,
                     onSelectApks = onSelectApks,
                     onCancelSelection = onCancelSelection,
@@ -155,9 +165,18 @@ fun ScannerScreen(
                     entries = entries,
                     onCopyLog = onCopyLog,
                     onClearLog = onClearLog,
+                    collapsible = true,
+                    expanded = logExpanded,
+                    onToggle = { logExpanded = !logExpanded },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .then(
+                            if (logExpanded) {
+                                Modifier.weight(0.5f)
+                            } else {
+                                Modifier.wrapContentHeight()
+                            }
+                        )
                 )
             }
         }
@@ -200,8 +219,14 @@ private fun ControlsPane(
         modifier = modifier,
         targetState = state.phase,
         transitionSpec = {
-            (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 12 })
-                .togetherWith(fadeOut(tween(160)))
+            val enter = motionTween<Float>(MotionDuration.Medium, MotionEasing.Decelerate)
+            val slide = motionTween<androidx.compose.ui.unit.IntOffset>(
+                MotionDuration.Medium,
+                MotionEasing.Decelerate
+            )
+            val exit = motionTween<Float>(MotionDuration.Short, MotionEasing.Accelerate)
+            (fadeIn(enter) + slideInVertically(slide) { it / 12 })
+                .togetherWith(fadeOut(exit))
         },
         label = "scanner-phase"
     ) { phase ->

@@ -55,7 +55,7 @@ fun ResultsPanel(
         Field("Sections", result.sectionCount.toString())
 
         if (result.patternHits.isNotEmpty() || result.discardedMatches > 0) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Text(text = "Verified signatures", style = MonoText.headline)
             Spacer(Modifier.height(4.dp))
             Field("Matches", result.patternHits.size.toString())
@@ -66,7 +66,7 @@ fun ResultsPanel(
         }
 
         if (!result.vtables.isEmpty) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Text(text = "RTTI vtables", style = MonoText.headline)
             Spacer(Modifier.height(4.dp))
             Field("Resolved", result.vtables.size.toString())
@@ -74,7 +74,7 @@ fun ResultsPanel(
         }
 
         result.internal?.let { internal ->
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Text(text = "Internal C++", style = MonoText.headline)
             Spacer(Modifier.height(4.dp))
             Field("Functions", internal.functions.toString())
@@ -117,7 +117,7 @@ fun ResultsPanel(
         }
 
         result.textSection?.let { text ->
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Text(text = "Executable section", style = MonoText.headline)
             Spacer(Modifier.height(4.dp))
             Field(".text start", text.hex(text.address))
@@ -150,7 +150,7 @@ private fun Field(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp)
+            .padding(vertical = 1.dp)
             .combinedClickable(
                 onClick = {},
                 onLongClick = { clipboard.setText(AnnotatedString(value)) }

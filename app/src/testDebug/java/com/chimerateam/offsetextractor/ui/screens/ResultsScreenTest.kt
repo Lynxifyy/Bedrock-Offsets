@@ -5,6 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -128,9 +129,10 @@ class ResultsScreenTest {
     fun exportActionsArePresent() {
         content()
 
-        composeTestRule.onNodeWithText("Copy JNI").assertExists()
-        composeTestRule.onNodeWithText("Share JNI").assertExists()
-        composeTestRule.onNodeWithText("Save JNI").assertExists()
+        composeTestRule.onNodeWithTag("jni-menu").performClick()
+        composeTestRule.onNodeWithText("Copy JNI JSON").assertExists()
+        composeTestRule.onNodeWithText("Share JNI JSON").assertExists()
+        composeTestRule.onNodeWithText("Save JNI JSON").assertExists()
         composeTestRule.onNodeWithText("Start new scan").assertExists()
         composeTestRule
             .onNodeWithText("Download BEDROCK_OFFSETS_deadbeef.zip")

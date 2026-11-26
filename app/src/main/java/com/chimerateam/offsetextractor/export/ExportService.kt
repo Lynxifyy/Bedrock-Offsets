@@ -284,8 +284,13 @@ class ExportService : Service() {
             // resume instead of rescanning.
             runCatching { if (zip.isFile) zip.delete() }
             store.clear()
+            // The cached copy is gone, so the snapshot keeps the destination
+            // URI: Share resolves that, not a path that no longer exists.
             ExportJobRepository.publish(
-                ExportJobRepository.snapshot().copy(zipPath = null)
+                ExportJobRepository.snapshot().copy(
+                    zipPath = null,
+                    destinationUri = destination.toString()
+                )
             )
             notifyFinished(fileName, success = true)
         } catch (cancelled: CancellationException) {

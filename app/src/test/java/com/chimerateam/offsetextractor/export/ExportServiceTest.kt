@@ -141,7 +141,12 @@ class ExportServiceTest {
             finished
         )
         assertTrue("the destination was not written", destination.length() > 0)
-        assertTrue(ExportJobRepository.progress.value.zipPath?.endsWith(".zip") == true)
+        // The cached copy is deleted after a successful copy, so the finished
+        // snapshot points at the destination the user keeps.
+        assertEquals(
+            uri.toString(),
+            ExportJobRepository.progress.value.destinationUri
+        )
         controller.destroy()
     }
 

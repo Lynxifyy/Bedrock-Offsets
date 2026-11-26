@@ -87,3 +87,16 @@ index maps every class to its category.
 The exporter checks that the sum of category function counts equals the total
 function count. A mismatch fails the download, not the scan, so the scan result
 is never thrown away because a rule file was wrong.
+
+## How the rules are applied
+
+The same document is read twice: by the app (`CategoryCatalog`) and by the
+Rust engine, which receives it with the internal options and classifies every
+record as it streams. Both implementations are pinned by tests that assert the
+same expectations against the shipped `assets/categories.json`:
+`CategoryParityTest` (Kotlin) and the `the_shipped_rules_*` tests in
+`offset_core/src/categories.rs`.
+
+`BLOCK_PLACEMENT` must contain `Block`, `BlockLegacy`, `BlockSource`,
+`BlockActor`, `BlockItem` and `GameMode`, and the functions named `useItemOn`,
+`buildBlock`, `placeBlock`, `mayPlace`, `tryPlace` and `destroyBlock`.
