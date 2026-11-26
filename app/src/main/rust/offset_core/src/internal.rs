@@ -2383,12 +2383,18 @@ fn read_sleb(bytes: &[u8], position: &mut usize) -> Option<i64> {
     Some(result)
 }
 
+/// Start and length pairs of the functions found in the image.
+type FunctionRanges = Vec<(u64, u64)>;
+
+/// Function ranges, the source they came from, and the FDE count before dedup.
+type CollectedFunctions = (FunctionRanges, &'static str, usize);
+
 /// Falls back to a prologue walk when `.eh_frame` is absent.
 fn collect_functions(
     map: &SectionMap,
     image: &[u8],
     control: &ScanControl,
-) -> CoreResult<(Vec<(u64, u64)>, &'static str, usize)> {
+) -> CoreResult<CollectedFunctions> {
     if map.find(".eh_frame").is_some() {
         if let Ok(mut functions) = parse_eh_frame(map, image) {
             // Every FDE names one function, so the raw count is the number the
