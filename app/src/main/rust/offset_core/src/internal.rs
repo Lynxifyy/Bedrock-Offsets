@@ -509,7 +509,7 @@ pub fn analyze_with_writer(
     report(sink, 50, "Pass C: merging names");
     let mut names: HashMap<u64, NamedEntry> = HashMap::new();
     insert_symbol_names(&mut names, named_symbols);
-    insert_slot_names(&mut names, &classes);
+    insert_slot_names(map, &mut names, &classes);
 
     check_cancelled(control)?;
     report(sink, 60, "Pass D/E: internal signatures and string anchors");
@@ -1252,12 +1252,24 @@ fn insert_symbol_names(names: &mut HashMap<u64, NamedEntry>, symbols: &[NamedSym
 }
 
 /// Inserts every vtable slot name into the table.
-fn insert_slot_names(names: &mut HashMap<u64, NamedEntry>, classes: &[ClassSlots]) {
+fn insert_slot_names(
+    map: &SectionMap,
+    names: &mut HashMap<u64, NamedEntry>,
+    classes: &[ClassSlots],
+) {
     for class in classes {
         for group in &class.record.vtable_groups {
             for slot in &group.slots {
                 if slot.address == 0 {
                     // An unresolved import has no address to name.
+                    continue;
+                }
+                // A secondary vtable group holds data as well as code: a
+                // virtual-base group starts with a vbase offset, and a nested
+                // vtable slot points into `.data.rel.ro`. Naming such a slot
+                // creates a "function" at an address that holds no code, and
+                // the prologue check then "verifies" whatever bytes sit there.
+                if !is_executable(map, slot.address) {
                     continue;
                 }
                 insert_name(
@@ -2978,6 +2990,51 @@ mod tests {
             section(".text", 0x1000, 0x1000, 0x100, true),
             vec![section(".data.rel.ro", 0x3000, 0x3000, 0x400, false)],
         )
+    }
+
+    /// A slot can hold data, not only a function pointer: a virtual-base
+    /// group starts with a vbase offset and a nested vtable slot points into
+    /// `.data.rel.ro`. Naming such a slot would create a "function" at an
+    /// address with no code, which the prologue check then "verifies".
+    #[test]
+    fn a_slot_pointing_at_data_is_not_named() {
+        let map = map_with(
+            section(".text", 0x1000, 0x1000, 0x100, true),
+            vec![
+                section(".data.rel.ro", 0x3000, 0x3000, 0x400, false),
+                section(".rodata", 0x4000, 0x4000, 0x100, false),
+            ],
+        );
+        let image = vec![0u8; 0x5000];
+        let relocations = crate::rtti::RelocationIndex::for_tests(vec![
+            (0x3008, 0x2f00),
+            (0x3010, 0x1040),
+            (0x3018, 0x4010),
+        ]);
+        let vtables = vtables(vec![type_vtable("Mob", 0x3000, 0x2f00)]);
+
+        let (classes, _) = collect_class_slots(
+            &map,
+            &image,
+            &vtables,
+            &relocations,
+            None,
+            4096,
+            &crate::scanner::ScanControl::new(),
+        )
+        .expect("slots");
+
+        let mut names = HashMap::new();
+        insert_slot_names(&map, &mut names, &classes);
+
+        assert!(
+            names.contains_key(&0x1040),
+            "the code slot must still be named"
+        );
+        assert!(
+            !names.contains_key(&0x4010),
+            "a slot pointing into .rodata must not become a function"
+        );
     }
 
     #[test]

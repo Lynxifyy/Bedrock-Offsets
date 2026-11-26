@@ -1,0 +1,577 @@
+{
+  "engineVersion": "1.0.12",
+  "generatedBy": "scripts/caramel_pack.py",
+  "groups": {
+    "access_chain": [
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x138a0be0; 316 slots; bases: IMinecraftGame, ILayoutServiceProvider, App, LevelListener, ResourcePackListener, I18nObserver",
+        "file_offset": "0x1389b8a8",
+        "group": "access_chain",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "MinecraftGame",
+        "rva": "0x1389f8a8",
+        "status": "found",
+        "why": "root of every access chain"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13890f40; 436 slots; bases: Core::StorageAreaStateListener",
+        "file_offset": "0x1388be60",
+        "group": "access_chain",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "ClientInstance",
+        "rva": "0x1388fe60",
+        "status": "found",
+        "why": "per-client state: local player, level, options"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x139f7ec0; 247 slots; bases: Player",
+        "file_offset": "0x139f2e90",
+        "group": "access_chain",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "LocalPlayer",
+        "rva": "0x139f6e90",
+        "status": "found",
+        "why": "voice listener position, PvP reach source"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13e0ca68; 413 slots; bases: BlockSourceListener",
+        "file_offset": "0x13e060e8",
+        "group": "access_chain",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "Level",
+        "rva": "0x13e0a0e8",
+        "status": "found",
+        "why": "actor and player lists, tick hook, replay snapshot"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13e0d750; 51 slots; bases: IDimension, LevelListener, SavedData, Bedrock::EnableNonOwnerReferences",
+        "file_offset": "0x13e08ec8",
+        "group": "access_chain",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "Dimension",
+        "rva": "0x13e0cec8",
+        "status": "found",
+        "why": "per-dimension entity iteration, cross-dimension audio filter"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13d6eaf0; 67 slots; bases: none",
+        "file_offset": "0x13d69cc0",
+        "group": "access_chain",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "BlockSource",
+        "rva": "0x13d6dcc0",
+        "status": "found",
+        "why": "block get/set for worldgen and physics overrides"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "access_chain",
+        "how_found": null,
+        "kind": "function",
+        "name": "MinecraftGame::getClientInstance",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['MinecraftGame::getClientInstance', 'MinecraftGame::clientInstance'] match",
+          "vtable slots: MinecraftGame has 316 slots and every one is named MinecraftGame::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getClientInstance' occurs 0 times in the library",
+          "string anchor: 'clientInstance' occurs 0 times in the library"
+        ],
+        "why": "first hop of every access chain"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "access_chain",
+        "how_found": null,
+        "kind": "function",
+        "name": "ClientInstance::getLocalPlayer",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['ClientInstance::getLocalPlayer', 'ClientInstance::getLocalPlayerPtr'] match",
+          "vtable slots: ClientInstance has 436 slots and every one is named ClientInstance::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getLocalPlayer' occurs 0 times in the library",
+          "string anchor: 'getLocalPlayerPtr' occurs 0 times in the library"
+        ],
+        "why": "voice listener, reach indicator"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "access_chain",
+        "how_found": null,
+        "kind": "function",
+        "name": "ClientInstance::getLevel",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['ClientInstance::getLevel', 'ClientInstance::getLevelPtr'] match",
+          "vtable slots: ClientInstance has 436 slots and every one is named ClientInstance::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getLevel' occurs 4 times in the library",
+          "string anchor: 'getLevelPtr' occurs 0 times in the library"
+        ],
+        "why": "second hop to the world"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "access_chain",
+        "how_found": null,
+        "kind": "function",
+        "name": "ClientInstance::getMinecraftGame",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['ClientInstance::getMinecraftGame'] match",
+          "vtable slots: ClientInstance has 436 slots and every one is named ClientInstance::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getMinecraftGame' occurs 0 times in the library"
+        ],
+        "why": "back-pointer used by several mods"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "access_chain",
+        "how_found": null,
+        "kind": "function",
+        "name": "Level::getDimension",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Level::getDimension', 'Level::getDimensionConst'] match",
+          "vtable slots: Level has 413 slots and every one is named Level::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getDimension' occurs 12 times in the library",
+          "string anchor: 'getDimensionConst' occurs 0 times in the library"
+        ],
+        "why": "dimension of the local player"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "access_chain",
+        "how_found": null,
+        "kind": "function",
+        "name": "Dimension::getBlockSource",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Dimension::getBlockSource', 'Dimension::getBlockSourceFromMainChunkSource'] match",
+          "vtable slots: Dimension has 51 slots and every one is named Dimension::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getBlockSource' occurs 0 times in the library",
+          "string anchor: 'getBlockSourceFromMainChunkSource' occurs 0 times in the library"
+        ],
+        "why": "block access for worldgen and physics"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "access_chain",
+        "how_found": null,
+        "kind": "function",
+        "name": "Level::getBlockSource",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Level::getBlockSource'] match",
+          "vtable slots: Level has 413 slots and every one is named Level::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getBlockSource' occurs 0 times in the library"
+        ],
+        "why": "block access from the level"
+      }
+    ],
+    "ecs": [
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13f3a600; 11 slots; bases: none",
+        "file_offset": "0x13f365b0",
+        "group": "ecs",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "ITickingSystem",
+        "rva": "0x13f3a5b0",
+        "status": "found",
+        "why": "base of every ECS ticking system"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13791e28; 14 slots; bases: none",
+        "file_offset": "0x1378ddc0",
+        "group": "ecs",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "StrictTickingSystemFunctionAdapter",
+        "rva": "0x13791dc0",
+        "status": "found",
+        "why": "adapts a free function into a system; its mangled name lists the components"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13ccb620; 16 slots; bases: none",
+        "file_offset": "0x13cc75b8",
+        "group": "ecs",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "EntityComponentDefinition",
+        "rva": "0x13ccb5b8",
+        "status": "found",
+        "why": "component schema, proves the component model"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13d06208; 2 slots; bases: none",
+        "file_offset": "0x13d02238",
+        "group": "ecs",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "EntityComponentFactoryJson",
+        "rva": "0x13d06238",
+        "status": "found",
+        "why": "component serialisation"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x13854f80; 7 slots; bases: none",
+        "file_offset": "0x13850f60",
+        "group": "ecs",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "BlockComponentStorage",
+        "rva": "0x13854f60",
+        "status": "found",
+        "why": "per-block ECS storage"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x1376b880; 14 slots; bases: entt::basic_sparse_set",
+        "file_offset": "0x13767818",
+        "group": "ecs",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "entt::basic_storage",
+        "rva": "0x1376b818",
+        "status": "found",
+        "why": "the pool template behind every component array"
+      },
+      {
+        "confidence": "certain",
+        "evidence": "class name from type_info at 0x1376f5f8; 14 slots; bases: none",
+        "file_offset": "0x1376b608",
+        "group": "ecs",
+        "how_found": "RTTI: Itanium type_info name in .data.rel.ro, vtable located through the .rela.dyn R_AARCH64_RELATIVE entries that point at its type_info slot",
+        "kind": "class_vtable",
+        "name": "entt::basic_sparse_set",
+        "rva": "0x1376f608",
+        "status": "found",
+        "why": "entity to slot mapping"
+      }
+    ],
+    "entity_list": [
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "Level::getRuntimeActorList",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Level::getRuntimeActorList', 'Level::getRuntimeActorListConst'] match",
+          "vtable slots: Level has 413 slots and every one is named Level::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getRuntimeActorList' occurs 0 times in the library",
+          "string anchor: 'getRuntimeActorListConst' occurs 0 times in the library"
+        ],
+        "why": "iterate every entity for ESP, voice emitters, replay"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "Level::forEachPlayer",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Level::forEachPlayer', 'Level::forEachPlayerConst'] match",
+          "vtable slots: Level has 413 slots and every one is named Level::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'forEachPlayer' occurs 2 times in the library",
+          "string anchor: 'forEachPlayerConst' occurs 0 times in the library"
+        ],
+        "why": "player list for mic icons and name plates"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "Level::forEachActor",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Level::forEachActor'] match",
+          "vtable slots: Level has 413 slots and every one is named Level::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'forEachActor' occurs 0 times in the library"
+        ],
+        "why": "entity iteration with a predicate"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "Level::getPlayerList",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Level::getPlayerList', 'Level::getUsers', 'Level::getPlayerListConst'] match",
+          "vtable slots: Level has 413 slots and every one is named Level::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getPlayerList' occurs 0 times in the library",
+          "string anchor: 'getUsers' occurs 0 times in the library",
+          "string anchor: 'getPlayerListConst' occurs 0 times in the library"
+        ],
+        "why": "player list container, needed for names and XUIDs"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "Level::fetchEntity",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Level::fetchEntity', 'Level::getRuntimeEntity'] match",
+          "vtable slots: Level has 413 slots and every one is named Level::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'fetchEntity' occurs 0 times in the library",
+          "string anchor: 'getRuntimeEntity' occurs 0 times in the library"
+        ],
+        "why": "runtime id to Actor* for hit prediction"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "Level::getActorByUniqueID",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Level::getActorByUniqueID', 'Level::getEntityByUniqueId'] match",
+          "vtable slots: Level has 413 slots and every one is named Level::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'getActorByUniqueID' occurs 0 times in the library",
+          "string anchor: 'getEntityByUniqueId' occurs 0 times in the library"
+        ],
+        "why": "unique id to Actor* for replay and kill effects"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "Dimension::forEachPlayer",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['Dimension::forEachPlayer'] match",
+          "vtable slots: Dimension has 51 slots and every one is named Dimension::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'forEachPlayer' occurs 2 times in the library"
+        ],
+        "why": "players in one dimension, for voice falloff"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "BlockSource::fetchEntities",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['BlockSource::fetchEntities', 'BlockSource::getEntities'] match",
+          "vtable slots: BlockSource has 67 slots and every one is named BlockSource::vfunc_N, so the slot number is known but its meaning is not",
+          "string anchor: 'fetchEntities' occurs 0 times in the library",
+          "string anchor: 'getEntities' occurs 19 times in the library"
+        ],
+        "why": "entities inside an AABB"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "class_vtable",
+        "name": "EntityRegistry",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "RTTI: no class named EntityRegistry among the 6386 classes the engine resolved",
+          "RTTI: no class named entt::basic_registry among the 6386 classes the engine resolved",
+          "string anchor: 'EntityRegistry' occurs 8 times in the library",
+          "string anchor: 'entt::basic_registry' occurs 3 times in the library"
+        ],
+        "why": "ECS registry that owns the component pools"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "class_vtable",
+        "name": "EntityContext",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "RTTI: no class named EntityContext among the 6386 classes the engine resolved",
+          "RTTI: no class named StrictEntityContext among the 6386 classes the engine resolved",
+          "RTTI: no class named entt::entity among the 6386 classes the engine resolved",
+          "string anchor: 'EntityContext' occurs 710 times in the library",
+          "string anchor: 'StrictEntityContext' occurs 658 times in the library",
+          "string anchor: 'entt::entity' occurs 0 times in the library"
+        ],
+        "why": "ECS handle used by every system signature"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "class_vtable",
+        "name": "ActorOwnerComponent",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "RTTI: no class named ActorOwnerComponent among the 6386 classes the engine resolved",
+          "RTTI: no class named ActorOwnerComponentImpl among the 6386 classes the engine resolved",
+          "string anchor: 'ActorOwnerComponent' occurs 271 times in the library",
+          "string anchor: 'ActorOwnerComponentImpl' occurs 0 times in the library"
+        ],
+        "why": "component to Actor* mapping when the build uses ECS"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "class_vtable",
+        "name": "StateVectorComponent",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "RTTI: no class named StateVectorComponent among the 6386 classes the engine resolved",
+          "string anchor: 'StateVectorComponent' occurs 316 times in the library"
+        ],
+        "why": "position and velocity under ECS"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "class_vtable",
+        "name": "AABBShapeComponent",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "RTTI: no class named AABBShapeComponent among the 6386 classes the engine resolved",
+          "RTTI: no class named HitboxComponent among the 6386 classes the engine resolved",
+          "string anchor: 'AABBShapeComponent' occurs 125 times in the library",
+          "string anchor: 'HitboxComponent' occurs 11 times in the library"
+        ],
+        "why": "hitbox under ECS"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "class_vtable",
+        "name": "ActorTypeComponent",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "RTTI: no class named ActorTypeComponent among the 6386 classes the engine resolved",
+          "string anchor: 'ActorTypeComponent' occurs 12 times in the library"
+        ],
+        "why": "entity type id under ECS"
+      },
+      {
+        "confidence": "none",
+        "evidence": null,
+        "file_offset": null,
+        "group": "entity_list",
+        "how_found": null,
+        "kind": "function",
+        "name": "EntityRegistry::each",
+        "rva": null,
+        "status": "missing",
+        "tried": [
+          "symbols: 75720 functions carry a demangled name and none of ['EntityRegistry::each', 'EntityRegistry::view', 'EntityRegistry::on_construct'] match",
+          "vtable slots: no RTTI class named EntityRegistry",
+          "string anchor: 'each' occurs 238 times in the library",
+          "string anchor: 'view' occurs 2038 times in the library",
+          "string anchor: 'on_construct' occurs 4 times in the library"
+        ],
+        "why": "registry iteration entry point"
+      }
+    ]
+  },
+  "library": {
+    "arch": "aarch64",
+    "sha256": "b6ffe00817117b03a518b4c9254dcbbb821ad53f276d179c67021226ca221a80",
+    "size": 342231392
+  },
+  "schemaVersion": 1,
+  "summary": {
+    "by_confidence": {
+      "certain": 13,
+      "none": 22
+    },
+    "found": 13,
+    "missing": 22,
+    "partial": 0,
+    "total": 35
+  },
+  "version": "26.60"
+}
