@@ -4,22 +4,29 @@ Scope: the whole repository, with the real `libminecraftpe.so` from
 `minecraft-26-60.apk` as the reference input. Every number below was produced by
 a command in this document; every finding quotes the code it is about.
 
-Reference run (host, `cargo test --release --test host_shard_measure`):
+Reference run (host, `cargo test --release --test host_shard_measure`), after
+every fix in this document:
 
 ```
-path=/workspace/artifacts/out-shards2/categories-measure
-tableBytes=743730101 onDisk=743730101 rows=901314
-classes=6386 functions=883574 symbols=11354
-coverage: functions=883574 fdes=791952 missing=0 slots=865399
-          truncated=false withoutFileOffset=814
-peak resident: 1110 MB
+path=/workspace/artifacts/out-shards7/categories-measure
+coverage: functions=791952 fdes=791952 missing=0 slots=865399
+          truncated=false withoutFileOffset=0
+classes=6386
+peak resident: 1079 MB
 ```
+
+The first reference run of this audit reported `functions=883574` with
+`withoutFileOffset=814`. Both numbers were wrong and both are explained below:
+91,622 of those rows were vtable slots pointing at data, not code (finding A4),
+and 814 rows had no bytes in the file so their offset was written as `0x0`
+(finding A2). The table now holds exactly one row per FDE, which is the property
+`scripts/verify_library_ground_truth.py` checks against `.eh_frame_hdr`.
 
 | Severity | Count | Fixed here |
 | --- | --- | --- |
-| critical | 3 | 3 |
-| high | 6 | 4 |
-| medium | 7 | 3 |
+| critical | 4 | 4 |
+| high | 8 | 6 |
+| medium | 8 | 3 |
 | low | 4 | 2 |
 
 The rest of this file is grouped as the brief asks: (A) crash and data loss,
@@ -365,6 +372,224 @@ parse).
 **Fix.** `ui/state/InternalFailure.kt` maps `EngineErrorKind` to a reason and a
 `retryable` flag; `ScannerScreen`/`ResultsScreen` show the reason in a
 scrollable, wrapping card and hide Retry for deterministic failures.
+
+---
+
+## G. 26.60 real-library audit (phase E-lite)
+
+Everything here was found by running the pipeline on the owner's library and
+cross-checking the output against the library's own tables. The cross-checks live
+in `scripts/verify_library_ground_truth.py`; the numbers are in
+`docs/CARAMEL_26.60_SURFACE.md`.
+
+### [SEVERITY: critical] A4 — 91,622 "functions" were not code, and 79,366 of them were marked `verified`
+
+`app/src/main/rust/offset_core/src/internal.rs:1255` (before the fix):
+
+```rust
+fn insert_slot_names(names: &mut HashMap<u64, NamedEntry>, classes: &[ClassSlots]) {
+    for class in classes {
+        for group in &class.record.vtable_groups {
+            for slot in &group.slots {
+                if slot.address == 0 {
+                    // An unresolved import has no address to name.
+                    continue;
+                }
+                insert_name(
+                    names,
+                    slot.address,
+                    slot.name.clone(),
+                    "vtable",
+                    ...
+```
+
+The loop walks **every** vtable group. A class with virtual bases or with nested
+vtables owns several groups, and the slots after the function-pointer area hold
+data: a vbase offset, or a pointer to another vtable in `.data.rel.ro`. Every one
+of those was named `Class::vfunc_N` and inserted into the name map, so the write
+loop produced a "function" row at that address. `classify_function` then read the
+bytes at a `.rodata` address and, when they happened to decode as a prologue,
+marked the row `verified`:
+
+```json
+{"name": "RemotePlayer::vfunc_6", "address": "0x2e3bb90", "status": "verified",
+ "prologueKind": "branch_target_landing",
+ "signature": "5F 24 03 D5 A0 ?? ?? ?? 00 ?? ?? ?? A6 ?? ?? ?? 5F 24 03 D5 C0 03 5F D6"}
+```
+
+`0x2e3bb90` is inside `.rodata` (`0x2419f00..0x3785ff4`). Measured on the real
+library:
+
+```
+.rodata        79,366 rows   status "verified"
+.data.rel.ro   11,441 rows   status "suspect"
+no section        815 rows   status "suspect"
+```
+
+**Why it is wrong.** 91,622 of the 883,574 exported rows were not functions. A
+modder hooking `RemotePlayer::vfunc_6` from the export would patch read-only data,
+and 79,366 rows were presented as `verified`, which is exactly the claim the
+project must never make falsely.
+
+**Fix** (`internal.rs:1272`):
+
+```rust
+                // A secondary vtable group holds data as well as code: a
+                // virtual-base group starts with a vbase offset, and a nested
+                // vtable slot points into `.data.rel.ro`. Naming such a slot
+                // creates a "function" at an address that holds no code, and
+                // the prologue check then "verifies" whatever bytes sit there.
+                if !is_executable(map, slot.address) {
+                    continue;
+                }
+```
+
+The slot stays in the class record (`kind: "import"`), so the slot index and the
+pointer remain visible; it just no longer becomes a function.
+
+**Result.** `functions=791952 fdes=791952 withoutFileOffset=0`, and
+`scripts/verify_library_ground_truth.py` reports `outside .text: 0`.
+
+**Test.** `internal::tests::a_slot_pointing_at_data_is_not_named` — a vtable with
+one `.text` slot and one `.rodata` slot; asserts the first is named and the
+second is not. Fails without the guard.
+
+### [SEVERITY: high] A5 — the load base came from the first section, so every `sub_<hex>` name and every `vtableOffset` was shifted by 0x2463f0
+
+`app/src/main/rust/offset_core/src/sections.rs:226` (before the fix):
+
+```rust
+    let image_base = sections
+        .iter()
+        .filter(|section| section.allocated && section.address != 0)
+        .map(|section| section.address)
+        .min()
+        .unwrap_or(0);
+```
+
+The 26.60 library is a normal shared object: its first `PT_LOAD` is at `vaddr 0`,
+and the first *allocated section* is `.gnu.hash` at `0x2463f0`. The header area
+below it is mapped but covered by no section, so the section minimum is not the
+load base:
+
+```
+PT_LOAD off=0x0        vaddr=0x0        filesz=0x136869b0
+PT_LOAD off=0x136869b0 vaddr=0x1368a9b0 filesz=0x97b660
+.gnu.hash addr=0x2463f0   .text addr=0x6834bc0
+```
+
+Two exported quantities are relative to that base, and both were wrong by
+`0x2463f0`:
+
+```rust
+// internal.rs:750
+format!("sub_{:x}", address.saturating_sub(map.image_base))
+// rtti.rs:185
+vtable_offset: vtable.vtable_address.saturating_sub(map.image_base),
+```
+
+**Why it is wrong.** 293,854 functions were named `sub_9a7942c` while their own
+`address` field said `0x9cbf81c`, so a modder pasting the name into IDA landed
+`0x2463f0` bytes away from the function. `Actor` reported
+`vtableOffset = 0x13aaf2e8` for a vtable at `0x13cf56d8`.
+
+**Fix** (`sections.rs:231`): take the base from the lowest `PT_LOAD` `p_vaddr`,
+keeping the section minimum as the fallback for an image without a program header
+table:
+
+```rust
+    let segment_base = match crate::elf::parse_program_headers(image) {
+        Ok(headers) => headers
+            .iter()
+            .filter(|header| header.p_type == goblin::elf::program_header::PT_LOAD)
+            .map(|header| header.p_vaddr)
+            .min(),
+        Err(error) => {
+            log::warn!("cannot read the program headers, using the section base: {error}");
+            None
+        }
+    };
+```
+
+**Result.** `Actor vtable 0x13cf56d8 vtableOffset 0x13cf56d8 fileOffset 0x13cf16d8`;
+`sub_ names matching their own address: 293854/293854`.
+
+**Test.** `tests/image_base_test.rs` — three cases: a segment base of `0` with
+`.text` at `0x6834bc0`, an image without program headers (falls back to the
+section base), and a shared object linked at `0x4000`.
+
+### [SEVERITY: high] B5 — no gameplay method has a name in 26.60, so the access-chain functions cannot be derived by name
+
+Not a defect in the code; a property of the input that the engine must be built
+around. Measured on the real library:
+
+```
+functions 791,952
+  vtable  422,283  Class::vfunc_N   (class known, method not)
+  symbol   75,720  demangled .dynsym/.symtab name
+  jni          95
+  auto    293,854  sub_<rva>
+```
+
+The 75,720 symbol names are `v8` (24,557), `cohtml` (8,732), `webrtc` (7,515),
+`std` (4,094), `Xal` (2,598), `csl` (2,344), `renoir` (2,105), `xbox` (1,779),
+plus C exports — not one method of `Level`, `Player`, `Actor`,
+`ClientInstance`, `MinecraftGame`, `Dimension` or `BlockSource`.
+
+**Consequence.** Every accessor the launcher needs (`getLocalPlayer`,
+`getLevel`, `getRuntimeActorList`, `forEachPlayer`, …) is `missing` in
+`caramel/offsets_26.60.json`, with the three routes that were tried and failed
+recorded per item. Closing them needs slot-meaning derivation from the
+disassembly of each slot (getter shape, member offset, string anchor), not more
+patterns. `docs/CARAMEL_26.60_OFFSETS.md` section 4 gives the manual procedure
+that works today.
+
+### [SEVERITY: medium] D5 — a vtable group loses its mangled name, so 1,406 component storages collapse into one class name
+
+`app/src/main/rust/offset_core/src/rtti.rs` groups vtables by demangled name, and
+`VtableGroup` carries only `offsetToTop`, `address` and `slots`:
+
+```rust
+pub struct VtableGroup {
+    pub offset_to_top: i64,
+    pub address: u64,
+    pub slots: Vec<SlotRecord>,
+}
+```
+
+Template arguments are dropped by the demangler, so `entt::basic_storage<A>`,
+`entt::basic_storage<B>`, … all become `entt::basic_storage`, and the class entry
+records 1,406 groups under that one name. `StrictTickingSystemFunctionAdapter`
+similarly has 643 groups.
+
+**Why it is wrong.** A modder cannot tell which component a given storage belongs
+to, which is the one thing the EnTT census is good for.
+
+**Fix (not applied).** Keep the mangled name per group: add
+`mangled: Option<String>` to `VtableGroup`, filled from the type_info's mangled
+name, and expose it in `ClassRecord.vtableGroups`. Not done in this phase because
+it changes the class wire format and the Kotlin `ClassRecord` model together;
+tracked in `docs/CARAMEL_26.60_SURFACE.md` and in the "what is left" list.
+
+### Findings that were verified correct
+
+Worth recording, because they are the reason the pack can be trusted:
+
+* all 6,386 classes: the relocation at `vtable + 8` has an addend equal to the
+  recorded `typeInfo` (6,386 / 6,386);
+* all 157,188 slots marked `virtual`: the relocation at `vtable + 16 + 8*slot` has
+  an addend equal to the slot address (157,188 / 157,188);
+* every one of the 791,952 FDEs in `.eh_frame_hdr` has exactly one row, and no
+  row exists outside `.text`.
+
+```console
+$ python3 scripts/verify_library_ground_truth.py --library libminecraftpe.so \
+    --output-dir out-shards7/categories-measure
+classes: 6386, type_info slot ok=6386 wrong=0 missing=0
+virtual slots: 157188, ok=157188 wrong=0 missing=0
+functions: 791952, outside .text: 0
+fdes in .eh_frame_hdr: 791952, difference from functions: 0
+```
 
 ---
 
