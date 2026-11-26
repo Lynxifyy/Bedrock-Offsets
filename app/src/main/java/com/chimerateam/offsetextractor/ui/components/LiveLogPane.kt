@@ -1,5 +1,10 @@
 package com.chimerateam.offsetextractor.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,27 +20,26 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.foundation.layout.height
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -49,7 +53,12 @@ import com.chimerateam.offsetextractor.ui.log.LogPalette
 import com.chimerateam.offsetextractor.ui.log.Logs
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.MonoText
+import com.chimerateam.offsetextractor.ui.theme.LocalReduceMotion
+import com.chimerateam.offsetextractor.ui.theme.MotionDuration
+import com.chimerateam.offsetextractor.ui.theme.MotionEasing
 import com.chimerateam.offsetextractor.ui.theme.PanelCorner
+import com.chimerateam.offsetextractor.ui.theme.motionTween
+import kotlinx.coroutines.launch
 
 /**
  * Scrolling view of engine and UI messages.
@@ -70,6 +79,9 @@ import com.chimerateam.offsetextractor.ui.theme.PanelCorner
 /** Test tag of the log's expand and collapse control. */
 const val LIVE_LOG_TOGGLE_TAG = "live-log-toggle"
 
+/** Test tag of the chip that returns to the newest line. */
+const val LIVE_LOG_JUMP_TAG = "live-log-jump"
+
 @Composable
 fun LiveLogPane(
     entries: List<LogEntry>,
@@ -81,13 +93,18 @@ fun LiveLogPane(
     onToggle: (() -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val reduceMotion = LocalReduceMotion.current
 
     // Following is derived from the scroll position rather than stored, so a
-    // rotation or a recomposition cannot desynchronise the two.
+    // rotation or a recomposition cannot desynchronise the two. "At the bottom"
+    // is the last item being *visible*, not first: in a long list the last item
+    // can never be the first one, so comparing firstVisibleItemIndex pinned the
+    // pane to "not following" for every real log.
     val following by remember {
         derivedStateOf {
             val last = listState.layoutInfo.totalItemsCount - 1
-            last <= 0 || listState.firstVisibleItemIndex >= last
+            last <= 0 || listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index == last
         }
     }
 
@@ -168,6 +185,64 @@ fun LiveLogPane(
                         LogLine(entry)
                     }
                 }
+                // Following stops as soon as the user scrolls up, so the way
+                // back has to be visible rather than a gesture they must know.
+                JumpToLatestChip(
+                    visible = !following && entries.isNotEmpty(),
+                    reduceMotion = reduceMotion,
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                    onClick = {
+                        scope.launch { listState.animateScrollToItem(entries.lastIndex) }
+                    }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The chip that returns the pane to the newest line.
+ *
+ * @param visible whether the user has scrolled away from the newest line.
+ * @param reduceMotion whether animations collapse to a snap.
+ * @param modifier layout modifier, used to align the chip.
+ * @param onClick scrolls back to the end.
+ */
+@Composable
+private fun JumpToLatestChip(
+    visible: Boolean,
+    reduceMotion: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = fadeIn(
+            motionTween(MotionDuration.Short, MotionEasing.Decelerate, reduceMotion)
+        ) + scaleIn(
+            motionTween(MotionDuration.Short, MotionEasing.Decelerate, reduceMotion),
+            initialScale = 0.9f
+        ),
+        exit = fadeOut(
+            motionTween(MotionDuration.Short, MotionEasing.Accelerate, reduceMotion)
+        ) + scaleOut(
+            motionTween(MotionDuration.Short, MotionEasing.Accelerate, reduceMotion),
+            targetScale = 0.9f
+        )
+    ) {
+        Surface(
+            shape = RoundedCornerShape(PanelCorner),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            tonalElevation = 2.dp
+        ) {
+            TextButton(onClick = onClick, modifier = Modifier.testTag(LIVE_LOG_JUMP_TAG)) {
+                Icon(
+                    imageVector = Icons.Filled.ArrowDownward,
+                    contentDescription = null,
+                    modifier = Modifier.height(16.dp)
+                )
+                Text("Jump to latest", style = MaterialTheme.typography.labelLarge)
             }
         }
     }

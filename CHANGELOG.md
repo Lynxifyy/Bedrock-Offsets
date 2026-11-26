@@ -10,6 +10,8 @@
 - move Copy, Share and Save JNI into one overflow menu so the pinned bar leaves the card room, and keep the progress pill clear of the navigation bar and the action row
 - translate every export failure into one plain sentence, with the technical text kept in the log
 - cap the in-memory log at 2,000 lines; every line is also appended to `cacheDir/logs/live.log` (trimmed to its newest 4 MB), and Copy uses that file so the start of a run survives the cap
+- the live log now follows the newest line: "at the bottom" is the last item being visible, not the last item being first, so a real log was never followed and a "Jump to latest" chip now appears once the user scrolls up
+- the vtable pass logs one summary line instead of one line per class
 - the result, the log lines and the export job now carry one scan identifier: a new scan stamps its lines, empties the pane and the file, and clears the result, so a result can never be shown beside another scan's log
 - report a vtable slot cap in the internal summary instead of truncating silently
 

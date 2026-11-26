@@ -1,8 +1,11 @@
 package com.chimerateam.offsetextractor.ui.components
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogLevel
@@ -78,5 +81,31 @@ class LiveLogPaneTest {
         composeTestRule.onNodeWithContentDescription("Clear log").performClick()
         assertEquals(1, copies)
         assertEquals(1, clears)
+    }
+
+    @Test
+    fun theJumpChipAppearsOnlyAfterTheUserScrollsUp() {
+        val many = (0 until 400).map {
+            LogEntry(it.toLong(), LogLevel.Info, "RUST", "line $it")
+        }
+        composeTestRule.setContent {
+            BedrockOffsetExtractorTheme {
+                LiveLogPane(entries = many, onCopyLog = {}, onClearLog = {})
+            }
+        }
+
+        composeTestRule.onNodeWithTag(LIVE_LOG_JUMP_TAG).assertDoesNotExist()
+
+        composeTestRule.onNode(hasScrollAction()).performScrollToIndex(0)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag(LIVE_LOG_JUMP_TAG).assertExists()
+        composeTestRule.onNodeWithTag(LIVE_LOG_JUMP_TAG).performClick()
+        composeTestRule.waitForIdle()
+        // The chip fades out; let the exit animation finish before asserting.
+        composeTestRule.mainClock.advanceTimeBy(500)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag(LIVE_LOG_JUMP_TAG).assertDoesNotExist()
     }
 }

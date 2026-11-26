@@ -68,7 +68,6 @@ private const val TAG_UI = "UI"
 private const val TAG_RUST = "RUST"
 
 /** Number of resolved vtables written to the live log. */
-private const val MAX_LOGGED_VTABLES = 10
 
 /**
  * Number of entries retained in the log pane.
@@ -1439,20 +1438,15 @@ class MainViewModel(
         if (map.isEmpty) {
             emit(Logs.info(TAG_RUST, "No RTTI vtables present in this library."))
         } else {
+            // One line for the whole pass: thousands of per-class lines pushed
+            // the interesting ones out of the pane and cost a recomposition
+            // each. The map itself is in the result and in the archive.
             emit(
                 Logs.info(
                     TAG_RUST,
                     "Resolved ${map.size} RTTI vtables from ${map.source}."
                 )
             )
-            map.entries.values.take(MAX_LOGGED_VTABLES).forEach { vtable ->
-                emit(
-                    Logs.info(
-                        TAG_RUST,
-                        "Resolved ${vtable.name} vtable at ${vtable.vtableHex}"
-                    )
-                )
-            }
         }
         VtableResolution(map, null)
     } catch (cancelled: CancellationException) {
