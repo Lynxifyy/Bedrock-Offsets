@@ -55,7 +55,8 @@ with vtable groups.
 | `:app:testDebugUnitTest` | 325 tests, 0 failures |
 | `scripts/coverage_report.py --self-test` | ok, fixture with known answers |
 | Device run (cloud phone, Android 14) | fixture library scanned: 662 functions, 89 classes, 317 named, 305 unique signatures, export zip 61 KB written and re-parsed by `coverage_report.py` |
-| Device export coverage | overall 81/662 named (12.24 %), gameplay 34/606 (5.61 %), third party 47/56 (83.93 %), 89 class rows for 89 groups |
+| Device export coverage, pre.1 build | overall 81/662 named (12.24 %), gameplay 34/606 (5.61 %), third party 47/56 (83.93 %), 305 of 307 signatures unique, 89 class rows for 89 groups |
+| Device export coverage, 1.1.0-pre.2 release build | overall **82/662 named (12.39 %)**, 307 of 307 signatures unique, 89 class rows for 89 groups — the one new name is the `Level::tick()::$_0` lambda body, and the two colliding signatures were separated by the 512-byte reach |
 
 The fixture is a 451 KB library built for this test, not Minecraft, so its
 percentages say nothing about 26.60. They do show the pipeline end to end: the
