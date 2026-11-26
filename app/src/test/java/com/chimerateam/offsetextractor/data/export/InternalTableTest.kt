@@ -21,7 +21,11 @@ class InternalTableTest {
         functions: Int = 3,
         dataSymbols: Int = 1,
         tableBytes: Long = 0,
-        resolved: Boolean = true
+        resolved: Boolean = true,
+        engineVersion: String = "",
+        imageBase: Long = 0,
+        scanEngine: String = "",
+        scanBase: Long = 0
     ) = ScanResultSummary(
         displayName = "minecraft.apk",
         sha256 = "abc",
@@ -34,9 +38,13 @@ class InternalTableTest {
             functions = functions,
             dataSymbols = dataSymbols,
             path = path,
-            tableBytes = tableBytes
+            tableBytes = tableBytes,
+            engineVersion = engineVersion,
+            imageBase = imageBase
         ),
-        internalResolved = resolved
+        internalResolved = resolved,
+        engineVersion = scanEngine,
+        imageBase = scanBase
     )
 
     private fun table(content: String = "{}\n"): File =
@@ -116,5 +124,64 @@ class InternalTableTest {
         val problem = InternalTable.problem(summary(""))
 
         assertTrue("a blank path must be named: $problem", problem?.contains("no path") == true)
+    }
+
+    @Test
+    fun aTableWrittenByAnotherBaseIsRejected() {
+        // The 26.60 bug: the table's `sub_<hex>` names and vtable offsets came
+        // from a base 0x2463f0 too high. A table that records a different base
+        // than the scan must not be exported as if it matched.
+        val file = table()
+        val summary = summary(
+            file.absolutePath,
+            engineVersion = "1.0.12",
+            imageBase = 0x2463f0,
+            scanEngine = "1.0.12",
+            scanBase = 0
+        )
+
+        val problem = InternalTable.problem(summary)
+
+        assertTrue("expected a stale-table problem, got $problem", problem != null)
+        assertTrue(problem!!.contains("written by engine"))
+    }
+
+    @Test
+    fun aTableWrittenByAnotherEngineIsRejected() {
+        val file = table()
+        val summary = summary(
+            file.absolutePath,
+            engineVersion = "1.0.11",
+            imageBase = 0,
+            scanEngine = "1.0.12",
+            scanBase = 0
+        )
+
+        assertTrue(InternalTable.problem(summary) != null)
+    }
+
+    @Test
+    fun aTableThatAgreesWithTheScanIsAccepted() {
+        val file = table()
+        val summary = summary(
+            file.absolutePath,
+            engineVersion = "1.0.12",
+            imageBase = 0,
+            scanEngine = "1.0.12",
+            scanBase = 0
+        )
+
+        assertNull(InternalTable.problem(summary))
+    }
+
+    @Test
+    fun aTableWithoutRecordedIdentityIsStillAccepted() {
+        // A table from an engine predating the fields deserialises with them
+        // empty; the row-count checks still apply, so it is not silently trusted
+        // beyond what the old engine could have produced.
+        val file = table()
+        val summary = summary(file.absolutePath, scanEngine = "1.0.12", scanBase = 0x2463f0)
+
+        assertNull(InternalTable.problem(summary))
     }
 }

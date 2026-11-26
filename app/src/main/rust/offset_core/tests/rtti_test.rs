@@ -512,6 +512,47 @@ fn the_vtable_address_is_consistent_with_the_image_base() {
     assert_eq!(entry.vtable_offset, entry.vtable_address - TEXT_ADDRESS);
 }
 
+/// Adds one `PT_LOAD` covering the image at `load_base`.
+///
+/// A real Android library keeps the ELF header inside its first segment, so the
+/// first segment starts at file offset 0 and its address is below every
+/// section: the 26.60 library has `PT_LOAD vaddr=0x0` while its first allocated
+/// section (`.gnu.hash`) is at `0x2463f0`.
+fn with_load_base(mut image: Vec<u8>, load_base: u64) -> Vec<u8> {
+    const PT_LOAD: u32 = 1;
+    const PF_R: u32 = 4;
+    let phoff = EHDR_BYTES;
+    let total = image.len() as u64;
+    image[phoff..phoff + 4].copy_from_slice(&PT_LOAD.to_le_bytes());
+    image[phoff + 4..phoff + 8].copy_from_slice(&PF_R.to_le_bytes());
+    image[phoff + 8..phoff + 16].copy_from_slice(&0u64.to_le_bytes()); // p_offset
+    image[phoff + 16..phoff + 24].copy_from_slice(&load_base.to_le_bytes()); // p_vaddr
+    image[phoff + 24..phoff + 32].copy_from_slice(&load_base.to_le_bytes()); // p_paddr
+    image[phoff + 32..phoff + 40].copy_from_slice(&total.to_le_bytes()); // p_filesz
+    image[phoff + 40..phoff + 48].copy_from_slice(&total.to_le_bytes()); // p_memsz
+    image[phoff + 48..phoff + 56].copy_from_slice(&0x1000u64.to_le_bytes()); // p_align
+    image[32..40].copy_from_slice(&(phoff as u64).to_le_bytes()); // e_phoff
+    image[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
+    image[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+    image
+}
+
+#[test]
+fn the_vtable_offset_is_measured_from_the_load_base_not_the_first_section() {
+    // Base 0 is the 26.60 shape: the segment starts below `.text`, so the vtable
+    // offset equals the address. Measuring from `.text` (`0x1000`) shipped
+    // offsets that were 0x2463f0 short on the real library.
+    let image = with_load_base(image_with_client_instance(), 0);
+    let map = resolve_vtables(&image).expect("resolve vtables");
+    let entry = map.get("ClientInstance").expect("ClientInstance");
+
+    assert_eq!(entry.vtable_address, VTABLE_ADDRESS);
+    assert_eq!(
+        entry.vtable_offset, VTABLE_ADDRESS,
+        "the offset must be measured from the PT_LOAD base"
+    );
+}
+
 #[test]
 fn the_relocation_table_is_used_when_present() {
     let image = image_with_client_instance();

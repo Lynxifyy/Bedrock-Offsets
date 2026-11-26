@@ -89,7 +89,11 @@ enum class ScannerPhase {
  * @property entryPoint entry point of the mapped library.
  * @property sectionCount number of section headers in the mapped library.
  * @property textSection the executable section, or `null` when unreadable.
- * @property imageBase lowest load address of any allocated section.
+ * @property imageBase load base: the lowest `PT_LOAD` address, which is the
+ *   base every RVA (`sub_<hex>`, `vtableOffset`, exported JNI offset) is
+ *   measured from. Zero for the 26.60 library.
+ * @property engineVersion version of the native engine that produced the
+ *   result, part of the cache key together with [imageBase].
  * @property buildId build identifier of the library, used as the cache key.
  * @property buildIdSource where the identifier came from.
  * @property jniSymbolCount number of `Java_` symbols exported by the library.
@@ -134,6 +138,7 @@ data class ScanResultSummary(
     val apkSizeBytes: Long = 0,
     val apkVersion: String = "",
     val imageBase: Long = 0,
+    val engineVersion: String = "",
     val jni: JniReport? = null
 ) {
     /**

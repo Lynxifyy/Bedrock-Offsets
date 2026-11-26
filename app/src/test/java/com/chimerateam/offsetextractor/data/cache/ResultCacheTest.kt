@@ -100,7 +100,7 @@ class ResultCacheTest {
         val store = ResultCache(ScanCache(cacheDir))
 
         assertTrue(store.store(summary))
-        val loaded = store.load(summary.buildId)
+        val loaded = store.load(summary.buildId, summary.engineVersion, summary.imageBase)
 
         assertNotNull(loaded)
         assertEquals(summary.buildId, loaded?.buildId)
@@ -122,7 +122,44 @@ class ResultCacheTest {
     fun anUnknownBuildIdIsAMiss() {
         val store = ResultCache(ScanCache(cacheDir))
 
-        assertNull(store.load("nothing-here"))
+        assertNull(store.load("nothing-here", "1.0.12", 0))
+    }
+
+    @Test
+    fun aResultIsNotReusedWhenTheLoadBaseChanges() {
+        // The 26.60 fix moved the base from the first allocated section
+        // (0x2463f0) to the first PT_LOAD (0). A device that cached a scan
+        // before that fix would otherwise keep serving the shifted offsets.
+        val store = ResultCache(ScanCache(cacheDir))
+        assertTrue(store.store(summary.copy(imageBase = 0)))
+
+        assertNull(
+            "an entry derived from another base must be a miss",
+            store.load(summary.buildId, summary.engineVersion, 0x2463f0)
+        )
+        assertNotNull(store.load(summary.buildId, summary.engineVersion, 0))
+    }
+
+    @Test
+    fun aResultIsNotReusedByAnotherEngineVersion() {
+        val store = ResultCache(ScanCache(cacheDir))
+        assertTrue(store.store(summary.copy(engineVersion = "1.0.12")))
+
+        assertNull(store.load(summary.buildId, "1.0.13", summary.imageBase))
+        assertNotNull(store.load(summary.buildId, "1.0.12", summary.imageBase))
+    }
+
+    @Test
+    fun theCacheKeyCarriesBuildEngineAndBase() {
+        val key = ResultCache.keyFor("410ac215", "1.0.12", 0)
+
+        assertEquals("410ac215-e1_0_12-b0", key)
+        assertEquals(
+            "different engines must not collide",
+            false,
+            ResultCache.keyFor("410ac215", "1.0.12", 0) ==
+                ResultCache.keyFor("410ac215", "10.1.2", 0)
+        )
     }
 
     @Test
@@ -130,33 +167,42 @@ class ResultCacheTest {
         val store = ResultCache(ScanCache(cacheDir))
 
         assertTrue(!store.store(summary.copy(buildId = "")))
-        assertNull(store.load(""))
+        assertNull(store.load("", "", 0))
     }
 
     @Test
     fun aCorruptDocumentIsAMiss() {
         val scanCache = ScanCache(cacheDir)
-        scanCache.writeDocument("id", "{ not json")
+        scanCache.writeDocument(ResultCache.keyFor("id", "1.0.12", 0), "{ not json")
         val store = ResultCache(scanCache)
 
-        assertNull(store.load("id"))
+        assertNull(store.load("id", "1.0.12", 0))
     }
 
     @Test
     fun aDocumentStoredForAnotherBuildIsAMiss() {
         val scanCache = ScanCache(cacheDir)
-        scanCache.writeDocument("id", """{"schemaVersion":1,"summary":{"buildId":"other"}}""")
+        scanCache.writeDocument(
+            ResultCache.keyFor("id", "1.0.12", 0),
+            """{"schemaVersion":1,"summary":{"buildId":"other"}}"""
+        )
         val store = ResultCache(scanCache)
 
-        assertNull(store.load("id"))
+        assertNull(store.load("id", "1.0.12", 0))
     }
 
     @Test
     fun anOlderSchemaVersionIsAMiss() {
         val scanCache = ScanCache(cacheDir)
-        scanCache.writeDocument("id", """{"schemaVersion":0,"summary":{"buildId":"id"}}""")
+        scanCache.writeDocument(
+            ResultCache.keyFor("id", "1.0.12", 0),
+            """{"schemaVersion":0,"summary":{"buildId":"id"}}"""
+        )
         val store = ResultCache(scanCache)
 
-        assertNull("an outdated entry must force a rescan", store.load("id"))
+        assertNull(
+            "an outdated entry must force a rescan",
+            store.load("id", "1.0.12", 0)
+        )
     }
 }

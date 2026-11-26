@@ -87,6 +87,8 @@ class OffsetZipShardTest {
             sectionCount = 33,
             buildId = "deadbeef",
             apkVersion = "26.60.3",
+            imageBase = 0,
+            engineVersion = "0.1.0+2",
             internal = InternalSummary(
                 classes = shards.sumOf { it.classes },
                 vtableSlots = 1,
@@ -233,6 +235,28 @@ class OffsetZipShardTest {
             val completeness = manifest.getAsJsonObject("completeness")
             assertEquals(3, completeness.get("expectedRows").asInt)
             assertTrue(completeness.get("complete").asBoolean)
+            // Without the base the archive cannot be told apart from one whose
+            // `vtableOffset` and `sub_` names were shifted.
+            assertEquals("0x0", manifest.get("imageBase").asString)
+            assertEquals("0.1.0+2", manifest.get("engineVersion").asString)
+        }
+    }
+
+    @Test
+    fun theManifestRecordsANonZeroBase() {
+        val dir = createTempDirectory("shards-").toFile()
+        val shards = listOf(shard(dir, "block_placement", functions = 1, classes = 0))
+        val summary = summary(shards, mapOf("Block" to "block_placement"))
+            .copy(imageBase = 0x4000)
+        val target = File(createTempDirectory("zip-").toFile(), "BEDROCK_OFFSETS_26.60.3.zip")
+
+        OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile()).build(summary, target)
+
+        ZipFile(target).use { zip ->
+            val manifest = zip.getInputStream(zip.getEntry("manifest.json"))
+                .bufferedReader()
+                .use { JsonParser.parseReader(it).asJsonObject }
+            assertEquals("0x4000", manifest.get("imageBase").asString)
         }
     }
 

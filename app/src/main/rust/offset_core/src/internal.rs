@@ -122,6 +122,17 @@ fn default_resolve() -> String {
     "self".to_string()
 }
 
+/// Name for a function the engine cannot identify: its RVA from the load base.
+///
+/// The name has to agree with the row's own `address` field, or a modder who
+/// pastes `sub_9cbf81c` into a disassembler lands somewhere else. Both are
+/// derived from [`SectionMap::image_base`], which is the lowest `PT_LOAD`
+/// address — not the lowest allocated section, which sits above the header area
+/// (`.gnu.hash` at 0x2463f0 in the 26.60 library).
+fn auto_name(address: u64, image_base: u64) -> String {
+    format!("sub_{:x}", address.saturating_sub(image_base))
+}
+
 /// Counts and the path of the streamed table.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -179,6 +190,20 @@ pub struct InternalSummary {
     /// Completeness counts: functions against FDEs, and every cap.
     #[serde(default)]
     pub coverage: InternalCoverage,
+    /// Engine version that wrote the table.
+    ///
+    /// A table written by another engine is not reusable: names, `fileOffset`
+    /// presence and the load base can all differ, so the reader compares this
+    /// against the engine that would consume it.
+    #[serde(default)]
+    pub engine_version: String,
+    /// Load base the addresses in the table are relative to.
+    ///
+    /// Every `sub_<hex>` name and every `vtableOffset` is derived from it, so a
+    /// reader that computes an RVA with a different base is off by the
+    /// difference — the 0x2463f0 shift this field now makes detectable.
+    #[serde(default)]
+    pub image_base: u64,
 }
 
 /// How complete the internal half of a scan is.
@@ -669,6 +694,8 @@ pub fn analyze_with_writer(
         truncated_slots: !truncated_slot_names.is_empty(),
         truncated_slot_classes: truncated_slot_names.len(),
         truncated_slot_names,
+        engine_version: crate::engine_version(),
+        image_base: map.image_base,
         ..Default::default()
     };
     stats.coverage = InternalCoverage {
@@ -747,7 +774,7 @@ pub fn analyze_with_writer(
                 )
             }
             None => (
-                format!("sub_{:x}", address.saturating_sub(map.image_base)),
+                auto_name(*address, map.image_base),
                 "auto",
                 Vec::new(),
                 "function",
@@ -2803,6 +2830,17 @@ mod tests {
     /// layout: `.data.rel.ro` starts 0x4000 after its file offset in the real
     /// 26.60 library. A class record must carry the real file offset too, or a
     /// consumer patching at `vtableOffset` writes into the wrong place.
+    #[test]
+    fn the_auto_name_is_the_rva_from_the_load_base() {
+        // A non-zero load base: the name must be `address - base`, which is what
+        // the row's own `address` field lets a reader reconstruct. Deriving it
+        // from the first allocated section instead shifted all 293,854 such
+        // names in the 26.60 library by 0x2463f0.
+        assert_eq!(auto_name(0x1389f8a8, 0x10000), "sub_1388f8a8");
+        assert_eq!(auto_name(0x10000, 0x10000), "sub_0");
+        assert_eq!(auto_name(0x400000, 0), "sub_400000");
+    }
+
     #[test]
     fn a_class_carries_a_file_offset_not_only_the_image_base_offset() {
         let text = section(".text", 0x1000, 0x1000, 0x1000, true);

@@ -18,7 +18,7 @@ class ResultCache(private val cache: ScanCache) {
     private val gson: Gson = GsonBuilder().disableHtmlEscaping().create()
 
     /**
-     * Stores [summary] under its build identifier.
+     * Stores [summary] under its [keyFor] key.
      *
      * @param summary the completed scan.
      * @return whether the summary was stored.
@@ -29,17 +29,27 @@ class ResultCache(private val cache: ScanCache) {
             schemaVersion = SCHEMA_VERSION,
             summary = summary
         )
-        return cache.writeDocument(summary.buildId, gson.toJson(envelope))
+        val key = keyFor(summary.buildId, summary.engineVersion, summary.imageBase)
+        return cache.writeDocument(key, gson.toJson(envelope))
     }
 
     /**
-     * Reads the summary stored for [buildId].
+     * Reads the summary stored for [buildId] by [engineVersion] at [imageBase].
+     *
+     * The key carries all three: a cached document from another engine, or one
+     * whose addresses were derived from a different load base, is a miss and the
+     * library is scanned again. Without the base the fix for the 0x2463f0 shift
+     * would never reach a device that had already cached a scan, and without the
+     * version a later naming change would be invisible for the same reason.
      *
      * @param buildId build identifier of the library.
+     * @param engineVersion version of the engine that would consume the entry.
+     * @param imageBase load base the caller will compute offsets against.
      * @return the stored summary, or `null` when there is no usable entry.
      */
-    fun load(buildId: String): ScanResultSummary? {
-        val text = cache.readDocument(buildId) ?: return null
+    fun load(buildId: String, engineVersion: String, imageBase: Long): ScanResultSummary? {
+        if (buildId.isBlank()) return null
+        val text = cache.readDocument(keyFor(buildId, engineVersion, imageBase)) ?: return null
         val envelope = try {
             gson.fromJson(text, Envelope::class.java)
         } catch (malformed: JsonParseException) {
@@ -60,8 +70,29 @@ class ResultCache(private val cache: ScanCache) {
         val summary: ScanResultSummary?
     )
 
-    private companion object {
-        /** Bumped whenever [ScanResultSummary] gains a field a hit must carry. */
-        const val SCHEMA_VERSION = 3
+    companion object {
+        /**
+         * Bumped whenever [ScanResultSummary] gains a field a hit must carry.
+         *
+         * 4: the summary gained `engineVersion`, and the internal class record
+         * gained a nullable file offset.
+         */
+        private const val SCHEMA_VERSION = 4
+
+        /**
+         * Cache key for a scan: build identifier, engine version and load base.
+         *
+         * `ScanCache.documentFileName` keeps only letters, digits, `-` and `_`,
+         * so the version's dots become underscores to keep the fields apart.
+         *
+         * @param buildId build identifier of the library.
+         * @param engineVersion version of the engine that produced the scan.
+         * @param imageBase load base the addresses were derived from.
+         * @return the key, never blank.
+         */
+        fun keyFor(buildId: String, engineVersion: String, imageBase: Long): String {
+            val engine = engineVersion.ifBlank { "unknown" }.replace('.', '_')
+            return "$buildId-e$engine-b${imageBase.toString(16)}"
+        }
     }
 }

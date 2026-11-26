@@ -1084,9 +1084,13 @@ class MainViewModel(
      * it would make every later scan of the same build reuse the failure and
      * never retry.
      */
-    private fun cachedResultFor(buildId: String): ScanResultSummary? {
+    private fun cachedResultFor(
+        buildId: String,
+        engineVersion: String,
+        imageBase: Long
+    ): ScanResultSummary? {
         if (_forceRescan.value) return null
-        val cached = resultCache?.load(buildId) ?: return null
+        val cached = resultCache?.load(buildId, engineVersion, imageBase) ?: return null
         // Part 1 is the expensive half and it is usable on its own, so a cache
         // entry is accepted as soon as the signatures and vtables are there.
         // A missing Part 2 is not "the cache is incomplete": the caller
@@ -1287,7 +1291,11 @@ class MainViewModel(
             val jniSymbols = symbols.symbols.jni.size
             emit(Logs.info(TAG_RUST, "Symbols: $definedSymbols defined, $jniSymbols JNI exports"))
 
-            val cached = cachedResultFor(symbols.identity.buildId)
+            val cached = cachedResultFor(
+                symbols.identity.buildId,
+                sections.engineVersion,
+                sections.imageBase
+            )
             if (cached != null && cached.internalResolved) {
                 emit(Logs.info(TAG_CACHE, "Loaded offsets from previous scan."))
                 _uiState.update {
@@ -1367,6 +1375,7 @@ class MainViewModel(
                 apkSizeBytes = source.metadata.sizeBytes,
                 apkVersion = lastApkVersion,
                 imageBase = sections.imageBase,
+                engineVersion = sections.engineVersion,
                 jni = resumed?.jni ?: scan?.jni
             )
 

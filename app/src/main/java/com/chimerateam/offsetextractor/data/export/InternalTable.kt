@@ -91,6 +91,19 @@ object InternalTable {
      */
     fun require(summary: ScanResultSummary): InternalTableFile? {
         val internal = summary.internal
+        if (internal != null && internal.engineVersion.isNotEmpty() &&
+            !internal.isFrom(summary.engineVersion, summary.imageBase)
+        ) {
+            // A table written by another engine, or against another load base,
+            // carries `sub_<hex>` names and vtable offsets that disagree with
+            // this scan's image base. Reusing it is exactly the 0x2463f0 shift.
+            throw InternalTableMissingException(
+                "The internal offsets were written by engine " + internal.engineVersion +
+                    " at base 0x" + internal.imageBase.toString(16) + " but this scan is " +
+                    summary.engineVersion + " at base 0x" + summary.imageBase.toString(16) +
+                    ". Re-run the internal extraction."
+            )
+        }
         val rows = expectedRows(summary)
         if (rows == 0) {
             if (summary.internalResolved) {

@@ -48,12 +48,16 @@ data class SectionInfo(
 /**
  * Every section of a mapped library, plus the derived load base.
  *
- * @property imageBase lowest load address of any allocated section.
+ * @property imageBase load base: the lowest `PT_LOAD` address (zero for the
+ *   26.60 library), not the lowest allocated section.
+ * @property engineVersion version of the native engine that produced the map.
+ *   Part of the cache key: results are not reusable across engines.
  * @property text the executable section the scanner walks.
  * @property sections every section, in header order.
  */
 data class SectionMap(
     @SerializedName("image_base") val imageBase: Long,
+    @SerializedName("engine_version") val engineVersion: String = "",
     val text: SectionInfo,
     val sections: List<SectionInfo>
 ) {
@@ -64,6 +68,7 @@ data class SectionMap(
 /** JSON payload wrapper matching the engine's `SectionMap` serialisation. */
 internal data class SectionMapPayload(
     @SerializedName("image_base") val imageBase: Long?,
+    @SerializedName("engine_version") val engineVersion: String?,
     val text: SectionInfo?,
     val sections: List<SectionInfo>?
 )

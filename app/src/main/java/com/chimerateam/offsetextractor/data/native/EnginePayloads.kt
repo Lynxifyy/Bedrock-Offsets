@@ -149,6 +149,7 @@ object EnginePayloads {
         }
         return SectionMap(
             imageBase = payload.imageBase ?: 0L,
+            engineVersion = payload.engineVersion ?: "",
             text = text,
             sections = sections
         )

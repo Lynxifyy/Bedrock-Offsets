@@ -46,8 +46,20 @@ data class InternalSummary(
     @SerializedName("truncatedSlots") val truncatedSlots: Boolean = false,
     @SerializedName("truncatedSlotClasses") val truncatedSlotClasses: Int = 0,
     @SerializedName("truncatedSlotNames") val truncatedSlotNames: List<String> = emptyList(),
-    val coverage: InternalCoverage = InternalCoverage()
+    val coverage: InternalCoverage = InternalCoverage(),
+    @SerializedName("engineVersion") val engineVersion: String = "",
+    @SerializedName("imageBase") val imageBase: Long = 0
 ) {
+    /**
+     * Whether this table was written by [engineVersion] against [imageBase].
+     *
+     * A table from another engine, or one whose `sub_<hex>` names and
+     * `vtableOffset` values were derived from a different load base, is stale
+     * even though its row count still matches.
+     */
+    fun isFrom(engineVersion: String, imageBase: Long): Boolean =
+        this.engineVersion == engineVersion && this.imageBase == imageBase
+
     /** Whether the table holds anything worth showing. */
     val isEmpty: Boolean get() = functions == 0 && classes == 0
 

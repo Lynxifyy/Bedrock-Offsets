@@ -97,7 +97,7 @@ impl RecordWriter for NdjsonWriter<'_> {
             "{}",
             serde_json::json!({
                 "type": "meta",
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "kind": "internal_cpp",
                 "stats": stats,
             })
@@ -155,7 +155,7 @@ impl Shard {
         let label = rules.label_of(category);
         write!(
             writer,
-            "{{\"schemaVersion\":1,\"generatedBy\":\"BedrockOffsetExtractor\",\
+            "{{\"schemaVersion\":2,\"generatedBy\":\"BedrockOffsetExtractor\",\
              \"kind\":\"internal_cpp_category\",\"category\":\"{category}\",\
              \"label\":{label_json},\"part\":{part}",
             label_json = serde_json::to_string(&label).unwrap_or_else(|_| "\"\"".to_string()),
@@ -555,6 +555,9 @@ mod tests {
         assert_eq!(parsed["category"], "block_placement");
         assert!(parsed["classes"]["Block"].is_object());
         assert_eq!(parsed["stats"]["classes"], 1);
+        // 2: the class record gained a nullable file offset, so a reader of a
+        // version-1 document must not treat it as one it understands.
+        assert_eq!(parsed["schemaVersion"], 2, "{parsed}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

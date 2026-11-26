@@ -140,7 +140,7 @@ impl SectionInfo {
 }
 
 /// Every section of a library, plus the derived load base.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SectionMap {
     /// Lowest load address of any allocated section.
     pub image_base: u64,
@@ -148,6 +148,23 @@ pub struct SectionMap {
     pub text: SectionInfo,
     /// Every section, in header order.
     pub sections: Vec<SectionInfo>,
+}
+
+/// Serialises the map, adding the engine version to the JSON only.
+///
+/// The version is part of the cache key on the reader side, so it must travel
+/// with the payload; keeping it out of the struct means a fixture that builds a
+/// map by hand does not have to invent one.
+impl Serialize for SectionMap {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("SectionMap", 4)?;
+        state.serialize_field("image_base", &self.image_base)?;
+        state.serialize_field("engine_version", &crate::engine_version())?;
+        state.serialize_field("text", &self.text)?;
+        state.serialize_field("sections", &self.sections)?;
+        state.end()
+    }
 }
 
 impl SectionMap {

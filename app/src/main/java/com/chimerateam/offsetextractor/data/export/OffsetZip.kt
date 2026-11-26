@@ -339,6 +339,11 @@ class OffsetZipBuilder(
         json.addProperty("apk", summary.displayName)
         json.addProperty("buildId", summary.buildId)
         json.addProperty("librarySha256", summary.sha256)
+        // The archive outlives the cache, and `vtableOffset` and every `sub_`
+        // name are measured from this base: without it a later reader cannot
+        // tell a table written against the wrong base from a correct one.
+        json.addProperty("imageBase", OffsetRows.hex(summary.imageBase))
+        json.addProperty("engineVersion", summary.engineVersion)
         json.addProperty("entryCount", entries.size)
         writeCoverage(json, summary, split, expectedRows, categoryPaths)
         val files = com.google.gson.JsonArray()

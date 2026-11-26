@@ -110,9 +110,31 @@ fn a_library_without_program_headers_falls_back_to_the_first_section() {
 
 #[test]
 fn a_shared_object_linked_at_a_non_zero_base_keeps_that_base() {
+    // A linker can place the first segment above zero. The RVA every consumer
+    // derives (`sub_<hex>`, `vtableOffset`, the exported JNI offset) is then
+    // measured from `0x4000`, not from `.text` at `0x5000`.
     let image = elf_with_text_at(0x5000, Some(0x4000));
 
     let map = build_section_map(&image).expect("section map");
 
     assert_eq!(map.image_base, 0x4000);
+    assert_eq!(map.text.address - map.image_base, 0x1000, "the .text RVA");
+}
+
+#[test]
+fn the_serialised_map_carries_the_engine_version() {
+    // The reader keys its result cache on this value, so it has to travel with
+    // the payload; a map without it made every cached scan reusable across
+    // engine versions.
+    let image = elf_with_text_at(0x5000, Some(0x4000));
+    let map = build_section_map(&image).expect("section map");
+
+    let json = serde_json::to_value(&map).expect("serialise");
+
+    assert_eq!(
+        json["engine_version"].as_str(),
+        Some(offset_core::engine_version().as_str()),
+        "{json}"
+    );
+    assert_eq!(json["image_base"].as_u64(), Some(0x4000), "{json}");
 }

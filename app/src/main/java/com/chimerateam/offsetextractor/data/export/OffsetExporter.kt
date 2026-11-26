@@ -585,6 +585,7 @@ object OffsetExporter {
         json.name("librarySha256").value(summary.sha256)
         json.name("buildId").value(summary.buildId)
         json.name("imageBase").value(hex(summary.imageBase))
+        json.name("engineVersion").value(summary.engineVersion)
         summary.textSection?.let { text ->
             json.name("textAddress").value(hex(text.address))
             json.name("textSize").value(text.size)
