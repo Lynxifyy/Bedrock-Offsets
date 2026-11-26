@@ -81,7 +81,11 @@
         "evidence": { "type": ["string", "null"] },
         "why": { "type": "string", "minLength": 1 },
         "tried": { "type": "array", "items": { "type": "string" } },
-        "note": { "type": "string" }
+        "note": { "type": "string" },
+        "matched": {
+          "type": "string",
+          "description": "the spelling that resolved, when it differs from name"
+        }
       },
       "allOf": [
         {

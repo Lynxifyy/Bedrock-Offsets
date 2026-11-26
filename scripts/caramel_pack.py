@@ -110,6 +110,7 @@ def _class_entry(item: dict, classes: dict, anchors: bytes | None) -> dict:
             continue
         entry = {
             "name": item["name"],
+            "matched": spelling,
             "kind": item["kind"],
             "status": "found" if record["file_offset"] else "partial",
             "confidence": "certain",
@@ -146,6 +147,7 @@ def _function_entry(
         name, record = found
         return {
             "name": item["name"],
+            "matched": name,
             "kind": item["kind"],
             "status": "found" if record["file_offset"] else "partial",
             "confidence": "certain" if name in item["spellings"] else "likely",

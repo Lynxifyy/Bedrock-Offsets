@@ -212,9 +212,9 @@ ECS = [
         "why": "component serialisation",
     },
     {
-        "name": "BlockComponentStorage",
+        "name": "BlockComponentStorage::ComponentInstance",
         "kind": "class_vtable",
-        "spellings": ["BlockComponentStorage", "BlockComponentStorage::ComponentInstance"],
+        "spellings": ["BlockComponentStorage::ComponentInstance", "BlockComponentStorage"],
         "why": "per-block ECS storage",
     },
     {
