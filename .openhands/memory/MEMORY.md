@@ -171,6 +171,19 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   (SIGPIPE) even on a match — dump to a file and grep the file. The Rust tree is rustfmt-normalized;
   keep it so.
 
+### CI gates and the release (see 2026-11-26.md for the details)
+- CI runs **both** unit-test variants plus ktlint, lintDebug, rustfmt, clippy,
+  `cargo test --all-targets`, rustdoc with `-D warnings` and the Python script
+  tests. `testDebugUnitTest` alone is not enough.
+- Compose tests must live in `src/testDebug`; the test activity exists only in
+  the debug manifest.
+- `scripts/verify_release.py` fails the release if a class in
+  `GSON_MODEL_CLASSES` is not in the dex, so keep that tuple in step with the
+  source (deleted models count).
+- Release APKs are **debug-signed**: no `SIGNING_KEYSTORE_BASE64` secret.
+- Re-cutting a release: delete the release by id, move the tag, push, then PATCH
+  the body by release id (the tags endpoint is GET-only).
+
 ### Hygiene gates (the four that fail a local change)
 - **`FileSizeBudgetTest`** (`scripts/hygiene/file-sizes-baseline.txt`, threshold 1500 lines): a listed
   file may only **shrink**. `InbuiltModuleProvider.java` was at its 1765 baseline; the fix is to
