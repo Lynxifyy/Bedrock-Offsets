@@ -175,7 +175,7 @@ impl CategoryRules {
             if rule
                 .namespaces
                 .iter()
-                .any(|prefix| namespace == prefix || namespace.starts_with(prefix))
+                .any(|prefix| namespace_has_prefix(namespace, prefix))
             {
                 return rule.id.clone();
             }
@@ -185,6 +185,25 @@ impl CategoryRules {
         } else {
             OTHER_NAMED.to_string()
         }
+    }
+}
+
+/// Whether `namespace` is `prefix` or continues it at a boundary.
+///
+/// A bare `starts_with` made `Json` claim `JsonUtil`, `JsonDefinition` and
+/// every other Mojang JSON class: 148,009 functions on 26.60 landed in
+/// "Third-party libraries" and were then invisible to a modder searching for
+/// game code. A namespace prefix now ends at `::` or at the end of the name.
+/// A prefix that itself ends in `_` is a versioned namespace such as `icu_69`
+/// and matches any continuation.
+fn namespace_has_prefix(namespace: &str, prefix: &str) -> bool {
+    if prefix.ends_with('_') {
+        return namespace.starts_with(prefix);
+    }
+    match namespace.strip_prefix(prefix) {
+        None => false,
+        Some("") => true,
+        Some(rest) => rest.starts_with("::"),
     }
 }
 
@@ -254,6 +273,33 @@ mod tests {
         assert_eq!(
             rules.category_for_function("std::vector<int>::push_back", None),
             "thirdparty"
+        );
+    }
+
+    #[test]
+    fn a_namespace_prefix_stops_at_a_boundary() {
+        let rules = CategoryRules::parse(
+            r#"{"categories":[
+                {"category":"thirdparty","label":"Third party",
+                 "namespaces":["Json","std","icu_"]}
+            ]}"#,
+        )
+        .expect("rules");
+        assert_eq!(
+            rules.category_for_function("Json::Value::asString", None),
+            "thirdparty"
+        );
+        assert_eq!(
+            rules.category_for_function("std::vector<int>::push_back", None),
+            "thirdparty"
+        );
+        assert_eq!(
+            rules.category_for_function("icu_69::UnicodeString::length", None),
+            "thirdparty"
+        );
+        assert_eq!(
+            rules.category_for_function("JsonUtil::parse", None),
+            OTHER_NAMED
         );
     }
 

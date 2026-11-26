@@ -63,6 +63,53 @@ class CategoryParityTest {
     }
 
     @Test
+    fun aNamespacePrefixStopsAtTheNamespaceBoundary() {
+        // `Json` used to claim every Mojang `Json*` class by bare prefix match,
+        // so 148,009 game functions were filed as third-party libraries.
+        assertEquals("thirdparty", classifier.categoryForFunction("Json::Value::asString", null))
+        assertEquals("other_named", classifier.categoryForFunction("JsonUtil::parse", null))
+        assertEquals(
+            "thirdparty",
+            classifier.categoryForFunction("std::vector<int>::push_back", null)
+        )
+        assertEquals(
+            "thirdparty",
+            classifier.categoryForFunction("icu_69::UnicodeString::length", null)
+        )
+    }
+
+    @Test
+    fun theEntityComponentSystemHasItsOwnCategory() {
+        listOf(
+            "EntityRegistry",
+            "EntityContext",
+            "StateVectorComponent",
+            "AABBShapeComponent",
+            "ActorOwnerComponent",
+            "StrictTickingSystemFunctionAdapter"
+        ).forEach { name ->
+            assertEquals("$name is ECS", "ecs", classifier.categoryForClass(name, emptyList()))
+        }
+        assertEquals("ecs", classifier.categoryForFunction("ecs::registry::view", null))
+        // entt itself is a third-party library; only its use through a Bedrock
+        // ECS class makes a row gameplay code.
+        assertEquals("thirdparty", classifier.categoryForFunction("entt::basic_view::each", null))
+    }
+
+    @Test
+    fun theScriptingApiHasItsOwnCategory() {
+        assertEquals(
+            "scripting",
+            classifier.categoryForFunction("Scripting::Player::getPosition", null)
+        )
+        assertEquals(
+            "scripting",
+            classifier.categoryForClass("ScriptModuleMinecraft", emptyList())
+        )
+        assertEquals("scripting", classifier.categoryForClass("Scripting::Player", emptyList()))
+    }
+
+    @Test
     fun anUnknownSubIsUnnamedAndAnUnknownNameIsOther() {
         assertEquals("unnamed", classifier.categoryForFunction("sub_1234", null))
         assertEquals("other_named", classifier.categoryForFunction("SomethingElse", null))

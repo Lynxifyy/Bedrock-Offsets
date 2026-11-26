@@ -130,12 +130,8 @@ fun ResultsScreen(
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val rows = remember(result) { OffsetRows.from(result) }
-    val fallbackIndex = remember(result.internal?.path) {
-        InternalIndex(
-            result.internal?.path
-                ?.takeIf { it.isNotBlank() }
-                ?.let(::File)
-        )
+    val fallbackIndex = remember(result.internal) {
+        InternalIndex(result.internal)
     }
     val index = internalIndex ?: fallbackIndex
     var internalRows by remember { mutableStateOf<List<OffsetRow>>(emptyList()) }

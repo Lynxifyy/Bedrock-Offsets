@@ -21,6 +21,18 @@
       "includeBases": true
     },
     {
+      "category": "ecs",
+      "label": "Entity component system",
+      "classes": [
+        "^(EntityRegistry|EntityContext|EntityId|EntityRef|EntityComponent.*|.*ComponentStorage|ActorOwnerComponent|StateVectorComponent|AABBShapeComponent|ActorTypeComponent|StrictTickingSystemFunctionAdapter|ITickingSystem|TickingSystem.*)$"
+      ],
+      "functions": [],
+      "namespaces": [
+        "ecs"
+      ],
+      "includeBases": false
+    },
+    {
       "category": "actor_entity",
       "label": "Actors and entities",
       "classes": [
@@ -111,10 +123,13 @@
         "^Scene.*$",
         "^SceneStack.*$",
         "^Hud.*$",
-        "^.*Layout.*$"
+        "^.*Layout.*$",
+        "^OreUI.*$"
       ],
       "functions": [],
-      "namespaces": [],
+      "namespaces": [
+        "OreUI"
+      ],
       "includeBases": true
     },
     {
@@ -183,33 +198,71 @@
       "includeBases": true
     },
     {
+      "category": "scripting",
+      "label": "Scripting API",
+      "classes": [
+        "^Script.*$",
+        "^ScriptModule.*$"
+      ],
+      "functions": [],
+      "namespaces": [
+        "Scripting",
+        "ScriptModule"
+      ],
+      "includeBases": false
+    },
+    {
       "category": "thirdparty",
       "label": "Third-party libraries",
       "classes": [],
       "functions": [],
       "namespaces": [
-        "webrtc",
-        "absl",
-        "icu_",
-        "leveldb",
-        "std",
-        "__cxxabiv1",
-        "google",
-        "cohtml",
-        "bx",
-        "bgfx",
-        "pplx",
-        "entt",
-        "moodycamel",
         "Json",
-        "nlohmann",
+        "__cxxabiv1",
+        "absl",
+        "angle",
+        "bgfx",
+        "boost",
+        "breakpad",
+        "bx",
+        "cereal",
+        "cohtml",
         "cpprestsdk",
-        "sigslot",
-        "rtc",
+        "crashpad",
         "cricket",
-        "zstd",
         "curl",
-        "openssl"
+        "dcsctp",
+        "entt",
+        "fmt",
+        "frozen",
+        "glslang",
+        "google",
+        "honeycomb",
+        "icu_",
+        "jsoncpp",
+        "leveldb",
+        "libc++",
+        "libcxx",
+        "libwebm",
+        "moodycamel",
+        "nlohmann",
+        "openssl",
+        "pplx",
+        "protobuf",
+        "rapidjson",
+        "re2",
+        "rtc",
+        "sdl",
+        "sentry",
+        "sigslot",
+        "snappy",
+        "spirv",
+        "std",
+        "v8",
+        "v8_inspector",
+        "webrtc",
+        "zlib",
+        "zstd"
       ],
       "includeBases": false
     },

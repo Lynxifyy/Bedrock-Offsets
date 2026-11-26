@@ -194,15 +194,37 @@ class Classifier(private val rules: List<CategoryRule>) {
         return null
     }
 
-    /** Category of a demangled name by its namespace. */
+    /**
+     * Category of a demangled name by its namespace.
+     *
+     * A namespace prefix must end at a boundary: `Json` claims `Json::Value`
+     * but not `JsonUtil`, which is Mojang code and used to be filed under
+     * "Third-party libraries" along with 148,009 other functions.
+     */
     fun categoryForNamespace(name: String): String? {
         val namespace = name.substringBefore("::")
         for (rule in rules) {
-            if (rule.namespaces.any { namespace == it || namespace.startsWith(it) }) {
+            if (rule.namespaces.any { namespaceHasPrefix(namespace, it) }) {
                 return rule.id
             }
         }
         return null
+    }
+
+    /**
+     * Whether [namespace] is [prefix] or continues it at a `::` boundary.
+     *
+     * A prefix ending in `_` is a versioned namespace such as `icu_69` and
+     * matches any continuation.
+     *
+     * @param namespace first `::` segment of a demangled name.
+     * @param prefix namespace prefix from the rules.
+     */
+    fun namespaceHasPrefix(namespace: String, prefix: String): Boolean {
+        if (prefix.endsWith("_")) return namespace.startsWith(prefix)
+        if (!namespace.startsWith(prefix)) return false
+        val rest = namespace.substring(prefix.length)
+        return rest.isEmpty() || rest.startsWith("::")
     }
 
     /**
