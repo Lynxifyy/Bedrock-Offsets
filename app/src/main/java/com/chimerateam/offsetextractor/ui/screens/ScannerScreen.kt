@@ -98,6 +98,7 @@ fun ScannerScreen(
                     ControlsPane(
                         state = state,
                         fillHeight = true,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
                         onSelectApk = onSelectApk,
                         onSelectApks = onSelectApks,
                         onCancelSelection = onCancelSelection,
@@ -131,7 +132,11 @@ fun ScannerScreen(
             ) {
                 ControlsPane(
                     state = state,
-                    fillHeight = false,
+                    // Bounded, because the pane holds a weighted list: a wrap-content pane
+                    // took the whole screen and pushed the pinned controls out of view,
+                    // which cut the result card off.
+                    fillHeight = true,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                     onSelectApk = onSelectApk,
                     onSelectApks = onSelectApks,
                     onCancelSelection = onCancelSelection,
@@ -163,6 +168,7 @@ fun ScannerScreen(
 private fun ControlsPane(
     state: ScannerUiState,
     fillHeight: Boolean,
+    modifier: Modifier = Modifier,
     onSelectApk: () -> Unit,
     onSelectApks: () -> Unit,
     onCancelSelection: () -> Unit,
@@ -191,6 +197,7 @@ private fun ControlsPane(
     // AnimatedContent keeps the state change visible rather than instantaneous:
     // a fade and a small slide make it obvious which pane replaced which.
     AnimatedContent(
+        modifier = modifier,
         targetState = state.phase,
         transitionSpec = {
             (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 12 })

@@ -523,7 +523,11 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                         onDismiss = { ExportJobRepository.clear() },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(16.dp)
+                            // Clears the navigation bar and the pinned action
+                            // row: the pill used to sit on top of Copy, Share
+                            // and Start new scan.
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = TOAST_BOTTOM_INSET)
                     )
                 }
             }
@@ -545,3 +549,6 @@ private fun RowScope.NavigationItem(
         label = { Text(tab.label) }
     )
 }
+
+/** Distance the progress pill keeps from the bottom edge. */
+private val TOAST_BOTTOM_INSET = 96.dp

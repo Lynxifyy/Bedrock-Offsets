@@ -3,6 +3,7 @@ package com.chimerateam.offsetextractor.ui.screens
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,15 +15,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -67,6 +69,12 @@ internal const val RESULTS_LIST_TAG = "results-list"
 
 /** Test tag of the single ZIP download button. */
 internal const val DOWNLOAD_ZIP_TAG = "download-zip"
+
+/** Test tag of the overflow menu holding the JNI actions. */
+internal const val JNI_MENU_TAG = "jni-menu"
+
+/** Test tag of the start-new-scan button. */
+internal const val START_NEW_SCAN_TAG = "start-new-scan"
 
 /**
  * Scrollable list of every offset the scan produced.
@@ -302,22 +310,47 @@ private fun ExportBar(
             }
         }
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onCopyJson, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = null)
-                Text("Copy JNI", modifier = Modifier.padding(start = 6.dp))
+        // One row instead of three full-width buttons: the bar has to leave the
+        // result card enough height to show its own rows.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(
+                onClick = onStartNewScan,
+                modifier = Modifier.weight(1f).testTag(START_NEW_SCAN_TAG)
+            ) {
+                Text("Start new scan")
             }
-            OutlinedButton(onClick = onShareJson, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Filled.Share, contentDescription = null)
-                Text("Share JNI", modifier = Modifier.padding(start = 6.dp))
+            Box {
+                var menuOpen by remember { mutableStateOf(false) }
+                OutlinedButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier.testTag(JNI_MENU_TAG)
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "More JNI actions"
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Copy JNI JSON") },
+                        onClick = { menuOpen = false; onCopyJson() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Share JNI JSON") },
+                        onClick = { menuOpen = false; onShareJson() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Save JNI JSON") },
+                        onClick = { menuOpen = false; onSaveJson() }
+                    )
+                }
             }
-            OutlinedButton(onClick = onSaveJson, modifier = Modifier.weight(1f)) {
-                Text("Save JNI")
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onStartNewScan, modifier = Modifier.fillMaxWidth()) {
-            Text("Start new scan")
         }
     }
 }

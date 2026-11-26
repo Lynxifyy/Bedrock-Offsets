@@ -331,7 +331,9 @@ class ExportService : Service() {
                     runCatching { exports.usableSpace }.getOrDefault(0L)
                 )
             } else {
-                error.message ?: "Download failed"
+                val friendly = com.chimerateam.offsetextractor.ui.error.ErrorMapper
+                    .fromExportFailure(error)
+                listOfNotNull(friendly.message, friendly.hint).joinToString(" ")
             }
             android.util.Log.e(TAG_ZIP, "Export failed at stage $stage: $message", error)
             ExportJobRepository.fail(message, interrupted = !noSpace && zip.isFile)

@@ -3,6 +3,7 @@ package com.chimerateam.offsetextractor.ui.error
 import com.chimerateam.offsetextractor.data.saf.EngineErrorKind
 import com.chimerateam.offsetextractor.data.saf.EngineException
 import com.chimerateam.offsetextractor.data.saf.SafFailure
+import com.chimerateam.offsetextractor.data.storage.NoSpaceException
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.zip.ZipException
@@ -25,6 +26,40 @@ data class UserFacingError(
  * message rather than propagating.
  */
 object ErrorMapper {
+
+    /**
+     * Maps a throwable raised while building or copying the archive.
+     *
+     * The user sees one plain sentence; the technical text stays in the log so
+     * a raw allocation failure or stack trace never reaches the UI.
+     *
+     * @param throwable the failure to translate.
+     * @return a message and optional hint for the UI.
+     */
+    fun fromExportFailure(throwable: Throwable): UserFacingError = when {
+        throwable is OutOfMemoryError -> UserFacingError(
+            message = "The app ran out of memory while building the archive.",
+            hint = "Close other apps and tap Retry; the export resumes from the scan."
+        )
+
+        throwable is NoSpaceException || isNoSpace(throwable) -> UserFacingError(
+            message = "There is not enough free space for the archive.",
+            hint = "Free up space in Settings, then tap Retry."
+        )
+
+        throwable is IOException -> UserFacingError(
+            message = "The archive could not be written to that location.",
+            hint = "Pick another folder or free up space, then tap Retry."
+        )
+
+        else -> UserFacingError(
+            message = "The archive could not be built.",
+            hint = "Tap Retry. If it fails again, copy the log and report it."
+        )
+    }
+
+    private fun isNoSpace(throwable: Throwable): Boolean =
+        com.chimerateam.offsetextractor.data.storage.StorageManager.isNoSpace(throwable)
 
     /**
      * Maps a throwable raised while opening or scanning an APK.
