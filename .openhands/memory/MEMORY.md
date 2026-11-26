@@ -218,3 +218,20 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   the build otherwise. CI installs `cargo-ndk` + NDK, so it is unaffected.
 - ktlint: max line 100, `./gradlew :app:ktlintFormat` auto-fixes most of it; `:app:lintDebug` passes
   in ~50 s. `:app:testDebugUnitTest` is 317 tests, `:app:testReleaseUnitTest` 268.
+
+### 26.60 real library (measured, phase E-lite)
+- `scripts/verify_library_ground_truth.py --library <so> --output-dir <categories>` is the
+  correctness oracle: it cross-checks every class `typeInfo` and every `virtual` slot against
+  `.rela.dyn` addends (26.60: 6,386/6,386 and 157,188/157,188) and compares `functions` with the
+  FDE count in `.eh_frame_hdr` (791,952). RELA means vtable bytes are **zero in the file** —
+  reading the file for a slot value returns zeros, not the address.
+- `.eh_frame_hdr` `table_enc = 0x3b` is **datarel**, so `start = raw + section_addr`; adding the
+  field offset (pcrel-style) shifts every start and makes all rows look "not in an FDE".
+- Two output bugs of this class recur: `image_base` must come from the lowest `PT_LOAD` `p_vaddr`
+  (not the first allocated section — `.gnu.hash` at 0x2463f0 in 26.60), and a vtable slot whose
+  target is not in an executable section must never be named as a function (secondary groups hold
+  vbase offsets and nested vtable pointers).
+- 26.60 has **no gameplay symbols** (75,720 symbol names are v8/cohtml/webrtc/std/Xal/csl/renoir/
+  xbox). It is an EnTT build: `StrictEntityContext`, `ViewT<...>`, `ITickingSystem`,
+  `StrictTickingSystemFunctionAdapter` (643), `EntityComponentDefinition` (164),
+  `entt::basic_storage` (1,406). Components have no vtable → invisible to RTTI.
