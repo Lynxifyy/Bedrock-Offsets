@@ -669,6 +669,18 @@ pub fn analyze_internal_json(
     let map = build_section_map(library.bytes())?;
     let vtables = resolve_vtables_with_releaser(library.bytes(), Some(library.as_ref()))?;
     let symbols = read_named_symbols(library.bytes())?;
+    if symbols.functions.len() + symbols.data.len() >= crate::symbols::MAX_NAMED_SYMBOLS {
+        // A cap that drops names must say so: the table would otherwise look
+        // complete while the tail of the symbol table is missing.
+        crate::internal::report(
+            sink,
+            1,
+            &format!(
+                "Symbols: capped at {} entries, the rest of the symbol table was dropped",
+                crate::symbols::MAX_NAMED_SYMBOLS
+            ),
+        );
+    }
 
     std::fs::create_dir_all(output_dir)?;
 

@@ -1,3 +1,17 @@
+## v1.1.0-pre.3
+
+### Bug Fixes
+
+- the signature pass no longer dies on a large library. On a 700,000-function library the extension rounds held every pattern as hex text and reached 929 MB; patterns are now bytes plus a wildcard bitmap, the scan runs over one bounded window of `.text` at a time, and the rounds stop at a 192 MB budget instead of pushing the process into the low-memory killer. Peak resident on the same library: 709 MB worst case, 556 MB when most patterns resolve in the first round
+- the same 700,000-function library now completes on a 2 GB phone: 500,000 signatures, no process exit, 761 MB at round 1 and 790 MB at round 2 in the live log
+- a scan that is killed or crashes leaves a report: uncaught exceptions are appended to `live.log`, and the log pane replays the last 40 `CRASH` lines on the next start, so a silent kill can be pasted back instead of guessed at
+- a symbol table that hits the 500,000-entry cap now says so in the live log instead of looking complete
+
+### Tests
+
+- signature storage tests: bytes plus bitmap round-trip, wildcard positions survive, a 500,000-pattern table stays inside the budget
+- chunked-scan tests: a signature longer than the window still selects the same functions, and a signature that differs only past the window boundary does not collide
+
 ## v1.1.0-pre.2
 
 ### Bug Fixes

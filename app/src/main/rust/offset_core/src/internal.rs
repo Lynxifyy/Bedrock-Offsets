@@ -1002,7 +1002,7 @@ fn write_record<T: Serialize>(
 }
 
 /// Reports progress to an optional sink.
-fn report(sink: Option<&dyn ProgressSink>, percent: u32, message: &str) {
+pub(crate) fn report(sink: Option<&dyn ProgressSink>, percent: u32, message: &str) {
     let rss = current_resident_mb()
         .map(|mb| format!(" [rss {mb} MB]"))
         .unwrap_or_default();
@@ -3203,7 +3203,12 @@ mod tests {
     fn the_slot_cap_constant_covers_every_value_the_screen_offers() {
         // The Settings screen offers 1024, 4096 and 16384; a cap the user can
         // pick must never be reduced by the engine behind their back.
-        const { assert!(MAX_SLOTS_PER_CLASS >= 16_384, "cap must cover the UI's 16384") };
+        const {
+            assert!(
+                MAX_SLOTS_PER_CLASS >= 16_384,
+                "cap must cover the UI's 16384"
+            )
+        };
         assert_eq!(InternalOptions::default().max_slots_per_class, 4096);
     }
 

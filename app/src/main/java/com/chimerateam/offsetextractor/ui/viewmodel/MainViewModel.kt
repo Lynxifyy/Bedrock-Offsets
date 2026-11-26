@@ -3,9 +3,9 @@ package com.chimerateam.offsetextractor.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.chimerateam.offsetextractor.data.cache.DEFAULT_CACHE_CAP_MB
-import com.chimerateam.offsetextractor.data.cache.DEFAULT_SLOTS_PER_CLASS
 import com.chimerateam.offsetextractor.data.cache.DEFAULT_DELETE_APK_AFTER_SCAN
 import com.chimerateam.offsetextractor.data.cache.DEFAULT_LOW_MEMORY_WARNINGS
+import com.chimerateam.offsetextractor.data.cache.DEFAULT_SLOTS_PER_CLASS
 import com.chimerateam.offsetextractor.data.cache.ResultCache
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
