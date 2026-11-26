@@ -13,7 +13,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -31,6 +33,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -318,6 +322,11 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     }
 
     BedrockOffsetExtractorTheme(themeMode = themeMode) {
+        BoxWithConstraints {
+        // A rail from 840dp: the three destinations stop being a thumb target
+        // and become a permanent left column, which leaves the whole width for
+        // the two panes the scanner already uses on tablets.
+        val wide = maxWidth >= 840.dp
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -382,33 +391,26 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                NavigationBar {
-                    NavigationItem(
-                        tab = AppTab.Scanner,
-                        selected = tab == AppTab.Scanner,
-                        icon = Icons.Filled.Radar,
-                        onSelect = { tab = AppTab.Scanner }
-                    )
-                    NavigationItem(
-                        tab = AppTab.Apks,
-                        selected = tab == AppTab.Apks,
-                        icon = Icons.Filled.Download,
-                        onSelect = { tab = AppTab.Apks }
-                    )
-                    NavigationItem(
-                        tab = AppTab.Settings,
-                        selected = tab == AppTab.Settings,
-                        icon = Icons.Filled.Settings,
-                        onSelect = { tab = AppTab.Settings }
-                    )
+                if (!wide) NavigationBar {
+                    AppTab.entries.forEach { entry ->
+                        NavigationItem(
+                            tab = entry,
+                            selected = tab == entry,
+                            onSelect = { tab = entry }
+                        )
+                    }
                 }
             }
         ) { innerPadding ->
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
+                if (wide) {
+                    AppNavigationRail(current = tab, onSelect = { tab = it })
+                }
+                Box(modifier = Modifier.fillMaxSize()) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     when (tab) {
                         AppTab.Scanner -> ScannerScreen(
@@ -526,11 +528,33 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                             // row: the pill used to sit on top of Copy, Share
                             // and Start new scan.
                             .padding(horizontal = 16.dp)
-                            .padding(bottom = TOAST_BOTTOM_INSET)
+                            .padding(bottom = if (wide) 24.dp else TOAST_BOTTOM_INSET)
                     )
                 }
                 }
+                }
             }
+        }
+        }
+    }
+}
+
+/**
+ * Left navigation for expanded widths.
+ *
+ * @param current the selected destination.
+ * @param onSelect invoked with the destination the user tapped.
+ */
+@Composable
+private fun AppNavigationRail(current: AppTab, onSelect: (AppTab) -> Unit) {
+    NavigationRail {
+        AppTab.entries.forEach { entry ->
+            NavigationRailItem(
+                selected = current == entry,
+                onClick = { onSelect(entry) },
+                icon = { Icon(imageVector = entry.icon, contentDescription = entry.label) },
+                label = { Text(entry.label) }
+            )
         }
     }
 }
@@ -539,13 +563,12 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
 private fun RowScope.NavigationItem(
     tab: AppTab,
     selected: Boolean,
-    icon: ImageVector,
     onSelect: () -> Unit
 ) {
     NavigationBarItem(
         selected = selected,
         onClick = onSelect,
-        icon = { Icon(imageVector = icon, contentDescription = tab.label) },
+        icon = { Icon(imageVector = tab.icon, contentDescription = tab.label) },
         label = { Text(tab.label) }
     )
 }
