@@ -87,14 +87,29 @@ not mark a file read that I only grepped.
 - Coverage numbers are exported (A4/B1/B3 counts in the manifest).
 - README version claim fixed (E1).
 
-## Commands run
+## Final gate run
 
 ```
-cargo test --lib categories                    13 passed
-cargo test --release --test host_shard_measure  1 passed, 901,314 rows, 743,730,101 bytes
-:app:testDebugUnitTest --tests "...data.export.*"  74 passed (5 new)
-python3 -m unittest discover -s scripts/tests -t .  110 passed
-./gradlew :app:compileDebugKotlin               BUILD SUCCESSFUL
+cargo fmt --all --check                          FMT CLEAN
+cargo clippy --all-targets -- -D warnings        Finished (no warnings)
+cargo test --all-targets                         157 + 11 + 10 + 4 + 7 + 1 + 14 + 4 + 4 + 3 + 4 + 7 passed, 0 failed, 3 ignored
+python3 -m unittest discover -s scripts/tests -t .   110 tests, OK
+python3 scripts/generate_patterns.py --check patterns.txt app/src/main/assets/patterns.json
+                                                 up to date
+./gradlew :app:testDebugUnitTest                 317 tests, 0 failures
+./gradlew :app:testReleaseUnitTest               268 tests, 0 failures
+./gradlew :app:ktlintCheck                       BUILD SUCCESSFUL
+./gradlew :app:lintDebug                         BUILD SUCCESSFUL
+```
+
+Measurement on the real library (`host_shard_measure`, ignored by default):
+
+```
+cargo test --release --test host_shard_measure -- --ignored --nocapture
+rows=901314 classes=6386 functions=883574 symbols=11354
+tableBytes=743730101 onDisk=743730101
+coverage: fdes=791952 missing=0 slots=865399 withoutFileOffset=814
+peak resident: 1110 MB
 ```
 
 ## Not done
