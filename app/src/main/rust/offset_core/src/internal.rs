@@ -42,7 +42,7 @@ pub const MAX_SIGNATURE_BYTES: usize = 48;
 
 /// Upper bound the signature generator extends a pattern to before giving up
 /// on uniqueness.
-pub const MAX_SIGNATURE_EXTENDED_BYTES: usize = 128;
+pub const MAX_SIGNATURE_EXTENDED_BYTES: usize = 512;
 
 /// Default cap on auto-generated signatures.
 ///
@@ -573,10 +573,12 @@ pub fn analyze_with_writer(
     let lambda_evidence = crate::naming::lambda_slot_names(vtables, &slots_by_vtable);
     let xref_evidence = crate::naming::vtable_xref_names(vtables, &xrefs);
     let systems = crate::naming::ecs_systems(vtables, &slots_by_vtable);
+    let body_evidence = crate::naming::lambda_body_names(vtables, &slots_by_vtable, &xrefs);
     let system_evidence = crate::naming::ecs_system_names(&systems);
     let mut evidence_counts = EvidenceCounts::default();
     for evidence in lambda_evidence
         .iter()
+        .chain(&body_evidence)
         .chain(&xref_evidence)
         .chain(&system_evidence)
     {
@@ -1616,6 +1618,7 @@ fn insert_slot_names(
 }
 
 /// Adds a name, keeping the highest-priority one and recording the rest.
+#[allow(clippy::too_many_arguments)]
 fn insert_name(
     names: &mut HashMap<u64, NamedEntry>,
     address: u64,
@@ -1665,11 +1668,15 @@ fn insert_name(
 /// Priority of a name source; lower is better.
 fn rank(source: &str) -> u8 {
     match source {
+        // A symbol is the library's own claim.
         "symbol" => 1,
-        "jni" => 2,
+        // A name recovered from the ABI encoding or from a unique vtable
+        // reference is structural: it must beat the `Class::vfunc_N` label the
+        // slot walker guessed, or the evidence would never surface.
+        "jni" | "lambda" | "vtable_xref" | "ecs_system" | "scripting" => 2,
         "vtable" => 3,
         "signature" => 4,
-        "string" => 5,
+        "string" | "call_graph" | "shape" => 5,
         _ => 6,
     }
 }
@@ -2899,6 +2906,36 @@ mod tests {
         assert!(rank("symbol") < rank("vtable"));
         assert!(rank("vtable") < rank("signature"));
         assert!(rank("signature") < rank("auto"));
+    }
+
+    #[test]
+    fn a_lambda_name_beats_a_vtable_placeholder_and_keeps_confidence() {
+        let mut names = HashMap::new();
+        insert_name(
+            &mut names,
+            0x1000,
+            "Mob::vfunc_0".to_string(),
+            "vtable",
+            "function",
+            None,
+            None,
+            None,
+        );
+        insert_name(
+            &mut names,
+            0x1000,
+            "Level::tick()::$_0::operator()".to_string(),
+            "lambda",
+            "function",
+            None,
+            None,
+            Some("high"),
+        );
+        let entry = &names[&0x1000];
+        assert_eq!(entry.name, "Level::tick()::$_0::operator()");
+        assert_eq!(entry.source, "lambda");
+        assert_eq!(entry.confidence, Some("high"));
+        assert!(entry.aliases.contains(&"Mob::vfunc_0".to_string()));
     }
 
     #[test]

@@ -161,7 +161,7 @@ pub fn scan(map: &SectionMap, image: &[u8], bounds: &[(u64, u64)]) -> XrefTable 
                         // without the register's definition; recorded as
                         // indirect so thunk detection can see it.
                         xrefs.has_indirect_exit = true;
-                    } else if word & 0xFFFF_FFFF == RET {
+                    } else if word == RET {
                         xrefs.has_indirect_exit = true;
                     }
                 }

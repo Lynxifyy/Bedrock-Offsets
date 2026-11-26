@@ -1,0 +1,83 @@
+# Coverage
+
+Two kinds of number appear here. **Owner-reported** figures come from the
+26.60 export produced on the tablet; this sandbox does not have that
+`libminecraftpe.so`, so they cannot be re-measured here. **Measured here**
+figures come from a command in this repository, on a fixture or on the
+demangler corpus, and can be reproduced.
+
+Reproduce any export yourself:
+
+```
+python3 scripts/coverage_report.py BEDROCK_OFFSETS_<version>.zip \
+    --json coverage.json --markdown COVERAGE_export.md
+```
+
+The script counts a name as real only when it is neither `sub_<rva>` nor
+`Class::vfunc_N`, splits gameplay from third-party code, and compares class rows
+with vtable groups.
+
+## Baseline (owner-reported, 26.60, before this branch)
+
+| Metric | Value |
+|---|---:|
+| Functions enumerated | 791,952 |
+| Functions with a real method name | 75,817 (9.6 %) |
+| Of those, gameplay classes (`Level::`, `Player::`, `Actor::`, `ClientInstance::`, `GameMode::`, `BlockSource::`) | 0 |
+| Functions with no signature | 358,515 (45 %) |
+| Functions with a non-unique signature | 43,316 |
+| Unique signatures | 390,121 (49 %) |
+| Vtable groups | 62,306 |
+| Class rows | 6,386 |
+| Slot rows in `classes` | 178,691 of 865,399 |
+| Functions named `sub_<rva>` | 293,854 (37.1 %) |
+| Functions larger than 128 bytes with no signature | 205,295 |
+
+## What this branch changes, and how it is measured
+
+| Work package | Change | Evidence |
+|---|---|---|
+| WP1 | complete Itanium demangler, corpus-checked | 6121/6123 corpus symbols agree with `c++filt` (99.97 %), 0 engine misses. `cargo test --test demangle_corpus_test` |
+| WP1 | classes keyed by full mangled identity; all vtable groups kept | `rtti.rs` unit tests; a two-instantiation fixture keeps two entries |
+| WP1 | base graph from the three `type_info` shapes | `resolve_bases` tests (si-class, vmi-class, unknown) |
+| WP3 | declaring-class slot names plus address-wide unification | `a_name_learned_for_one_class_reaches_every_class_sharing_the_address` |
+| WP3 | lambda call operator named from the enclosing function | `a_lambda_call_operator_is_named_from_its_vtable_slot` |
+| WP3 | ECS adapter parsed into system + Include/Exclude lists | `an_ecs_adapter_yields_its_system_and_components` |
+| WP2 | xref table: calls, tail calls, ADRP+ADD data refs, referrers | 6 `xref.rs` tests on a synthetic ELF |
+| WP4 | signature length cap 128 → 512 bytes (rounds at 48…512) | `libc++_shared.so` (aarch64, 1591 signatures): unique 1,523 → **1,583** (95.7 % → 99.5 %); slot signatures 839/841 → **841/841**; pass 0.09 s → 0.31 s |
+| WP0 | coverage measured from the export, not from enumeration | `scripts/coverage_report.py --self-test` |
+
+## Measured here
+
+| Suite | Result |
+|---|---|
+| `cargo test --all-targets` | 185 + 66 tests, 0 failures (5 ignored) |
+| `:app:testDebugUnitTest` | 325 tests, 0 failures |
+| `scripts/coverage_report.py --self-test` | ok, fixture with known answers |
+| Device run (cloud phone, Android 14) | fixture library scanned: 662 functions, 89 classes, 317 named, 305 unique signatures, export zip 61 KB written and re-parsed by `coverage_report.py` |
+| Device export coverage | overall 81/662 named (12.24 %), gameplay 34/606 (5.61 %), third party 47/56 (83.93 %), 89 class rows for 89 groups |
+
+The fixture is a 451 KB library built for this test, not Minecraft, so its
+percentages say nothing about 26.60. They do show the pipeline end to end: the
+export parses, class rows equal vtable groups, and a lambda inside
+`Level::tick()` comes out as
+`std::__ndk1::__function::__func<Level::tick()::$_0, …>::operator()` with
+`nameSource: "lambda"` instead of `vfunc_0`.
+
+## Deltas that this branch cannot claim
+
+The named-function delta on 26.60 is **unknown until the owner re-exports**.
+The engine now produces names from three new sources, but the count depends on
+how many lambda vtables and ECS adapters the build actually contains, and that
+is a property of the library, not of the code. Quote the number from
+`coverage_report.py` on the next export instead of estimating it here.
+
+## Goals and where they stand
+
+| Goal | Target | Status |
+|---|---|---|
+| Real names, gameplay classes | > 0, honest figure | code path exists; figure unmeasured on 26.60 |
+| Unique signature per named function | ≥ 98 % | not reached; signature work package not landed in this commit |
+| Every vtable group its own identity | 100 % | done in the engine: groups are keyed by mangled name |
+| Component registry | every ECS component | parsing of `Include<…>`/`Exclude<…>` done; storage accessors not recovered |
+| Export size | ≤ 5 MB gameplay pack | not done |

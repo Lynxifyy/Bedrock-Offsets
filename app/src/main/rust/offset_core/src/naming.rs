@@ -104,12 +104,61 @@ pub struct NameEvidence {
 /// name is inside the mangled type; the old demangler discarded it with the
 /// rest of the template arguments.
 pub fn enclosing_function(display: &str) -> Option<&str> {
-    for marker in ["::{lambda", "::$_", "::{unnamed type"] {
-        if let Some(at) = display.find(marker) {
-            return Some(&display[..at]);
+    // A lambda often appears inside a template argument
+    // (`__func<Level::tick()::$_0, …>`), so the cut has to be at the marker that
+    // sits inside a function signature, not at the first one in the string.
+    for marker in ["::$_", "::{lambda", "::{unnamed type"] {
+        let mut search = 0;
+        while let Some(offset) = display[search..].find(marker) {
+            let at = search + offset;
+            if let Some(name) = function_head(&display[..at]) {
+                return Some(name);
+            }
+            search = at + marker.len();
         }
     }
     None
+}
+
+/// The function signature a prefix ends with, if it ends with one.
+///
+/// `std::__ndk1::__function::__func<Level::tick()` yields `Level::tick()`: the
+/// closest `(`/`)` pair is found by balancing, then the qualified name is read
+/// leftwards from the `(`, stopping at a template bracket or a comma.
+fn function_head(prefix: &str) -> Option<&str> {
+    if !prefix.ends_with(')') {
+        return None;
+    }
+    let bytes = prefix.as_bytes();
+    let mut depth = 0usize;
+    let mut open = None;
+    for index in (0..bytes.len()).rev() {
+        match bytes[index] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    open = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    let mut start = open;
+    while start > 0 {
+        let byte = bytes[start - 1];
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b':' | b'$' | b'.') {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    if start == open {
+        return None;
+    }
+    Some(&prefix[start..])
 }
 
 /// Whether a mangled type name denotes a local entity (a lambda or a local
@@ -145,13 +194,83 @@ pub fn lambda_slot_names(
         };
         evidence.push(NameEvidence {
             address,
-            name: format!("{enclosing}::$_0::operator()"),
+            name: format!("{}::operator()", vtable.name),
             source: EvidenceSource::LambdaEnclosing,
-            detail: format!("vtable of {} ({})", vtable.name, vtable.mangled),
+            detail: format!(
+                "call slot of the vtable for {} (wraps {enclosing})",
+                vtable.mangled
+            ),
             confidence: Confidence::High,
         });
     }
     evidence
+}
+
+/// Names the callable a `std::function`-style wrapper invokes.
+///
+/// `__func<Level::tick()::$_0, …>::operator()` calls the lambda's body once.
+/// When the wrapper has exactly one callee that is not runtime support, that
+/// callee is `Level::tick()::$_0::operator()`: a real engine function, which no
+/// symbol in the library names.
+pub fn lambda_body_names(
+    vtables: &VtableMap,
+    slots_by_vtable: &std::collections::HashMap<u64, Vec<u64>>,
+    xrefs: &XrefTable,
+) -> Vec<NameEvidence> {
+    let by_address: BTreeMap<u64, &crate::xref::FunctionXrefs> = xrefs
+        .functions
+        .iter()
+        .map(|function| (function.address, function))
+        .collect();
+    let mut evidence = Vec::new();
+    for vtable in &vtables.all {
+        if !is_local_entity(&vtable.mangled) {
+            continue;
+        }
+        let Some(enclosing) = enclosing_function(&vtable.name) else {
+            continue;
+        };
+        let Some(wrapper) = slots_by_vtable
+            .get(&vtable.vtable_address)
+            .and_then(|slots| slots.first().copied())
+        else {
+            continue;
+        };
+        let Some(function) = by_address.get(&wrapper) else {
+            continue;
+        };
+        let mut candidates: Vec<u64> = function
+            .calls
+            .iter()
+            .copied()
+            .filter(|target| {
+                // An import or a PLT stub has no FDE entry, so only a call to a
+                // real function of this image can be the wrapped callable.
+                by_address.contains_key(target)
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.dedup();
+        if candidates.len() != 1 {
+            continue;
+        }
+        evidence.push(NameEvidence {
+            address: candidates[0],
+            name: format!("{enclosing}::$_0::operator()"),
+            source: EvidenceSource::LambdaEnclosing,
+            detail: format!(
+                "sole callee of {} in {}",
+                wrapper_hex(wrapper),
+                vtable.mangled
+            ),
+            confidence: Confidence::Medium,
+        });
+    }
+    evidence
+}
+
+fn wrapper_hex(address: u64) -> String {
+    format!("0x{address:x}")
 }
 
 /// Names the function that constructs a lambda when exactly one function
@@ -395,6 +514,17 @@ mod tests {
             Some("Level::tick()")
         );
         assert_eq!(enclosing_function("Level"), None);
+        assert_eq!(
+            enclosing_function(
+                "std::__ndk1::__function::__func<Level::tick()::$_0, \
+                 std::__ndk1::allocator<Level::tick()::$_0>, int (int)>"
+            ),
+            Some("Level::tick()")
+        );
+        assert_eq!(
+            enclosing_function("GameMode::tick()::{lambda(int)#1}::operator()"),
+            Some("GameMode::tick()")
+        );
     }
 
     #[test]
@@ -481,7 +611,10 @@ mod tests {
         let evidence = lambda_slot_names(&map, &slots);
         assert_eq!(evidence.len(), 1);
         assert_eq!(evidence[0].address, 0x4000);
-        assert_eq!(evidence[0].name, "Level::tick()::$_0::operator()");
+        assert_eq!(
+            evidence[0].name,
+            "Level::tick()::{lambda(int)#1}::operator()"
+        );
     }
 
     #[test]
