@@ -27,6 +27,7 @@ import com.chimerateam.offsetextractor.data.export.InternalTable
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.export.OffsetZipBuilder
 import com.chimerateam.offsetextractor.data.export.PersistedExportJob
+import com.chimerateam.offsetextractor.data.storage.StorageManager
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.util.formatBytes
 import java.io.BufferedOutputStream
@@ -124,18 +125,16 @@ class ExportService : Service() {
         var zipFiles = 0
         var zipRows = 0
         var zipBytes = 0L
+        var stage = if (retryOnly) ExportStage.Saving else ExportStage.Building
         try {
             if (!retryOnly) {
-                val free = exports.usableSpace
-                if (free < MIN_FREE_BYTES) {
-                    throw IOException(
-                        "Not enough free space in the app cache " +
-                            "(${formatBytes(free)} available, " +
-                            "${formatBytes(MIN_FREE_BYTES)} needed)."
-                    )
-                }
                 val summary = ExportJobRepository.pendingSummary
                     ?: throw IOException("The scan is no longer available; run it again.")
+                val needed = StorageManager.estimateArchiveBytes(summary.sizeBytes)
+                val check = StorageManager.preflight(needed, exports)
+                if (!check.enough) {
+                    throw StorageManager.noSpaceException(check)
+                }
                 // The table can be cleared between the scan and the tap on
                 // Download; an archive without it must never be written.
                 InternalTable.require(summary)
@@ -188,6 +187,7 @@ class ExportService : Service() {
                 zipRows = result.internalRows
                 zipBytes = result.bytes
                 if (zip.exists()) zip.delete()
+                stage = ExportStage.Saving
                 if (!partial.renameTo(zip)) {
                     throw IOException("Could not finalise the archive in the cache.")
                 }
@@ -278,21 +278,69 @@ class ExportService : Service() {
                     zipPath = zip.absolutePath
                 )
             )
+            // The user's copy is written and synced, so the cache copy is now
+            // dead weight: one archive is a fifth of a gigabyte on the largest
+            // build. An interrupted copy keeps it, which is what makes Retry
+            // resume instead of rescanning.
+            runCatching { if (zip.isFile) zip.delete() }
+            store.clear()
+            ExportJobRepository.publish(
+                ExportJobRepository.snapshot().copy(zipPath = null)
+            )
             notifyFinished(fileName, success = true)
         } catch (cancelled: CancellationException) {
             deleteDestination(destination)
             ExportJobRepository.cancel()
             store.load()?.let { store.save(it.copy(state = ExportState.Cancelled.name)) }
             notifyFinished(fileName, success = false, message = "Download cancelled")
-        } catch (error: Throwable) {
+        } catch (outOfMemory: OutOfMemoryError) {
             deleteDestination(destination)
-            ExportJobRepository.fail(error.message ?: "Download failed", interrupted = true)
-            store.load()?.let { store.save(it.copy(state = ExportState.Interrupted.name)) }
+            runCatching { partial.delete() }
+            // The heap numbers are what turns "it crashed" into a diagnosis:
+            // the reported 77 MB allocation failed with 6 MB free of a 399 MB
+            // footprint, so the log line has to carry the same three values.
+            val runtime = Runtime.getRuntime()
+            android.util.Log.e(
+                TAG_ZIP,
+                "Out of memory while building $fileName at stage $stage " +
+                    "(used ${formatBytes(runtime.totalMemory() - runtime.freeMemory())}, " +
+                    "free ${formatBytes(runtime.freeMemory())}, " +
+                    "max ${formatBytes(runtime.maxMemory())})",
+                outOfMemory
+            )
+            ExportJobRepository.fail(
+                "The archive could not be built because the app ran out of memory. " +
+                    "Close other apps and try again.",
+                interrupted = false
+            )
+            store.clear()
             notifyFinished(
                 fileName,
                 success = false,
-                message = error.message ?: "Download failed"
+                message = "the app ran out of memory"
             )
+        } catch (error: Throwable) {
+            deleteDestination(destination)
+            // A partial archive is never resumable: the ZIP central directory
+            // only exists once the stream is closed.
+            runCatching { partial.delete() }
+            val noSpace = StorageManager.isNoSpace(error)
+            val message = if (noSpace) {
+                StorageManager.noSpaceMessage(
+                    StorageManager.estimateArchiveBytes(zip.length()),
+                    runCatching { exports.usableSpace }.getOrDefault(0L)
+                )
+            } else {
+                error.message ?: "Download failed"
+            }
+            android.util.Log.e(TAG_ZIP, "Export failed at stage $stage: $message", error)
+            ExportJobRepository.fail(message, interrupted = !noSpace && zip.isFile)
+            if (!noSpace && zip.isFile) {
+                store.load()?.let { store.save(it.copy(state = ExportState.Interrupted.name)) }
+            } else {
+                store.clear()
+            }
+            notifyFinished(fileName, success = false, message = message)
         }
     }
 
@@ -482,7 +530,6 @@ class ExportService : Service() {
         private const val BUILD_SHARE = 0.8f
         private const val SAVE_SHARE = 0.2f
         private const val COPY_BUFFER_BYTES = 64 * 1024
-        private const val MIN_FREE_BYTES = 64L * 1024 * 1024
         private const val NOTIFICATION_INTERVAL_MILLIS = 100L
         private const val PERSIST_INTERVAL_MILLIS = 500L
 

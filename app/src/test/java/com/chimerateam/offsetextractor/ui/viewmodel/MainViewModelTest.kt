@@ -34,6 +34,7 @@ import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.SafFailure
 import com.chimerateam.offsetextractor.data.saf.WriteResult
+import com.chimerateam.offsetextractor.data.storage.StorageManager
 import com.chimerateam.offsetextractor.ui.log.LogLevel
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import java.io.File
@@ -1187,6 +1188,88 @@ class MainViewModelTest {
     )
 
     private fun newCache(): ScanCache = ScanCache(File(cacheDir, "scan-cache"))
+
+    /** A storage manager over a throwaway tree, so deletion is observable. */
+    private fun newStorage(root: File): StorageManager = StorageManager(
+        cacheDir = root,
+        libraryDir = File(root, "libs").apply { mkdirs() },
+        internalDir = File(root, "internal").apply { mkdirs() },
+        exportDir = File(root, "exports").apply { mkdirs() },
+        documentDir = File(root, "documents").apply { mkdirs() },
+        logDir = File(root, "logs").apply { mkdirs() }
+    )
+
+    @Test
+    fun `downloaded APK is deleted once its library is extracted`() = runTest(dispatcher) {
+        val root = File.createTempFile("storage-", "").apply {
+            delete()
+            mkdirs()
+            deleteOnExit()
+        }
+        val apk = File(root, "apks").apply { mkdirs() }.resolve("minecraft.apk").apply {
+            writeBytes(ByteArray(64 * 1024))
+        }
+        val library = library("abc", 16)
+        val viewModel = MainViewModel(
+            safAccess = FakeSafAccess(),
+            engine = FakeEngine(result = library),
+            cacheDir = cacheDir,
+            patterns = listOf(PatternSpec("prologue", "FD 7B BF A9")),
+            cache = newCache(),
+            storage = newStorage(root),
+            ioDispatcher = dispatcher
+        )
+
+        viewModel.onApkFileSelected(apk)
+        advanceUntilIdle()
+
+        assertTrue("the downloaded APK must not survive the scan", !apk.exists())
+    }
+
+    @Test
+    fun `downloaded APK is kept when the setting is off`() = runTest(dispatcher) {
+        val root = File.createTempFile("storage-", "").apply {
+            delete()
+            mkdirs()
+            deleteOnExit()
+        }
+        val library = library("def", 16)
+        val viewModel = MainViewModel(
+            safAccess = FakeSafAccess(),
+            engine = FakeEngine(result = library),
+            cacheDir = cacheDir,
+            patterns = listOf(PatternSpec("prologue", "FD 7B BF A9")),
+            cache = newCache(),
+            storage = newStorage(root),
+            ioDispatcher = dispatcher
+        )
+        viewModel.setDeleteApkAfterScan(false)
+        advanceUntilIdle()
+        // Created after the start-up sweep: with the setting off the sweep keeps
+        // APKs, but this test must not depend on that ordering.
+        val apk = File(root, "apks").apply { mkdirs() }.resolve("minecraft.apk").apply {
+            writeBytes(ByteArray(64 * 1024))
+        }
+
+        viewModel.onApkFileSelected(apk)
+        advanceUntilIdle()
+
+        assertTrue("the APK must be kept when the setting is off", apk.isFile)
+    }
+
+    @Test
+    fun `extracted library is released after a successful internal pass`() = runTest(dispatcher) {
+        val library = library("ghi", 16)
+        val viewModel = newViewModel(engine = FakeEngine(result = library))
+
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        assertTrue(
+            "the library must be gone once the table replaces it",
+            !File(library.path).exists()
+        )
+    }
 }
 
 /** The scan outcome the fake engine returns unless a test supplies its own. */
@@ -1490,6 +1573,11 @@ private class FakeSafAccess(
         private set
 
     override fun queryMetadata(uri: Uri): ApkMetadata = metadata.copy(uri = uri)
+
+    override fun openFile(file: File): ApkOpenResult {
+        openCalls++
+        return ApkOpenResult.Success(FakeHandle(metadata), usedCacheCopy = true)
+    }
 
     override fun openApk(uri: Uri): ApkOpenResult {
         openCalls++

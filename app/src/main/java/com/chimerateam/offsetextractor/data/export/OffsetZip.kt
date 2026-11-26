@@ -102,7 +102,9 @@ class OffsetZipBuilder(
         val manifest = mutableListOf<ManifestEntry>()
         val categoryPaths = mutableListOf<String>()
         ZipOutputStream(BufferedOutputStream(target.outputStream(), BUFFER_BYTES)).use { zip ->
-            zip.setLevel(9)
+            // Level 9 spends several times the CPU of level 6 for a few
+            // percent of size on JSON that is mostly digits and identifiers.
+            zip.setLevel(6)
 
             manifest += writeEntry(
                 zip,

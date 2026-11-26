@@ -2,6 +2,8 @@ package com.chimerateam.offsetextractor.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.chimerateam.offsetextractor.data.cache.DEFAULT_CACHE_CAP_MB
+import com.chimerateam.offsetextractor.data.cache.DEFAULT_DELETE_APK_AFTER_SCAN
 import com.chimerateam.offsetextractor.data.cache.DEFAULT_LOW_MEMORY_WARNINGS
 import com.chimerateam.offsetextractor.data.cache.ResultCache
 import com.chimerateam.offsetextractor.data.cache.ScanCache
@@ -30,6 +32,9 @@ import com.chimerateam.offsetextractor.data.saf.ExtractedNativeLibrary
 import com.chimerateam.offsetextractor.data.saf.OffsetEngine
 import com.chimerateam.offsetextractor.data.saf.SafApkAccess
 import com.chimerateam.offsetextractor.data.saf.WriteResult
+import com.chimerateam.offsetextractor.data.storage.StorageAreaId
+import com.chimerateam.offsetextractor.data.storage.StorageManager
+import com.chimerateam.offsetextractor.data.storage.StorageUsage
 import com.chimerateam.offsetextractor.ui.error.ErrorMapper
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.Logs
@@ -104,6 +109,7 @@ class MainViewModel(
     private val preferences: ScanPreferences? = null,
     private var categories: List<CategoryRule> = emptyList(),
     private val exportStarter: ExportStarter? = null,
+    private val storage: StorageManager? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis
 ) : ViewModel() {
@@ -170,6 +176,29 @@ class MainViewModel(
     /** When the notice was last logged and shown. */
     private var lastMemoryNoticeMillis = Long.MIN_VALUE
 
+    private val _storageUsage = MutableStateFlow(StorageUsage(emptyList(), 0L))
+
+    /** What the app holds on disk, refreshed after every job. */
+    val storageUsage: StateFlow<StorageUsage> = _storageUsage.asStateFlow()
+
+    private val _deleteApkAfterScan = MutableStateFlow(DEFAULT_DELETE_APK_AFTER_SCAN)
+
+    /** Whether a downloaded APK is deleted once its library is extracted. */
+    val deleteApkAfterScan: StateFlow<Boolean> = _deleteApkAfterScan.asStateFlow()
+
+    private val _cacheCapMb = MutableStateFlow(DEFAULT_CACHE_CAP_MB)
+
+    /** Hard cap on cached data in megabytes; zero disables it. */
+    val cacheCapMb: StateFlow<Int> = _cacheCapMb.asStateFlow()
+
+    private val _storageNotice = MutableStateFlow<String?>(null)
+
+    /** One-line storage message the UI shows once, then dismisses. */
+    val storageNotice: StateFlow<String?> = _storageNotice.asStateFlow()
+
+    /** APK the APKs page downloaded for the current selection, if any. */
+    private var downloadedApk: File? = null
+
     private var activeApk: ApkSource? = null
     private var extractionJob: Job? = null
 
@@ -207,6 +236,145 @@ class MainViewModel(
             viewModelScope.launch(supervisor + ioDispatcher) {
                 store.lowMemoryWarnings.collect { _lowMemoryWarnings.value = it }
             }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.deleteApkAfterScan.collect { _deleteApkAfterScan.value = it }
+            }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.cacheCapMb.collect { _cacheCapMb.value = it }
+            }
+        }
+        // A previous process may have died mid-download or mid-ZIP. Sweeping on
+        // start is what stops those leftovers from becoming the reason the next
+        // scan runs out of space.
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            storage?.let { manager ->
+                val freed = manager.sweep(
+                    keepTablePath = keepTablePath(),
+                    keepApks = _deleteApkAfterScan.value
+                )
+                if (freed > 0L) {
+                    emit(Logs.info(TAG_CACHE, "Freed ${formatBytes(freed)} of leftover data."))
+                }
+                refreshStorageUsage()
+            }
+        }
+    }
+
+    /**
+     * Table the current result still needs, or the newest one on disk.
+     *
+     * The newest table is kept because the cached result of the previous scan
+     * points at it: deleting it would turn a cache hit into an export that can
+     * never be built.
+     */
+    private fun keepTablePath(): String? =
+        _uiState.value.result?.internal?.path?.takeIf { it.isNotBlank() }
+            ?: storage?.newestTable()?.absolutePath
+
+    /** Recomputes the storage list and the cache size. */
+    private fun refreshStorageUsage() {
+        val manager = storage ?: return
+        val usage = manager.usage(keepTablePath())
+        _storageUsage.value = usage
+        _cacheSizeBytes.value = usage.totalBytes
+    }
+
+    /** Recomputes the storage list from the UI thread. */
+    fun refreshStorage() {
+        viewModelScope.launch(supervisor + ioDispatcher) { refreshStorageUsage() }
+    }
+
+    /** Clears the one-line storage message once it has been shown. */
+    fun onStorageNoticeShown() {
+        _storageNotice.value = null
+    }
+
+    /**
+     * Records whether downloaded APKs are deleted after extraction.
+     *
+     * @param delete the new preference.
+     */
+    fun setDeleteApkAfterScan(delete: Boolean) {
+        _deleteApkAfterScan.value = delete
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setDeleteApkAfterScan(delete)
+            if (delete) {
+                val freed = storage?.deleteDownloadedApks() ?: 0L
+                if (freed > 0L) {
+                    emit(Logs.info(TAG_CACHE, "Deleted downloaded APKs (${formatBytes(freed)})."))
+                }
+                refreshStorageUsage()
+            }
+        }
+    }
+
+    /**
+     * Records the cache cap.
+     *
+     * @param megabytes cap in megabytes, zero to disable it.
+     */
+    fun setCacheCapMb(megabytes: Int) {
+        val clamped = megabytes.coerceIn(0, 64 * 1024)
+        _cacheCapMb.value = clamped
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setCacheCapMb(clamped)
+            val freed = storage?.enforceCap(clamped * 1024L * 1024L, keepTablePath()) ?: 0L
+            if (freed > 0L) {
+                emit(Logs.info(TAG_CACHE, "Trimmed ${formatBytes(freed)} to stay under the cap."))
+            }
+            refreshStorageUsage()
+        }
+    }
+
+    /**
+     * Deletes everything the current result does not need.
+     *
+     * @return bytes reclaimed, reported through [storageNotice].
+     */
+    fun freeUpSpace() {
+        if (isBusy()) {
+            _storageNotice.value = "Finish the running job first."
+            return
+        }
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            val freed = storage?.freeUpSpace(keepTablePath()) ?: 0L
+            refreshStorageUsage()
+            _storageNotice.value = "Freed ${formatBytes(freed)}."
+            emit(Logs.info(TAG_CACHE, "Freed ${formatBytes(freed)}."))
+        }
+    }
+
+    /**
+     * Deletes one storage group.
+     *
+     * @param id the group to clear.
+     */
+    fun deleteStorageArea(id: StorageAreaId) {
+        if (isBusy()) {
+            _storageNotice.value = "Finish the running job first."
+            return
+        }
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            val freed = storage?.deleteArea(id, keepTablePath()) ?: 0L
+            refreshStorageUsage()
+            _storageNotice.value = "Deleted ${formatBytes(freed)}."
+        }
+    }
+
+    /**
+     * Deletes one file from the storage list.
+     *
+     * @param file the file to remove.
+     */
+    fun deleteStorageFile(file: File) {
+        if (isBusy()) {
+            _storageNotice.value = "Finish the running job first."
+            return
+        }
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            val freed = storage?.delete(file) ?: 0L
+            refreshStorageUsage()
+            if (freed > 0L) _storageNotice.value = "Deleted ${formatBytes(freed)}."
         }
     }
 
@@ -252,6 +420,30 @@ class MainViewModel(
      */
     fun onApkFileSelected(file: File) {
         extractionJob?.cancel()
+        downloadedApk = file
+        // The APK plus its library, shards and archive is about two gigabytes
+        // for a 1 GB build. Refusing up front with the real numbers beats a
+        // half-written table and a raw ENOSPC from the middle of the pipeline.
+        val check = StorageManager.preflight(
+            StorageManager.estimateBytes(file.length()),
+            file.parentFile ?: cacheDir
+        )
+        if (!check.enough) {
+            emit(Logs.warn(TAG_CACHE, "Not enough space: ${check.message}"))
+            _storageNotice.value = check.message
+            _uiState.update {
+                it.copy(
+                    phase = ScannerPhase.Error,
+                    progress = 0,
+                    progressTask = "",
+                    result = null,
+                    error = check.message,
+                    errorHint = "Free up space in Settings > Storage, then try again.",
+                    internalAvailable = false
+                )
+            }
+            return
+        }
         _uiState.update {
             it.copy(
                 phase = ScannerPhase.Extracting,
@@ -362,6 +554,10 @@ class MainViewModel(
         extractionJob = viewModelScope.launch(supervisor + ioDispatcher) {
             val summary = queue.run(uris).copy(files = writtenFiles.toList())
             _uiState.update { it.copy(batch = null, batchSummary = summary) }
+            storage?.let { manager ->
+                manager.sweep(keepTablePath = keepTablePath(), keepApks = _deleteApkAfterScan.value)
+                refreshStorageUsage()
+            }
             emit(
                 Logs.info(
                     TAG_UI,
@@ -459,6 +655,10 @@ class MainViewModel(
      */
     fun onExportActionTaken(message: String) {
         emit(Logs.info(TAG_UI, message))
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            storage?.enforceCap(_cacheCapMb.value * 1024L * 1024L, keepTablePath())
+            refreshStorageUsage()
+        }
     }
 
     /**
@@ -783,9 +983,13 @@ class MainViewModel(
         }
     }
 
-    /** Recomputes the reported cache size. */
+    /** Recomputes the reported cache size and the storage list. */
     fun refreshCacheSize() {
-        _cacheSizeBytes.value = cache?.totalSizeBytes() ?: 0L
+        if (storage != null) {
+            refreshStorageUsage()
+        } else {
+            _cacheSizeBytes.value = cache?.totalSizeBytes() ?: 0L
+        }
     }
 
     /**
@@ -809,7 +1013,12 @@ class MainViewModel(
             return
         }
         viewModelScope.launch(supervisor + ioDispatcher) {
-            val cleared = store.clear()
+            val cleared = if (storage != null) {
+                storage.freeUpSpace(keepTablePath = null)
+                store.clear()
+            } else {
+                store.clear()
+            }
             refreshCacheSize()
             if (cleared) {
                 emit(Logs.info(TAG_CACHE, "Cache cleared."))
@@ -896,6 +1105,68 @@ class MainViewModel(
     }
 
     private suspend fun extractNativeLibrary(source: ApkSource): Boolean {
+        try {
+            return extractNativeLibraryInner(source)
+        } finally {
+            deleteDownloadedApk()
+            refreshStorageUsage()
+        }
+    }
+
+    /**
+     * Deletes the APK this selection downloaded, when the setting is on.
+     *
+     * Runs on every exit path: success, failure and cancellation. Only a file
+     * the APKs page put in the cache is ever deleted; a document the user
+     * picked belongs to them and is not ours to remove.
+     */
+    private fun deleteDownloadedApk() {
+        val file = downloadedApk ?: return
+        downloadedApk = null
+        if (!_deleteApkAfterScan.value) return
+        val freed = storage?.delete(file) ?: runCatching {
+            if (file.isFile) {
+                val bytes = file.length()
+                if (file.delete()) bytes else 0L
+            } else {
+                0L
+            }
+        }.getOrDefault(0L)
+        if (freed > 0L) {
+            emit(Logs.info(TAG_CACHE, "Deleted the downloaded APK (${formatBytes(freed)})."))
+        }
+    }
+
+    /**
+     * Deletes the extracted library once nothing needs it any more.
+     *
+     * The internal table holds every offset the export writes, so after the
+     * internal pass succeeded the library is a 300 MB copy of nothing. A failed
+     * internal pass keeps it, because "Retry" re-runs that pass from the same
+     * file without touching the APK again.
+     *
+     * @param extracted the library of the finished scan.
+     * @param keep whether a retry still needs it.
+     */
+    private fun releaseLibrary(extracted: ExtractedNativeLibrary?, keep: Boolean) {
+        if (keep) return
+        lastExtracted = null
+        extracted ?: return
+        val freed = storage?.delete(File(extracted.path)) ?: runCatching {
+            val file = File(extracted.path)
+            if (file.isFile) {
+                val bytes = file.length()
+                if (file.delete()) bytes else 0L
+            } else {
+                0L
+            }
+        }.getOrDefault(0L)
+        if (freed > 0L) {
+            emit(Logs.info(TAG_CACHE, "Released the extracted library (${formatBytes(freed)})."))
+        }
+    }
+
+    private suspend fun extractNativeLibraryInner(source: ApkSource): Boolean {
         try {
             var current = engine.extractNativeLibrary(source.rawFd, cacheDir)
             lastExtracted = current
@@ -991,6 +1262,7 @@ class MainViewModel(
                         errorHint = null
                     )
                 }
+                releaseLibrary(current, keep = !cached.internalResolved)
                 return true
             }
 
@@ -1044,6 +1316,10 @@ class MainViewModel(
 
             reportVerification(scan?.verification)
             rememberScan(symbols.identity.buildId, summary)
+            // A batch builds each item's archive right after its scan, but the
+            // next item may re-extract into the same directory; the sweep at
+            // the end of the run releases the libraries in one place.
+            releaseLibrary(current, keep = internal == null || _uiState.value.batch != null)
             return true
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -1454,7 +1730,8 @@ class MainViewModel(
             internalPatterns: List<InternalPatternSpec> = emptyList(),
             stringAnchors: List<StringAnchorSpec> = emptyList(),
             categories: List<CategoryRule> = emptyList(),
-            exportStarter: ExportStarter? = null
+            exportStarter: ExportStarter? = null,
+            storage: StorageManager? = null
         ): MainViewModel = MainViewModel(
             safAccess = safAccess,
             engine = engine,
@@ -1466,7 +1743,8 @@ class MainViewModel(
             cache = cache,
             preferences = preferences,
             categories = categories,
-            exportStarter = exportStarter
+            exportStarter = exportStarter,
+            storage = storage
         )
     }
 }

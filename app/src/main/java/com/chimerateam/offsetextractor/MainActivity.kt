@@ -24,6 +24,7 @@ import com.chimerateam.offsetextractor.data.export.ExportJobRepository
 import com.chimerateam.offsetextractor.data.export.ExportStarter
 import com.chimerateam.offsetextractor.data.export.ExportState
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
+import com.chimerateam.offsetextractor.data.storage.StorageManager
 import com.chimerateam.offsetextractor.data.native.JniOffsetEngine
 import com.chimerateam.offsetextractor.data.patterns.SignaturePack
 import com.chimerateam.offsetextractor.data.saf.AndroidDocumentWriter
@@ -54,6 +55,12 @@ class MainActivity : ComponentActivity() {
                     File(filesDir, ScanCache.DIRECTORY_NAME).apply { mkdirs() }
                 )
                 val pack = SignaturePack.loadDocument(applicationContext)
+                val storage = StorageManager.create(
+                    cacheDir = cacheDir,
+                    cache = scanCache,
+                    exportDir = File(cacheDir, "exports").apply { mkdirs() },
+                    logDir = File(cacheDir, "logs").apply { mkdirs() }
+                )
                 MainViewModel.create(
                     safAccess = AndroidSafApkAccess(applicationContext),
                     engine = JniOffsetEngine(),
@@ -65,6 +72,7 @@ class MainActivity : ComponentActivity() {
                     internalPatterns = pack.internalPatterns,
                     stringAnchors = pack.stringAnchors,
                     categories = CategoryCatalog.load(applicationContext),
+                    storage = storage,
                     exportStarter = ExportStarter { destination, summary, categories, combined ->
                         // The write grant must be taken before the service
                         // starts; the activity may be gone by the time it runs.

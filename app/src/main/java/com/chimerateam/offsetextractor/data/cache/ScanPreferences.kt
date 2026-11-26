@@ -51,6 +51,36 @@ interface ScanPreferences {
     /** Whether the advisory low-memory notice is shown. */
     val lowMemoryWarnings: Flow<Boolean> get() = flowOf(DEFAULT_LOW_MEMORY_WARNINGS)
 
+    /** Whether a downloaded APK is deleted once its library is extracted. */
+    val deleteApkAfterScan: Flow<Boolean> get() = flowOf(DEFAULT_DELETE_APK_AFTER_SCAN)
+
+    /** Hard cap on cached data in megabytes; zero disables the cap. */
+    val cacheCapMb: Flow<Int> get() = flowOf(DEFAULT_CACHE_CAP_MB)
+
+    /** Whether animations are reduced to instant transitions. */
+    val reduceMotion: Flow<Boolean> get() = flowOf(false)
+
+    /**
+     * Records whether a downloaded APK is deleted after extraction.
+     *
+     * @param delete whether to delete it.
+     */
+    suspend fun setDeleteApkAfterScan(delete: Boolean) {}
+
+    /**
+     * Records the cache cap.
+     *
+     * @param megabytes cap in megabytes, zero to disable.
+     */
+    suspend fun setCacheCapMb(megabytes: Int) {}
+
+    /**
+     * Records whether animations are reduced.
+     *
+     * @param reduce whether to reduce them.
+     */
+    suspend fun setReduceMotion(reduce: Boolean) {}
+
     /**
      * Records the selected theme mode.
      *
@@ -96,6 +126,24 @@ interface ScanPreferences {
  * the default for everyone.
  */
 const val DEFAULT_LOW_MEMORY_WARNINGS = false
+
+/**
+ * Whether a downloaded APK is deleted once its library is extracted.
+ *
+ * A scan of a 1 GB build leaves a copy that is never read again, and three
+ * other copies follow it (library, table, shards), so keeping the APK is what
+ * fills the device. The user's own file is never touched; only APKs the APKs
+ * page downloaded into the cache are deleted.
+ */
+const val DEFAULT_DELETE_APK_AFTER_SCAN = true
+
+/**
+ * Default cap on cached data, in megabytes.
+ *
+ * Two gigabytes is one scan of the largest build plus its archive, which is the
+ * most that is ever useful at once. Oldest files are removed first.
+ */
+const val DEFAULT_CACHE_CAP_MB = 2048
 
 /** File-backed [ScanPreferences] on top of DataStore. */
 class DataStoreScanPreferences(private val store: DataStore<Preferences>) : ScanPreferences {
@@ -149,6 +197,27 @@ class DataStoreScanPreferences(private val store: DataStore<Preferences>) : Scan
         store.edit { it[LOW_MEMORY_WARNINGS] = enabled }
     }
 
+    override val deleteApkAfterScan: Flow<Boolean> =
+        store.data.map { it[DELETE_APK_AFTER_SCAN] ?: DEFAULT_DELETE_APK_AFTER_SCAN }
+
+    override suspend fun setDeleteApkAfterScan(delete: Boolean) {
+        store.edit { it[DELETE_APK_AFTER_SCAN] = delete }
+    }
+
+    override val cacheCapMb: Flow<Int> =
+        store.data.map { it[CACHE_CAP_MB] ?: DEFAULT_CACHE_CAP_MB }
+
+    override suspend fun setCacheCapMb(megabytes: Int) {
+        store.edit { it[CACHE_CAP_MB] = megabytes.coerceIn(0, 64 * 1024) }
+    }
+
+    override val reduceMotion: Flow<Boolean> =
+        store.data.map { it[REDUCE_MOTION] ?: false }
+
+    override suspend fun setReduceMotion(reduce: Boolean) {
+        store.edit { it[REDUCE_MOTION] = reduce }
+    }
+
     /** Reads the stored build identifier once, for use outside a flow. */
     suspend fun currentBuildId(): String = lastBuildId.first()
 
@@ -160,6 +229,9 @@ class DataStoreScanPreferences(private val store: DataStore<Preferences>) : Scan
         val GENERATE_SIGNATURES = booleanPreferencesKey("generate_signatures")
         val MAX_SLOTS_PER_CLASS = intPreferencesKey("max_slots_per_class")
         val LOW_MEMORY_WARNINGS = booleanPreferencesKey("low_memory_warnings")
+        val DELETE_APK_AFTER_SCAN = booleanPreferencesKey("delete_apk_after_scan")
+        val CACHE_CAP_MB = intPreferencesKey("cache_cap_mb")
+        val REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
     }
 }
 
