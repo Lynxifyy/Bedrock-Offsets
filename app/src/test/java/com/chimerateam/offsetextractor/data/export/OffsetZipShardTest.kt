@@ -23,6 +23,7 @@ class OffsetZipShardTest {
 
     private val rules = listOf(
         CategoryRule("block_placement", "Block placement", emptyList(), emptyList(), emptyList(), true),
+        CategoryRule("rendering", "Rendering", emptyList(), emptyList(), emptyList(), false),
         CategoryRule("other_named", "Other", emptyList(), emptyList(), emptyList(), false)
     )
 
@@ -243,5 +244,32 @@ class OffsetZipShardTest {
         assertTrue(!outcome.ok)
         assertEquals(2, outcome.rereadRows)
         assertTrue(outcome.detail.contains("2 rows"))
+    }
+
+    @Test
+    fun theIndexListsEmptyCategoriesWithNoFile() {
+        val dir = createTempDirectory("shards-").toFile()
+        val summary = summary(listOf(shard(dir, "block_placement", functions = 1)), emptyMap())
+        val target = File(createTempDirectory("zip-").toFile(), "BEDROCK_OFFSETS_26.60.3.zip")
+
+        OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile()).build(summary, target)
+
+        ZipFile(target).use { zip ->
+            val index = zip.getInputStream(
+                zip.getEntry("InternalCPP/INTERNALCPP_INDEX_26.60.3.json")
+            ).bufferedReader().use { JsonParser.parseReader(it).asJsonObject }
+            val categories = index.getAsJsonArray("categories")
+            val byCategory = categories.map { it.asJsonObject }
+                .associateBy { it.get("category").asString }
+            assertEquals(3, byCategory.size)
+            val rendering = byCategory.getValue("rendering")
+            assertEquals(0, rendering.get("entries").asInt)
+            assertTrue("an empty category has no file", rendering.get("file").isJsonNull)
+            assertEquals(0, rendering.getAsJsonArray("files").size())
+            assertEquals(
+                "InternalCPP/INTERNALCPP_BLOCK_PLACEMENT_26.60.3.json",
+                byCategory.getValue("block_placement").get("file").asString
+            )
+        }
     }
 }

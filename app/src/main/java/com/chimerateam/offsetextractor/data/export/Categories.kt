@@ -155,6 +155,9 @@ class Classifier(private val rules: List<CategoryRule>) {
     /** Category ids in rule order, used for stable file ordering. */
     val categoryIds: List<String> = rules.map { it.id }
 
+    /** Every rule as `(id, label)`, in rule order, including empty categories. */
+    fun categories(): List<Pair<String, String>> = rules.map { it.id to it.label }
+
     /** Label for [id], falling back to the id itself. */
     fun labelOf(id: String): String = rules.firstOrNull { it.id == id }?.label ?: id
 

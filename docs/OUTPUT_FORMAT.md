@@ -365,8 +365,11 @@ an input cannot be read. Use it before shipping a signature pack for a new build
 ## Internal C++ document
 
 The internal extraction is split by category. `INTERNALCPP_INDEX_<version>.json`
-is the entry point: it lists every category file with its counts and maps each
-class to its category, so a client can open only the file it needs. A combined
+is the entry point: it lists every category with its files and counts and maps
+each class to its category, so a client can open only the file it needs. Every
+category the rules declare appears, including the ones with no rows: such a
+category has `entries: 0`, `file: null` and an empty `files` list, which tells a
+reader "empty in this build" rather than "not in the archive". A combined
 `INTERNALCPP_OFFSETS_<version>.json` is written only when the Settings toggle
 "Also include one combined file" is on.
 
@@ -395,13 +398,26 @@ class to its category, so a client can open only the file it needs. A combined
   },
   "categories": [
     {
-      "id": "actor_entity",
       "category": "actor_entity",
       "label": "Actors and entities",
       "file": "InternalCPP/INTERNALCPP_ACTOR_ENTITY_26.60.3.json",
+      "files": ["InternalCPP/INTERNALCPP_ACTOR_ENTITY_26.60.3.json"],
+      "parts": 1,
       "classes": 120,
       "functions": 41000,
-      "symbols": 0
+      "symbols": 0,
+      "entries": 41120
+    },
+    {
+      "category": "audio",
+      "label": "Audio",
+      "file": null,
+      "files": [],
+      "parts": 0,
+      "classes": 0,
+      "functions": 0,
+      "symbols": 0,
+      "entries": 0
     }
   ],
   "classToCategory": {

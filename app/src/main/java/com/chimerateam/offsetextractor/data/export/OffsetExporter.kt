@@ -328,7 +328,12 @@ object OffsetExporter {
      * @param split the category files produced by [InternalTableSplitter].
      * @param writer destination writer.
      */
-    fun writeInternalIndex(summary: ScanResultSummary, split: SplitResult, writer: Writer) {
+    fun writeInternalIndex(
+        summary: ScanResultSummary,
+        split: SplitResult,
+        categories: List<Pair<String, String>>,
+        writer: Writer
+    ) {
         val json = JsonWriter(writer)
         json.setIndent("  ")
         json.beginObject()
@@ -343,20 +348,24 @@ object OffsetExporter {
         json.name("dataSymbols").value(split.totalSymbols)
         json.name("categories").value(split.parts.size)
         json.endObject()
+        // Every declared category appears, including the ones with no rows: a
+        // reader that finds nothing must be able to tell "empty" from "not in
+        // this build". A category with no rows has no file.
+        val partsByCategory = split.parts.groupBy { it.categoryId }
+        val declared = categories.map { it.first }.toSet()
         json.name("categories").beginArray()
+        for ((id, label) in categories) {
+            writeIndexCategory(json, summary, id, label, partsByCategory[id].orEmpty())
+        }
         for (part in split.parts) {
-            json.beginObject()
-            json.name("id").value(part.id)
-            json.name("category").value(part.categoryId)
-            json.name("label").value(part.label)
-            json.name("file").value(
-                "InternalCPP/${categoryFileName(part.id, summary)}"
+            if (part.categoryId in declared) continue
+            writeIndexCategory(
+                json,
+                summary,
+                part.categoryId,
+                part.label,
+                partsByCategory[part.categoryId].orEmpty()
             )
-            if (part.part > 0) json.name("part").value(part.part)
-            json.name("classes").value(part.counts.classes)
-            json.name("functions").value(part.counts.functions)
-            json.name("symbols").value(part.counts.symbols)
-            json.endObject()
         }
         json.endArray()
         json.name("classToCategory").beginObject()
@@ -368,6 +377,45 @@ object OffsetExporter {
         json.flush()
         writer.write("\n")
         writer.flush()
+    }
+
+    /**
+     * Writes one index entry for a category and every file it was split into.
+     *
+     * @param json open writer.
+     * @param summary the completed scan.
+     * @param categoryId logical category.
+     * @param label human-readable label.
+     * @param parts the files the category was split into, empty when it holds
+     *   no rows.
+     */
+    private fun writeIndexCategory(
+        json: JsonWriter,
+        summary: ScanResultSummary,
+        categoryId: String,
+        label: String,
+        parts: List<CategoryPart>
+    ) {
+        json.beginObject()
+        json.name("category").value(categoryId)
+        json.name("label").value(label)
+        val first = parts.minByOrNull { it.part }
+        if (first == null) {
+            json.name("file").nullValue()
+        } else {
+            json.name("file").value("InternalCPP/${categoryFileName(first.id, summary)}")
+        }
+        json.name("files").beginArray()
+        for (part in parts.sortedBy { it.part }) {
+            json.value("InternalCPP/${categoryFileName(part.id, summary)}")
+        }
+        json.endArray()
+        json.name("parts").value(parts.size)
+        json.name("classes").value(parts.sumOf { it.counts.classes })
+        json.name("functions").value(parts.sumOf { it.counts.functions })
+        json.name("symbols").value(parts.sumOf { it.counts.symbols })
+        json.name("entries").value(parts.sumOf { it.counts.total })
+        json.endObject()
     }
 
     /**

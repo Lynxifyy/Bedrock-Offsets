@@ -132,7 +132,9 @@ class OffsetZipBuilder(
                 zip,
                 "InternalCPP/${OffsetExporter.internalIndexFileName(summary)}",
                 split.parts.size
-            ) { writer -> OffsetExporter.writeInternalIndex(summary, split, writer) }
+            ) { writer ->
+                OffsetExporter.writeInternalIndex(summary, split, classifier.categories(), writer)
+            }
 
             for ((index, part) in split.parts.withIndex()) {
                 val name = "InternalCPP/${OffsetExporter.categoryFileName(part.id, summary)}"
