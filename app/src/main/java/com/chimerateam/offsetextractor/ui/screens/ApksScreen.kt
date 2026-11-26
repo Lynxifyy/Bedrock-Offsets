@@ -287,6 +287,14 @@ fun ApksScreen(onExtract: (File) -> Unit, modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Downloads are deleted as soon as the library is read, " +
+                    "so a 1 GB APK does not stay on the device. Turn this off in " +
+                    "Settings > Storage.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = manualUrl,

@@ -113,6 +113,10 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val maxSlotsPerClass by viewModel.maxSlotsPerClass.collectAsStateWithLifecycle()
     val includeCombined by viewModel.includeCombined.collectAsStateWithLifecycle()
     val lowMemoryWarnings by viewModel.lowMemoryWarnings.collectAsStateWithLifecycle()
+    val storageUsage by viewModel.storageUsage.collectAsStateWithLifecycle()
+    val deleteApkAfterScan by viewModel.deleteApkAfterScan.collectAsStateWithLifecycle()
+    val cacheCapMb by viewModel.cacheCapMb.collectAsStateWithLifecycle()
+    val reduceMotion by viewModel.reduceMotion.collectAsStateWithLifecycle()
     val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
     val exportProgress by ExportJobRepository.progress.collectAsStateWithLifecycle()
 
@@ -489,7 +493,22 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                                 viewModel.onExportActionTaken(
                                     "Default category rules restored."
                                 )
-                            }
+                            },
+                            storageUsage = storageUsage,
+                            deleteApkAfterScan = deleteApkAfterScan,
+                            onDeleteApkAfterScanChange = {
+                                viewModel.setDeleteApkAfterScan(it)
+                            },
+                            cacheCapMb = cacheCapMb,
+                            onCacheCapMbChange = { viewModel.setCacheCapMb(it) },
+                            onFreeUpSpace = { viewModel.freeUpSpace() },
+                            onDeleteArea = { viewModel.deleteStorageArea(it) },
+                            onDeleteFile = { viewModel.deleteStorageFile(it) },
+                            jobRunning = state.phase == ScannerPhase.Extracting ||
+                                state.phase == ScannerPhase.Scanning ||
+                                exportProgress.isRunning,
+                            reduceMotion = reduceMotion,
+                            onReduceMotionChange = { viewModel.setReduceMotion(it) }
                         )
                     }
                 }

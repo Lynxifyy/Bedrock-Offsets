@@ -10,6 +10,11 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import java.io.File
+import com.chimerateam.offsetextractor.data.storage.StorageArea
+import com.chimerateam.offsetextractor.data.storage.StorageAreaId
+import com.chimerateam.offsetextractor.data.storage.StorageFile
+import com.chimerateam.offsetextractor.data.storage.StorageUsage
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
 import org.junit.Assert.assertEquals
@@ -108,9 +113,9 @@ class SettingsScreenTest {
         var slots: Int? = null
         render(maxSlots = 4096, onSlots = { slots = it })
 
-        composeTestRule.onNodeWithText("256").performScrollTo().performClick()
+        composeTestRule.onNodeWithText("1024").performScrollTo().performClick()
 
-        assertEquals(256, slots)
+        assertEquals(1024, slots)
     }
 
     @Test
@@ -130,6 +135,112 @@ class SettingsScreenTest {
     fun theStoragePanelShowsTheBuildIdAndCacheSize() {
         render()
 
-        composeTestRule.onNodeWithText("deadbeef").performScrollTo().assertExists()
+        composeTestRule
+            .onNodeWithText("Last scanned build: deadbeef")
+            .performScrollTo()
+            .assertExists()
+    }
+
+    @Test
+    fun theStorageSectionListsEveryGroupWithItsSize() {
+        composeTestRule.setContent {
+            BedrockOffsetExtractorTheme {
+                SettingsScreen(
+                    themeMode = ThemeMode.Dark,
+                    onThemeModeChange = {},
+                    cacheSizeLabel = "3 KB",
+                    forceRescan = false,
+                    onForceRescanChange = {},
+                    onClearCache = {},
+                    storageUsage = StorageUsage(
+                        areas = listOf(
+                            StorageArea(
+                                id = StorageAreaId.Apks,
+                                bytes = 2048L,
+                                files = listOf(
+                                    StorageFile(
+                                        File("/tmp/minecraft.apk"),
+                                        StorageAreaId.Apks,
+                                        2048L,
+                                        neededByResult = false
+                                    )
+                                )
+                            ),
+                            StorageArea(
+                                id = StorageAreaId.Internal,
+                                bytes = 1024L,
+                                files = listOf(
+                                    StorageFile(
+                                        File("/tmp/abc.ndjson"),
+                                        StorageAreaId.Internal,
+                                        1024L,
+                                        neededByResult = true
+                                    )
+                                )
+                            )
+                        ),
+                        totalBytes = 3072L
+                    )
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Using 3.0 KB").performScrollTo().assertExists()
+        composeTestRule
+            .onNodeWithText("Downloaded APKs — 2.0 KB (1)")
+            .performScrollTo()
+            .assertExists()
+        composeTestRule
+            .onNodeWithText("Internal tables and shards — 1.0 KB (1)")
+            .performScrollTo()
+            .assertExists()
+    }
+
+    @Test
+    fun theFreeUpSpaceActionIsReported() {
+        var freed = 0
+        composeTestRule.setContent {
+            BedrockOffsetExtractorTheme {
+                SettingsScreen(
+                    themeMode = ThemeMode.Dark,
+                    onThemeModeChange = {},
+                    cacheSizeLabel = "0 B",
+                    forceRescan = false,
+                    onForceRescanChange = {},
+                    onClearCache = {},
+                    onFreeUpSpace = { freed++ }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Free up space").performScrollTo().performClick()
+
+        assertEquals(1, freed)
+    }
+
+    @Test
+    fun theDeleteAfterScanSwitchReportsItsNewValue() {
+        var delete: Boolean? = null
+        composeTestRule.setContent {
+            BedrockOffsetExtractorTheme {
+                SettingsScreen(
+                    themeMode = ThemeMode.Dark,
+                    onThemeModeChange = {},
+                    cacheSizeLabel = "0 B",
+                    forceRescan = false,
+                    onForceRescanChange = {},
+                    onClearCache = {},
+                    deleteApkAfterScan = true,
+                    onDeleteApkAfterScanChange = { delete = it }
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithContentDescription("Delete downloaded APK after scan")
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(false, delete)
     }
 }

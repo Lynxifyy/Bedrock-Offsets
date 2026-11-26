@@ -191,6 +191,11 @@ class MainViewModel(
     /** Hard cap on cached data in megabytes; zero disables it. */
     val cacheCapMb: StateFlow<Int> = _cacheCapMb.asStateFlow()
 
+    private val _reduceMotion = MutableStateFlow(false)
+
+    /** Whether animations are reduced to instant transitions. */
+    val reduceMotion: StateFlow<Boolean> = _reduceMotion.asStateFlow()
+
     private val _storageNotice = MutableStateFlow<String?>(null)
 
     /** One-line storage message the UI shows once, then dismisses. */
@@ -242,6 +247,9 @@ class MainViewModel(
             viewModelScope.launch(supervisor + ioDispatcher) {
                 store.cacheCapMb.collect { _cacheCapMb.value = it }
             }
+            viewModelScope.launch(supervisor + ioDispatcher) {
+                store.reduceMotion.collect { _reduceMotion.value = it }
+            }
         }
         // A previous process may have died mid-download or mid-ZIP. Sweeping on
         // start is what stops those leftovers from becoming the reason the next
@@ -282,6 +290,18 @@ class MainViewModel(
     /** Recomputes the storage list from the UI thread. */
     fun refreshStorage() {
         viewModelScope.launch(supervisor + ioDispatcher) { refreshStorageUsage() }
+    }
+
+    /**
+     * Records whether animations are reduced.
+     *
+     * @param reduce the new preference.
+     */
+    fun setReduceMotion(reduce: Boolean) {
+        _reduceMotion.value = reduce
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            preferences?.setReduceMotion(reduce)
+        }
     }
 
     /** Clears the one-line storage message once it has been shown. */
