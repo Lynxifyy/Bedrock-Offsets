@@ -30,6 +30,7 @@ import com.chimerateam.offsetextractor.data.patterns.SignaturePack
 import com.chimerateam.offsetextractor.data.saf.AndroidDocumentWriter
 import com.chimerateam.offsetextractor.data.saf.AndroidSafApkAccess
 import com.chimerateam.offsetextractor.export.ExportService
+import com.chimerateam.offsetextractor.ui.log.LogFile
 import com.chimerateam.offsetextractor.ui.BedrockOffsetExtractorApp
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
@@ -55,11 +56,12 @@ class MainActivity : ComponentActivity() {
                     File(filesDir, ScanCache.DIRECTORY_NAME).apply { mkdirs() }
                 )
                 val pack = SignaturePack.loadDocument(applicationContext)
+                val logDir = File(cacheDir, "logs").apply { mkdirs() }
                 val storage = StorageManager.create(
                     cacheDir = cacheDir,
                     cache = scanCache,
                     exportDir = File(cacheDir, "exports").apply { mkdirs() },
-                    logDir = File(cacheDir, "logs").apply { mkdirs() }
+                    logDir = logDir
                 )
                 MainViewModel.create(
                     safAccess = AndroidSafApkAccess(applicationContext),
@@ -73,6 +75,7 @@ class MainActivity : ComponentActivity() {
                     stringAnchors = pack.stringAnchors,
                     categories = CategoryCatalog.load(applicationContext),
                     storage = storage,
+                    logFile = LogFile(logDir),
                     exportStarter = ExportStarter { destination, summary, categories, combined ->
                         // The write grant must be taken before the service
                         // starts; the activity may be gone by the time it runs.

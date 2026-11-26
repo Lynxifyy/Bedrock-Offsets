@@ -136,8 +136,11 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
 
     val context = LocalContext.current
     val copyLog = {
-        val text = logEntries.joinToString("\n") { entry ->
-            "${LogTimestamp.format(entry.timestampMillis)} ${entry.render()}"
+        // The pane holds the newest lines only; the file has the whole run.
+        val text = viewModel.logText().ifBlank {
+            logEntries.joinToString("\n") { entry ->
+                "${LogTimestamp.format(entry.timestampMillis)} ${entry.render()}"
+            }
         }
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("Bedrock log", text))

@@ -23,12 +23,16 @@ enum class LogLevel {
  * @property level severity used for colour coding.
  * @property tag short origin tag such as `SAF`, `RUST` or `UI`.
  * @property message the line body.
+ * @property scanId the scan this line belongs to; empty before the first scan.
+ *   The log pane only shows the current scan, so a line can never appear next
+ *   to a result from a different run.
  */
 data class LogEntry(
     val timestampMillis: Long,
     val level: LogLevel,
     val tag: String,
-    val message: String
+    val message: String,
+    val scanId: String = ""
 ) {
     /** Formats the entry the way it appears in the log pane. */
     fun render(): String = "[$tag] $message"

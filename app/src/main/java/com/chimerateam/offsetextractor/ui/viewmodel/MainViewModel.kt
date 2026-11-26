@@ -39,6 +39,8 @@ import com.chimerateam.offsetextractor.data.storage.StorageManager
 import com.chimerateam.offsetextractor.data.storage.StorageUsage
 import com.chimerateam.offsetextractor.ui.error.ErrorMapper
 import com.chimerateam.offsetextractor.ui.log.LogEntry
+import com.chimerateam.offsetextractor.ui.log.LogFile
+import com.chimerateam.offsetextractor.ui.log.LogTimestamp
 import com.chimerateam.offsetextractor.ui.log.Logs
 import com.chimerateam.offsetextractor.ui.state.BatchProgress
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
@@ -112,6 +114,7 @@ class MainViewModel(
     private var categories: List<CategoryRule> = emptyList(),
     private val exportStarter: ExportStarter? = null,
     private val storage: StorageManager? = null,
+    private val logFile: LogFile? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = System::currentTimeMillis
 ) : ViewModel() {
@@ -125,8 +128,18 @@ class MainViewModel(
 
     private val _logEntries = MutableStateFlow<List<LogEntry>>(emptyList())
 
-    /** Retained log entries in chronological order, capped at [MAX_LOG_ENTRIES]. */
+    private val _scanId = MutableStateFlow("")
+
+    /**
+     * Lines of the scan that is on screen, in chronological order.
+     *
+     * Every entry is stamped with the scan it belongs to and the list is
+     * emptied when a scan starts, so a live log can never sit next to a result
+     * from another run.
+     */
     val logEntries: StateFlow<List<LogEntry>> = _logEntries.asStateFlow()
+
+    private var scanCounter = 0
 
     private val resultCache = cache?.let(::ResultCache)
 
@@ -410,6 +423,7 @@ class MainViewModel(
      */
     fun onApkSelected(uri: android.net.Uri) {
         extractionJob?.cancel()
+        beginScan()
 
         // Fail-closed: clear any previous result before the new work starts so
         // the UI never shows offsets belonging to a different APK.
@@ -442,6 +456,7 @@ class MainViewModel(
      */
     fun onApkFileSelected(file: File) {
         extractionJob?.cancel()
+        beginScan()
         downloadedApk = file
         // The APK plus its library, shards and archive is about two gigabytes
         // for a 1 GB build. Refusing up front with the real numbers beats a
@@ -1752,8 +1767,10 @@ class MainViewModel(
     }
 
     private fun emit(entry: LogEntry) {
+        val stamped = if (entry.scanId.isEmpty()) entry.copy(scanId = _scanId.value) else entry
+        logFile?.append(stamped)
         _logEntries.update { existing ->
-            val appended = existing + entry
+            val appended = existing + stamped
             if (appended.size <= MAX_LOG_ENTRIES) {
                 appended
             } else {
@@ -1766,6 +1783,36 @@ class MainViewModel(
     fun clearLog() {
         _logEntries.value = emptyList()
         emit(Logs.info(TAG_UI, "Log cleared."))
+    }
+
+    /**
+     * Every line of the current run, including the ones the pane dropped.
+     *
+     * @return the spilled log when one is configured, otherwise the retained
+     *   entries.
+     */
+    fun logText(): String {
+        val spilled = logFile?.read().orEmpty()
+        if (spilled.isNotBlank()) return spilled
+        return _logEntries.value.joinToString("\n") { entry ->
+            "${LogTimestamp.format(entry.timestampMillis)} ${entry.render()}"
+        }
+    }
+
+    /**
+     * Starts a new scan: new identifier, and the previous result cleared.
+     *
+     * The result, the log lines and the export job all carry the same
+     * identifier, so the screen can never show one scan's offsets beside
+     * another scan's progress.
+     */
+    private fun beginScan() {
+        _scanId.value = "scan-" + clock() + "-" + (++scanCounter)
+        _logEntries.update { existing -> existing.filter { it.scanId == _scanId.value } }
+        // The file backs Copy and Share, so it holds one run: keeping older
+        // runs would hand the user a log that does not describe the result on
+        // screen.
+        logFile?.delete()
     }
 
     /** Result of the vtable pass: the map plus any failure detail. */
@@ -1805,7 +1852,8 @@ class MainViewModel(
             stringAnchors: List<StringAnchorSpec> = emptyList(),
             categories: List<CategoryRule> = emptyList(),
             exportStarter: ExportStarter? = null,
-            storage: StorageManager? = null
+            storage: StorageManager? = null,
+            logFile: LogFile? = null
         ): MainViewModel = MainViewModel(
             safAccess = safAccess,
             engine = engine,
@@ -1818,7 +1866,8 @@ class MainViewModel(
             preferences = preferences,
             categories = categories,
             exportStarter = exportStarter,
-            storage = storage
+            storage = storage,
+            logFile = logFile
         )
     }
 }
