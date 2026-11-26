@@ -112,6 +112,69 @@ python3 scripts/validate_caramel_pack.py caramel/offsets_26.60.json --library li
 caramel/offsets_26.60.json: ok, 35 items (13 found, 0 partial, 22 missing)
 ```
 
+### Done in phase E-lite, step 1 (base/version consistency)
+
+- `feat(engine): version the engine output and key the cache on base and engine`
+  — `engine_version()` = crate version + `ENGINE_SCHEMA_VERSION` (`"0.1.0+2"`),
+  carried in `SectionMap`, `InternalSummary`, `manifest.json` and the cache key;
+  `InternalTable.require` refuses a table written by another engine or base;
+  category documents moved to `schemaVersion: 2`.
+- `scripts/verify_load_base.py` — reads the ELF headers with no external tools
+  and recovers the base every row was written against. On the real 26.60
+  library and today's table: 293,871 `sub_` names and 6,386 `vtableOffset`
+  values all agree with base 0, none with 0x2463f0.
+- Fresh end-to-end run of the current engine on the real library
+  (`real_library_stats`, 95 s, 1074 MB peak, 717,633,086-byte table):
+  `functions=791952 fdes=791952 missing=0`, `rows=809692`, `slots=865399`.
+
+### Done in phase E-lite, step 2 (the string-anchor pass, and the section-12 numbers)
+
+- `test(internal): cover the string-anchor pass` — `tests/string_anchor_test.rs`,
+  3 cases: a planted `ADRP`+`ADD` pair names its function with
+  `nameSource: "string"`; an absent string is counted in `notFound`; two
+  functions computing the same address both get the name and `status:
+  "ambiguous"`. The fixture grew `build_library_with_references`,
+  `build_library_with_two_anchor_references` and `plant_anchor_reference`
+  (`tests/support/mod.rs`).
+- `docs(CARAMEL_26.60_SURFACE): measure per-class naming and the anchor route`
+  — new section 7 (per-gameplay-class RTTI/slot-name/real-name table, the anchor
+  occurrence and refsite census) and a correction of the claim that the six
+  component names "belong to a different Bedrock build": they are in the
+  binary as `entt::internal::pretty_function() [Type = …]` and as
+  `entt::basic_storage<…>` mangled names, they simply have no vtable and so can
+  never be RTTI classes.
+- `feat(scripts): measure_surface.py` + `scripts/tests/test_measure_surface.py`
+  (5 tests, hand-built ELF fixtures) — the script that produces every number in
+  section 7 of that document now has its own tests. Its per-class
+  "functions named after a slot" counter was wrong (it counted every function
+  whose name started with `Class::`, including real names); fixed and covered.
+- `AUDIT_REPORT.md` finding C4 records the starved anchor pass.
+
+```console
+$ python3 scripts/measure_surface.py --library libminecraftpe.so \
+    --table out-current/.ndjson --json analysis/surface-26.60.json
+dynsym            91,693 entries (79,316 functions, 11,354 objects)
+symtab            stripped
+functions         791,952   (symbol 75,720, jni 95, vtable 422,283, auto 293,854)
+real method name  75,817    class+slot name 422,281
+classes           6,386     vtable slots 865,399 in 62,306 groups
+access_chain  rtti 9/11 real method names 0/11   (same for every other group)
+$ python3 -m unittest discover -s scripts/tests -t .
+Ran 131 tests in 0.426s
+OK
+$ cd app/src/main/rust/offset_core && cargo fmt --all --check && \
+  cargo clippy --all-targets -- -D warnings && cargo test --all-targets
+17 suites, all ok (162 + 11 + 10 + 4 + 4 + 7 + 1 + 15 + 4 + 4 + 3 + 3 + 4 + 7 + 7 ... 0 failed)
+$ ./gradlew --offline :app:testDebugUnitTest :app:ktlintCheck
+BUILD SUCCESSFUL in 1s
+```
+
+Anchor census on 26.60 (occurrences in `.rodata` / code reference sites):
+`ActorOwnerComponent` 271/133, `StateVectorComponent` 316/164,
+`AABBShapeComponent` 125/69, `ActorTypeComponent` 12/8, `EntityRegistry` 8/0,
+`ActorComponentFactory` 38/0, `const char *entt::internal::pretty_function()
+[Type = ActorOwnerComponent]` 1/0.
+
 ### Not done in phase E-lite
 
 - Slot-meaning derivation (getter shape, member offsets, string anchors): the

@@ -119,8 +119,31 @@ ActorTypeComponent       0
 
 ```
 
-The single `EntityContext` hit is the substring inside `StrictEntityContext` in
-a mangled type name. Those six names belong to a different Bedrock build.
+An earlier version of this page concluded from that table that "those six names
+belong to a different Bedrock build". The table is right, the conclusion is
+wrong: it greps the *output documents*, where a component type can never appear
+because an EnTT component is a plain struct with no vtable and no `type_info`.
+The strings are in the library itself:
+
+```console
+$ python3 - <<'PY'   # printable string around each hit in .rodata
+...
+PY
+const char *entt::internal::pretty_function() [Type = ActorOwnerComponent]
+NSt6__ndk120__shared_ptr_emplaceIN4entt13basic_storageI19ActorOwnerComponent8EntityIdNS_9allocatorIS3_EEEENS5_IS4_EEEE
+const char *entt::internal::pretty_function() [Type = StateVectorComponent]
+NSt6__ndk120__shared_ptr_emplaceIN4entt13basic_storageI20StateVectorComponent8EntityIdNS_9allocatorIS3_EEEENS5_IS4_EEEE
+const char *entt::internal::pretty_function() [Type = AABBShapeComponent]
+20IStrictTickingSystemI22StrictExecutionContextI6FilterIJ20LocalPlayerComponentEE4ReadIJ18AABBShapeComponent28ClimbingLa
+const char *entt::internal::pretty_function() [Type = ActorTypeComponent]
+```
+
+So this build does carry `entt::basic_storage<ActorOwnerComponent, EntityId,
+std::allocator<ActorOwnerComponent>>` and a `StrictTickingSystem<...,
+Read<AABBShapeComponent, ClimbingLadderComponent ...>>`. The correct statement
+is: **the types exist in the build, and no static method in the engine today
+turns them into offsets.** Strings are the handle; section 7 measures how far a
+string anchor gets.
 
 ### What the build does have
 
@@ -328,6 +351,123 @@ $ python3 -c "import json,glob,collections; \
 791952 Counter({'vtable': 422283, 'auto': 293854, 'symbol': 75720, 'jni': 95})
 
 ```
+
+## 7. Naming per gameplay class, and the string-anchor route
+
+Measured with engine `0.1.0+2` (`engineVersion` in the payload) over the same
+table, by `scripts/measure_surface.py`, which is the reproducible form of
+sections 1 and 7:
+
+```console
+$ python3 scripts/measure_surface.py --library libminecraftpe.so \
+    --table /workspace/artifacts/out-current/.ndjson \
+    --json /workspace/artifacts/analysis/surface-26.60.json
+dynsym            91,693 entries (79,316 functions, 11,354 objects)
+symtab            stripped
+functions         791,952
+  from a symbol   75,720
+  from JNI        95
+  from a vtable   422,283
+  unnamed (sub_)  293,854
+  real method name            75,817
+  class+slot name 422,281
+classes           6,386
+vtable slots      865,399 in 62,306 groups (primary 178,691, named 865,399)
+data symbols      data 11,354
+ECS classes       ECS 3
+top owners        v8 24,557, cohtml 8,732, webrtc 7,515, std 4,094, Xal 2,598, csl 2,344, renoir 2,105, void cohtml 1,845
+access_chain   rtti  9/11 real method names  0/11
+entity_list    rtti  3/8  real method names  0/8
+actor_fields   rtti  1/6  real method names  0/6
+combat         rtti  4/7  real method names  0/7
+render         rtti  5/11 real method names  0/11
+worldgen       rtti  7/11 real method names  0/11
+```
+
+Per class (`rtti` = the class has an RTTI record; `slot names` = functions named
+`Class::vfunc_N`; `real names` = functions with an actual method name):
+
+| group | class | RTTI | slot names | real names |
+| --- | --- | --- | ---: | ---: |
+| access_chain | `MinecraftGame` | yes | 440 | 0 |
+| | `ClientInstance` | yes | 462 | 0 |
+| | `LocalPlayer` | yes | 159 | 0 |
+| | `BlockSource` | yes | 67 | 0 |
+| | `SoundEngine` | yes | 50 | 0 |
+| | `Level` | yes | 30 | 0 |
+| | `LoopbackPacketSender` | yes | 12 | 0 |
+| | `Dimension` | yes | 11 | 0 |
+| | `GuiData` | yes | 7 | 0 |
+| | `Options`, `PacketSender` | no | 0 | 0 |
+| entity_list | `Player` | yes | 55 | 0 |
+| | `Actor` | yes | 10 | 0 |
+| | `Mob` | yes | 1 | 0 |
+| | `EntityRegistry`, `EntityContext`, `ActorOwnerComponent`, `WeakEntityRef` | no | 0 | 0 |
+| actor_fields | `AttributeInstance` | yes | 3 | 0 |
+| | `StateVectorComponent`, `AABBShapeComponent`, `ActorTypeComponent`, `HitResult`, `ActorFlags` | no | 0 | 0 |
+| combat | `GameMode` | yes | 21 | 0 |
+| | `Arrow` | yes | 11 | 0 |
+| | `ItemStack` | yes | 8 | 0 |
+| | `Item` | yes | 1 | 0 |
+| | `Trident`, `ProjectileComponent`, `ItemUseOnEvent` | no | 0 | 0 |
+| render | `LevelRendererPlayer` | yes | 48 | 0 |
+| | `MinecraftUIRenderContext` | yes | 42 | 0 |
+| | `LevelRenderer` | yes | 15 | 0 |
+| | `Font` | yes | 7 | 0 |
+| | `BaseActorRenderer` | yes | 2 | 0 |
+| | `ScreenContext`, `ScreenView`, `UIControl`, `Tessellator`, `Camera`, `Matrix` | no | 0 | 0 |
+| worldgen | `OverworldGenerator` | yes | 13 | 0 |
+| | `ChunkViewSource` | yes | 9 | 0 |
+| | `LiquidBlock` | yes | 8 | 0 |
+| | `BlockPalette` | yes | 6 | 0 |
+| | `WorldGenerator` | yes | 4 | 0 |
+| | `ChunkSource` | yes | 3 | 0 |
+| | `Biome` | yes | 2 | 0 |
+| | `LevelChunk`, `BlockLegacy`, `BiomeSource`, `FlowingLiquid` | no | 0 | 0 |
+
+Not one gameplay class has a real method name. That is not a gap in this run;
+it is what an unexported, stripped build looks like.
+
+### How far a `.rodata` string anchor gets
+
+The anchor pass (`.rodata` string → `ADRP`+`ADD`/`LDR` site → enclosing
+function) is now covered by `tests/string_anchor_test.rs`. Three cases are
+asserted on a synthetic library: a planted pair names its function
+(`nameSource: "string"`), an absent string is counted in `notFound`, and two
+functions computing the same address both get the name with `status:
+"ambiguous"` so neither is presented as a fact.
+
+Candidate anchors on the real library (`refsites` = code sites computing the
+string's address):
+
+```text
+ActorOwnerComponent      occurrences=271  refsites=133
+StateVectorComponent     occurrences=316  refsites=164
+AABBShapeComponent       occurrences=125  refsites= 69
+ActorTypeComponent       occurrences= 12  refsites=  8
+EntityRegistry           occurrences=  8  refsites=  0
+ActorComponentFactory    occurrences= 38  refsites=  0
+"Level::tick"            occurrences=  1  refsites=  0
+const char *entt::internal::pretty_function() [Type = ActorOwnerComponent]
+                         occurrences=  1  refsites=  0
+```
+
+Two dead ends and one opening:
+
+* A bare component name is referenced by tens to hundreds of functions, so an
+  anchor on it can only produce `ambiguous` rows.
+* The unique `pretty_function` string is referenced by **nothing** in `.text`:
+  it is dead data, and no relocation in `.rela.dyn` points at it either. A
+  `.rodata` string is only useful when its address is actually computed.
+* The `entt::basic_storage<...>` mangled names are in `.rodata` and hold the
+  component the storage belongs to — the mapping this page calls missing above.
+  Turning them into offsets needs a second hop (string → pointer table slot →
+  referencing function), which the engine does not do yet.
+
+So the shipped pack still carries no anchors, and that is now a decision with
+numbers behind it rather than a silent zero: `ambiguous: 0` and `notFound: 0`
+in a payload with an empty `stringAnchors` request mean "none supplied", not
+"all failed".
 
 ## What I could not measure
 

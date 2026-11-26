@@ -70,6 +70,18 @@ pub const JNI_NAME: &str = "Java_com_example_Fixture_nativeTick";
 /// Address of the JNI export, one function into `.text`.
 pub const JNI_ADDRESS: u64 = TEXT_ADDRESS + FRAME_BYTES as u64;
 
+/// A `.rodata` string the anchor test points a function at.
+pub const ANCHOR_STRING: &str = "FixtureComponentTable";
+
+/// Address of [`ANCHOR_STRING`].
+pub const ANCHOR_STRING_ADDRESS: u64 = RODATA_ADDRESS + 0x40;
+
+/// Index of the planted function that computes [`ANCHOR_STRING_ADDRESS`].
+pub const ANCHOR_FUNCTION_INDEX: usize = FUNCTIONS - 1;
+
+/// Address of [`ANCHOR_FUNCTION_INDEX`].
+pub const ANCHOR_FUNCTION: u64 = TEXT_ADDRESS + ((FUNCTIONS - 1) * FRAME_BYTES) as u64;
+
 /// Address of the planted data symbol.
 pub const DATA_SYMBOL_ADDRESS: u64 = DATA_REL_RO_ADDRESS + 0x200;
 
@@ -210,8 +222,42 @@ fn eh_frame() -> Vec<u8> {
     record
 }
 
+/// Writes the `ADRP`+`ADD` pair that computes [`ANCHOR_STRING_ADDRESS`] into
+/// function `index`, so the engine's string-anchor pass has a reference to find.
+fn plant_anchor_reference(text: &mut [u8], index: usize) {
+    let base = index * FRAME_BYTES + 16;
+    let pc = TEXT_ADDRESS + base as u64;
+    let page = ANCHOR_STRING_ADDRESS & !0xFFF;
+    let offset = ANCHOR_STRING_ADDRESS & 0xFFF;
+    let delta = (page as i64 - (pc & !0xFFF) as i64) >> 12;
+    let immlo = (delta & 0x3) as u32;
+    let immhi = ((delta >> 2) & 0x7FFFF) as u32;
+    let adrp = 0x9000_0000u32 | (immlo << 29) | (immhi << 5) | 8;
+    let add = 0x9100_0000u32 | ((offset as u32) << 10) | (8 << 5) | 8;
+    text[base..base + 4].copy_from_slice(&adrp.to_le_bytes());
+    text[base + 4..base + 8].copy_from_slice(&add.to_le_bytes());
+}
+
+/// Builds the synthetic library, but with *two* functions computing the anchor
+/// string's address, which is what makes an anchor ambiguous.
+pub fn build_library_with_two_anchor_references() -> Vec<u8> {
+    build_library_with_references(&[ANCHOR_FUNCTION_INDEX, SECOND_ANCHOR_FUNCTION_INDEX])
+}
+
+/// Index of the second function of [`build_library_with_two_anchor_references`].
+/// A function no symbol and no vtable slot names, so only the anchor can name
+/// it: functions 0..=3 are covered by the tick symbol, the JNI export and the
+/// planted vtables.
+pub const SECOND_ANCHOR_FUNCTION_INDEX: usize = 4;
+
 /// Builds the synthetic library.
 pub fn build_library() -> Vec<u8> {
+    build_library_with_references(&[ANCHOR_FUNCTION_INDEX])
+}
+
+/// Builds the synthetic library with the anchor reference planted in each of
+/// `indices`.
+fn build_library_with_references(indices: &[usize]) -> Vec<u8> {
     // `.text`: every function starts with the canonical frame push, then a
     // per-function immediate so no two signatures collide.
     let mut text = Vec::with_capacity(FUNCTIONS * FRAME_BYTES);
@@ -229,8 +275,14 @@ pub fn build_library() -> Vec<u8> {
         }
     }
 
-    // `.rodata`: length-prefixed type names.
+    for index in indices {
+        plant_anchor_reference(&mut text, *index);
+    }
+
+    // `.rodata`: length-prefixed type names, then the anchor string.
     let mut rodata = vec![0u8; 0x80];
+    let anchor_at = (ANCHOR_STRING_ADDRESS - RODATA_ADDRESS) as usize;
+    rodata[anchor_at..anchor_at + ANCHOR_STRING.len()].copy_from_slice(ANCHOR_STRING.as_bytes());
     let mut cursor = 0x10;
     let mut name_addresses = Vec::new();
     for index in 0..CLASSES {

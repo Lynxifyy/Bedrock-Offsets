@@ -4,16 +4,23 @@ Scope: the whole repository, with the real `libminecraftpe.so` from
 `minecraft-26-60.apk` as the reference input. Every number below was produced by
 a command in this document; every finding quotes the code it is about.
 
-Reference run (host, `cargo test --release --test host_shard_measure`), after
-every fix in this document:
+Reference run (host, `BEDROCK_LIB=libminecraftpe.so cargo test --release --test
+real_library_stats -- --ignored --nocapture`), re-run after every fix in this
+document:
 
 ```
-path=/workspace/artifacts/out-shards7/categories-measure
-coverage: functions=791952 fdes=791952 missing=0 slots=865399
-          truncated=false withoutFileOffset=0
-classes=6386
-peak resident: 1079 MB
+functions 791952  classes 6386  vtableSlots 865399  dataSymbols 11354
+rows 809692       named 498098  autoNamed 293854
+coverage {"fdeFunctions": 791952, "fdeMissing": 0, "functionsMatchFdes": true,
+          "functionsWithoutFileOffset": 0, "truncated": false}
+signatures 433437 unique 390121   imageBase 0
+tableBytes 717633086               peak resident: 1074 MB
+finished in 95s
 ```
+
+(`rows` is classes + functions + data symbols: 6,386 + 791,952 + 11,354 =
+809,692. The earlier `out-shards7` category run in this repository predates two
+of the fixes and is not comparable; the numbers above are today's engine.)
 
 The first reference run of this audit reported `functions=883574` with
 `withoutFileOffset=814`. Both numbers were wrong and both are explained below:
@@ -25,8 +32,8 @@ and 814 rows had no bytes in the file so their offset was written as `0x0`
 | Severity | Count | Fixed here |
 | --- | --- | --- |
 | critical | 4 | 4 |
-| high | 8 | 6 |
-| medium | 8 | 3 |
+| high | 9 | 7 |
+| medium | 9 | 4 |
 | low | 4 | 2 |
 
 The rest of this file is grouped as the brief asks: (A) crash and data loss,
@@ -154,16 +161,19 @@ and `::catch_panics_passes_successful_values_through`.
 
 Measured coverage on 26.60:
 
-| Kind | Count | Written to the output | Read by Kotlin |
+| Kind | Count (today's engine) | Written to the output | Read by Kotlin |
 | --- | --- | --- | --- |
 | RTTI classes | 6,386 | yes (`classes` map per document) | yes (`InternalIndex`) |
 | vtable slots | 865,399 | yes (`slots` array) | yes |
-| functions (FDE + symbols) | 883,574 | yes (`functions` array) | yes, after C1 |
+| functions (FDE + symbols) | 791,952 | yes (`functions` array) | yes, after C1 |
 | FDE functions | 791,952 | yes | — |
-| FDE functions with no row | 0 | — | — |
+| FDE functions with no row | 0 (`fdeMissing`) | — | — |
 | data symbols | 11,354 | yes (`symbols` array) | yes |
 | signature offsets | 68 verified | yes | yes |
-| functions without a file offset | 814 | written with a flag | yes |
+| functions without a file offset | 0 | — | — |
+
+`functions` was 883,574 before finding A4 in the 26.60 section: 91,622 of those
+rows were vtable slots pointing at data, not at code, and are gone.
 
 ### [SEVERITY: high] B1 — A wrong file offset was written as `0` without a count
 
@@ -304,30 +314,87 @@ the UI bucket, and `cereal`, `v8`, `v8_inspector`, `sdl`, `dcsctp`, `protobuf`,
 
 ---
 
+### [SEVERITY: medium] C4 — The `.rodata` string-anchor pass was untested and starved
+
+`src/internal.rs:1515`:
+
+```rust
+    if options.string_anchors.is_empty() {
+        return;
+    }
+```
+
+`app/src/main/assets/patterns.json` (the only pack the app ships) has two keys:
+
+```console
+$ python3 -c "import json; print(list(json.load(open('app/src/main/assets/patterns.json'))))"
+['patterns', 'internalPatterns']
+```
+
+So `string_anchors` was empty on every run, the pass returned before scanning a
+single instruction, and `ambiguous`/`notFound` stayed at `0` in every payload.
+Nothing distinguished that from a pass that ran and failed. There was also no
+test: `grep -rn "string_anchor" tests/` returned nothing before this change, so
+a wrong `ADRP` decode would never have been noticed either.
+
+**Fix.** The pass is now tested end to end against the synthetic library
+(`tests/string_anchor_test.rs`, 3 cases: names its function with
+`nameSource: "string"`, counts an absent string in `notFound`, and marks two
+candidates `status: "ambiguous"` instead of picking one). The fixture grew the
+machinery to plant an `ADRP`+`ADD` pair (`tests/support/mod.rs`,
+`plant_anchor_reference`).
+
+The pack still ships no anchors, and `docs/CARAMEL_26.60_SURFACE.md` section 7
+records why with measurements instead of leaving a silent zero: a bare
+component name has 271/316/125/12 occurrences and 133/164/69/8 code reference
+sites on 26.60, so it can only produce ambiguity; the unique
+`entt::internal::pretty_function() [Type = ActorOwnerComponent]` string is
+referenced by no code and no relocation (dead data); the
+`entt::basic_storage<...>` names need a second hop the engine does not do yet.
+
+**Test.** `cargo test --test string_anchor_test` — 3 passed.
+
+---
+
 ## D. Wrong output and organisation
 
-Measured distribution after the fixes (901,314 rows total):
+Measured distribution after the fixes, on the real library
+(`BEDROCK_LIB=libminecraftpe.so BEDROCK_CATEGORIES=assets/categories.json
+BEDROCK_OUT=/workspace/artifacts/out-cat2 cargo test --release --test
+host_shard_measure -- --ignored`):
+
+```text
+path=/workspace/artifacts/out-cat2/categories-measure tableBytes=692815302
+rows=809692 classes=6386 functions=791952 symbols=11354
+coverage: functions=791952 fdes=791952 missing=0 slots=865399
+          truncated=false withoutFileOffset=0
+peak resident: 1079 MB
+```
 
 | Bucket | Classes | Functions | Symbols |
 | --- | --- | --- | --- |
-| thirdparty | 0 | 349,585 | 2,464 |
 | unnamed | 0 | 293,854 | 0 |
-| other_named | 4,136 | 156,323 | 8,886 |
-| scripting | 404 | 40,622 | 0 |
-| ui_screens | 744 | 21,653 | 0 |
-| ecs | 5 | 7,624 | 0 |
-| network_packets | 258 | 4,150 | 0 |
-| inventory_items | 280 | 2,686 | 0 |
-| rendering | 209 | 1,980 | 0 |
-| client_game | 27 | 1,204 | 0 |
-| world_level | 44 | 958 | 0 |
-| commands | 109 | 888 | 0 |
-| actor_entity | 40 | 696 | 0 |
-| audio | 49 | 495 | 0 |
-| combat | 30 | 251 | 0 |
-| block_placement | 29 | 232 | 0 |
-| movement | 1 | 220 | 4 |
-| input | 21 | 153 | 0 |
+| thirdparty | 0 | 292,924 | 2,464 |
+| other_named | 4,136 | 133,501 | 8,886 |
+| scripting | 404 | 34,958 | 0 |
+| ui_screens | 744 | 19,285 | 0 |
+| ecs | 5 | 5,140 | 0 |
+| network_packets | 258 | 3,932 | 0 |
+| inventory_items | 280 | 2,211 | 0 |
+| rendering | 209 | 1,631 | 0 |
+| client_game | 27 | 1,162 | 0 |
+| world_level | 44 | 895 | 0 |
+| actor_entity | 40 | 651 | 0 |
+| commands | 109 | 611 | 0 |
+| audio | 49 | 449 | 0 |
+| movement | 1 | 214 | 4 |
+| combat | 30 | 213 | 0 |
+| block_placement | 29 | 205 | 0 |
+| input | 21 | 116 | 0 |
+
+The parts are capped at 100,000 rows each, so the table above merges the 23
+documents back into their 18 categories; the sum is 6,386 + 791,952 + 11,354 =
+809,692 rows, the same rows the single table holds.
 
 ### [SEVERITY: medium] D1 — One 743 MB blob is the only internal output
 
@@ -517,6 +584,101 @@ table:
 **Test.** `tests/image_base_test.rs` — three cases: a segment base of `0` with
 `.text` at `0x6834bc0`, an image without program headers (falls back to the
 section base), and a shared object linked at `0x4000`.
+
+### [SEVERITY: high] A6 — a cached scan and an exported table carried no engine version and no load base, so the shift could outlive its fix
+
+`app/src/main/java/com/chimerateam/offsetextractor/data/cache/ResultCache.kt:32`
+(before this change):
+
+```kotlin
+        return cache.writeDocument(summary.buildId, gson.toJson(envelope))
+```
+
+and the matching read, at `:54`:
+
+```kotlin
+    fun load(buildId: String): ScanResultSummary? {
+```
+
+**Why it is wrong.** The cache key was the library's build id alone. Everything
+in the stored result depends on two more things: the engine that produced it and
+the load base it measured from. A device that scanned 26.60 *before* A5's fix
+holds a table whose 293,854 `sub_` names and 6,386 `vtableOffset` values are all
+`0x2463f0` too high, and the app keys that table on the same build id as a
+correct one, so the fix never reaches it: launch, choose the same APK, cache hit,
+same shifted table. There is nothing in the document to disagree with.
+
+The same gap existed one level down. The table's own header
+(`src/shards.rs:158`) says which version *label* it belongs to but not which
+engine or base wrote it:
+
+```rust
+            "{{\"schemaVersion\":1,\"generatedBy\":\"BedrockOffsetExtractor\",\
+             \"kind\":\"internal_cpp_category\",\"category\":\"{category}\",\
+```
+
+so `InternalTable.problem` (`InternalTable.kt:239`) could only check that the
+file existed and held the promised row count — a stale table passes both.
+
+**Fix.**
+
+1. The cache key is `buildId` + engine version + load base
+   (`ResultCache.keyFor`): `"410ac215-e0_1_0_2-b0"`.
+2. The engine version is now `crate version + ENGINE_SCHEMA_VERSION`
+   (`src/lib.rs:31`), `"0.1.0+2"`, so a change in output *shape* invalidates
+   every cache instead of relying on the semver of a crate that stays at 0.1.0.
+3. The internal summary records `engineVersion` and `imageBase`
+   (`InternalSummary`, `sections.rs`), and `InternalTable.require` refuses a
+   table whose identity differs from the scan's, with the reason spelled out:
+
+   ```
+   The internal offsets were written by engine 0.1.0 at base 0x2463f0 but this
+   scan is 0.1.0+2 at base 0x0. Re-run the internal extraction.
+   ```
+4. `manifest.json` in an archive records `imageBase` and `engineVersion`
+   (`OffsetZip.kt:335`), and the category documents are at `schemaVersion: 2`
+   because their class records gained a file offset.
+
+**Evidence, on the real 26.60 library.** `scripts/verify_load_base.py` reads the
+ELF headers itself (no desktop tools, no trust in the app's numbers) and then
+recovers the base each row was written against from the row itself:
+
+```text
+library            /workspace/artifacts/libminecraftpe.so (342,231,392 bytes)
+first PT_LOAD      vaddr=0x0 p_offset=0x0
+first section      addr=0x2463f0 (.gnu.hash)
+the two disagree   by 0x2463f0 (2,384,880 bytes)
+
+table              /workspace/artifacts/out-current/.ndjson      (today's engine)
+  auto_names_matching_load_base          293,871
+  auto_names_matching_section_base       0
+  vtable_offsets_matching_load_base      6,386
+  vtable_offsets_matching_section_base   0
+```
+
+**Tests.** `ResultCacheTest` (`aResultIsNotReusedWhenTheLoadBaseChanges`,
+`aResultIsNotReusedByAnotherEngineVersion`, `theCacheKeyCarriesBuildEngineAndBase`),
+`InternalTableTest` (`aTableWrittenByAnotherBaseIsRejected`,
+`aTableWrittenByAnotherEngineIsRejected`, `aTableThatAgreesWithTheScanIsAccepted`,
+`aTableWithoutRecordedIdentityIsStillAccepted`), `OffsetZipShardTest`
+(`theArchiveCarriesAReadmeAndTheCoverageBlocks` now asserts both manifest fields,
+`theManifestRecordsANonZeroBase`), and in Rust `image_base_test`
+(serialised `engine_version`), `rtti_test`
+(`the_vtable_offset_is_measured_from_the_load_base_not_the_first_section`),
+`lib::tests` (the version string carries the schema) and the shard header test
+(`schemaVersion == 2`).
+
+The two Rust tests fail against the old code, which is the point of them:
+
+```text
+test the_vtable_offset_is_measured_from_the_load_base_not_the_first_section ... FAILED
+assertion `left == right` failed: the offset must be measured from the PT_LOAD base
+  left: 8192
+ right: 12288
+test the_load_base_is_the_first_segment_even_when_the_first_section_is_higher ... FAILED
+  left: 109267904
+ right: 0
+```
 
 ### [SEVERITY: high] B5 — no gameplay method has a name in 26.60, so the access-chain functions cannot be derived by name
 
