@@ -1,3 +1,28 @@
+## v1.1.0-pre.1
+
+### Bug Fixes
+
+- name every function from the lowest `PT_LOAD` address, which is what the row's own `address` field is relative to: taking the first allocated section instead shifted all 293,854 `sub_<hex>` names and every `vtableOffset` by the 0x2463f0 header gap in the 26.60 library
+- stop naming a vtable slot that holds data: 91,622 of the 883,574 rows were not code (79,366 in `.rodata`, 11,441 in `.data.rel.ro`, 815 in `.bss`), and 79,366 of them were marked `verified` because the bytes at a `.rodata` address happened to decode as an AArch64 prologue. The table now holds 791,952 rows, exactly one per `.eh_frame` FDE
+- give every class record a real file offset: `vtableOffset` is image-base-relative, so a consumer patching at that value wrote into the wrong place
+- never write `fileOffset: "0x0"` for a row whose address has no bytes in the file; 814 rows pointed at the ELF header
+- require a category namespace prefix to end at a `::` boundary, which moved `other_named` from 234,404 to 156,323 functions and `thirdparty` from 437,960 to 349,585, and add the `ecs` and `scripting` buckets that 48,650 functions from `StrictTickingSystemFunctionAdapter`, `Scripting` and friends had no home in
+- report the category output's real path and size in the summary instead of guessing it
+
+### Features
+
+- the engine stamps its version (crate version plus output schema) and the load base it used into the summary, the manifest and the cache key, and refuses a cached table written by another engine or base
+- `scripts/verify_load_base.py` recovers the base from the ELF headers alone and checks a table against it
+- a 26.60 offset pack for CaramelClient: 35 requested items across the access chain, entity list, actor fields, combat, render, voice, replay and world generation, 13 found, 22 missing with the reason each one is missing recorded, validated by `scripts/validate_caramel_pack.py`
+- `scripts/measure_surface.py` prints what a library exposes (symbols, name sources, RTTI groups, EnTT storage, category targets) and is the reproducible form of the numbers in `docs/CARAMEL_26.60_SURFACE.md`
+- `AUDIT_REPORT.md` records every finding with the offending code, the fix and the test, grouped by severity
+
+### Tests
+
+- the `.rodata` string-anchor pass had no test and no data; it now has three tests on the synthetic library, including the ambiguous case, which names every candidate `status: "ambiguous"` instead of picking one
+- five tests for `scripts/measure_surface.py` over hand-built ELF fixtures, which caught a wrong per-class slot-name count in the script itself
+- the full ground-truth check against the real library: 6,386/6,386 `type_info` slots, 157,188/157,188 virtual slots, 791,952 FDEs matching `.eh_frame_hdr`
+
 ## v1.0.12
 
 ### Bug Fixes
