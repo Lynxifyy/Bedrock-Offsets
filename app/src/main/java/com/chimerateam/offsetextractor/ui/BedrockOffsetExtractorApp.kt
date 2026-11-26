@@ -10,8 +10,6 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -49,7 +47,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -75,10 +72,7 @@ import com.chimerateam.offsetextractor.ui.screens.ApksScreen
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
-import com.chimerateam.offsetextractor.ui.theme.Amber500
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
-import com.chimerateam.offsetextractor.ui.theme.BrandBlue
-import com.chimerateam.offsetextractor.ui.theme.BrandPink
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
 import com.chimerateam.offsetextractor.util.formatBytes
@@ -323,36 +317,15 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
         }
     }
 
-    // A finite sweep on tab change: it looks alive without an always-running
-    // animation that would keep Compose's test clock busy forever.
-    val sweepTarget = when (tab) {
-        AppTab.Scanner -> 0f
-        AppTab.Apks -> 1f
-        AppTab.Settings -> 2f
-    }
-    val sweep by animateFloatAsState(
-        targetValue = sweepTarget,
-        animationSpec = tween(650, easing = FastOutSlowInEasing),
-        label = "brand-sweep"
-    )
-    val topBarBrush = remember(sweep) {
-        Brush.linearGradient(
-            colors = listOf(BrandBlue, Amber500, BrandPink, BrandBlue),
-            start = Offset(-200f + sweep * 260f, 0f),
-            end = Offset(900f + sweep * 260f, 320f)
-        )
-    }
-
     BedrockOffsetExtractorTheme(themeMode = themeMode) {
         Scaffold(
             topBar = {
                 TopAppBar(
                     title = { Text("Bedrock Offset Extractor") },
-                    modifier = Modifier.background(topBarBrush),
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent,
-                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     ),
                     actions = {
                         IconButton(onClick = { viewModel.clearCache() }) {

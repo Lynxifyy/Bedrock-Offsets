@@ -17,6 +17,7 @@
 
 ### Features
 
+- the palette is a graphite system instead of the blue/pink brand: neutral surface steps, one accent (cool blue), one secondary (warm amber), semantic success/warning/info colours exposed through `LocalSemanticColors`, and no gradient app bar or literal colour anywhere in a screen
 - the archive carries `README.txt`, and `manifest.json` carries a `coverage` block (internal functions against `.eh_frame` FDEs, JNI exports, registered natives, pattern status, union count), a `categories` array with each category's file and row counts, and a `completeness` block
 - after the archive is written it is re-opened and every category document is walked with a streaming reader, so the export fails unless `scan rows == table rows == category entries == entries re-read from the ZIP`; the results card and the log show the numbers
 - `scripts/verify_release.py` checks the README, both coverage halves and the re-read completeness of a downloaded archive

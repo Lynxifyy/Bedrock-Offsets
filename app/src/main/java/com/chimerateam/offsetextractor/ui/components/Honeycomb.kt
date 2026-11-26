@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -59,6 +60,7 @@ fun HoneycombCell(
  */
 @Composable
 fun HoneycombSpinner(modifier: Modifier = Modifier, cellSize: Dp = 120.dp) {
+    val cellColour = MaterialTheme.colorScheme.primary
     val transition = rememberInfiniteTransition(label = "honeycomb")
     val pulse by transition.animateFloat(
         initialValue = 0.25f,
@@ -94,13 +96,13 @@ fun HoneycombSpinner(modifier: Modifier = Modifier, cellSize: Dp = 120.dp) {
                 val alpha = 0.15f + (pulse * (0.25f + (index % 3) * 0.25f))
                 drawPath(
                     path = hexagonPath(offset, radius * 0.55f),
-                    color = Color(0xFFFFB300).copy(alpha = alpha.coerceIn(0f, 1f)),
+                    color = cellColour.copy(alpha = alpha.coerceIn(0f, 1f)),
                     style = Stroke(width = 3f)
                 )
             }
             drawPath(
                 path = hexagonPath(center, radius),
-                color = Color(0xFFFFB300).copy(alpha = pulse.coerceIn(0f, 1f)),
+                color = cellColour.copy(alpha = pulse.coerceIn(0f, 1f)),
                 style = Stroke(width = 5f)
             )
         }

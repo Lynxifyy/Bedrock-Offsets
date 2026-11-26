@@ -60,15 +60,32 @@ class ThemeTest {
     fun amoledIsNotThePlainDarkPalette() {
         val schemes = schemesFor(ThemeMode.Dark, ThemeMode.Amoled)
 
-        assertEquals(SurfaceDark, schemes.getValue(ThemeMode.Dark).background)
+        assertEquals(Graphite950, schemes.getValue(ThemeMode.Dark).background)
         assertEquals(AmoledBlack, schemes.getValue(ThemeMode.Amoled).background)
+    }
+
+    @Test
+    fun theSemanticColoursFollowTheTheme() {
+        val captured = mutableMapOf<ThemeMode, SemanticColors>()
+        var current by mutableStateOf(ThemeMode.Dark)
+        composeTestRule.setContent {
+            BedrockOffsetExtractorTheme(themeMode = current) {
+                captured[current] = LocalSemanticColors.current
+            }
+        }
+        composeTestRule.waitForIdle()
+        current = ThemeMode.Light
+        composeTestRule.waitForIdle()
+
+        assertEquals(Success400, captured.getValue(ThemeMode.Dark).success)
+        assertEquals(Success700, captured.getValue(ThemeMode.Light).success)
     }
 
     @Test
     fun theLightPaletteUsesItsOwnBackground() {
         val schemes = schemesFor(ThemeMode.Light, ThemeMode.Dark)
 
-        assertEquals(Neutral50, schemes.getValue(ThemeMode.Light).background)
-        assertEquals(SurfaceDark, schemes.getValue(ThemeMode.Dark).background)
+        assertEquals(Graphite100, schemes.getValue(ThemeMode.Light).background)
+        assertEquals(Graphite950, schemes.getValue(ThemeMode.Dark).background)
     }
 }

@@ -18,7 +18,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.ui.components.HoneycombCell
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
-import com.chimerateam.offsetextractor.ui.theme.Honey300
 
 /**
  * Welcome state shown before an APK has been chosen.
@@ -40,7 +39,11 @@ fun IdleScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        HoneycombCell(size = 72.dp, color = Honey300, fillAlpha = 0.2f)
+        HoneycombCell(
+            size = 72.dp,
+            color = MaterialTheme.colorScheme.primary,
+            fillAlpha = 0.2f
+        )
         Spacer(Modifier.height(20.dp))
         Text(
             text = "Bedrock Offset Extractor",

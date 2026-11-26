@@ -5,8 +5,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -14,49 +14,62 @@ import androidx.compose.ui.unit.dp
 enum class ThemeMode { System, Light, Dark, Amoled }
 
 private val LightColors = lightColorScheme(
-    primary = Caramel600,
-    onPrimary = Color.White,
-    primaryContainer = Caramel100,
-    onPrimaryContainer = Caramel900,
-    secondary = Amber600,
-    onSecondary = Color.White,
-    secondaryContainer = Amber100,
-    onSecondaryContainer = Caramel900,
-    tertiary = Amber700,
-    background = Neutral50,
-    onBackground = Neutral900,
-    surface = Neutral50,
-    onSurface = Neutral900,
-    surfaceVariant = Caramel50,
-    onSurfaceVariant = Caramel800,
-    outline = Caramel600,
-    error = Color(0xFFBA1A1A)
+    primary = Accent600,
+    onPrimary = Ink50,
+    primaryContainer = Graphite200,
+    onPrimaryContainer = Ink900,
+    secondary = Secondary700,
+    onSecondary = Ink50,
+    secondaryContainer = Graphite200,
+    onSecondaryContainer = Ink900,
+    tertiary = Accent500,
+    onTertiary = Ink50,
+    background = Graphite100,
+    onBackground = Ink900,
+    surface = Graphite100,
+    onSurface = Ink900,
+    surfaceVariant = Graphite150,
+    onSurfaceVariant = Ink600,
+    surfaceContainer = Graphite150,
+    surfaceContainerHigh = Graphite200,
+    surfaceContainerHighest = Graphite300,
+    outline = Graphite500,
+    outlineVariant = Graphite300,
+    error = Error700,
+    onError = Ink50
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Caramel400,
-    onPrimary = Caramel900,
-    primaryContainer = Caramel800,
-    onPrimaryContainer = Caramel100,
-    secondary = Amber500,
-    onSecondary = Neutral900,
-    secondaryContainer = Amber700,
-    onSecondaryContainer = Amber100,
-    tertiary = Amber200,
-    background = SurfaceDark,
-    onBackground = Neutral100,
-    surface = SurfaceDark,
-    onSurface = Neutral100,
-    surfaceVariant = Neutral800,
-    onSurfaceVariant = Honey100,
-    outline = Caramel400,
-    error = LogErrorRed
+    primary = Accent400,
+    onPrimary = Graphite950,
+    primaryContainer = Graphite700,
+    onPrimaryContainer = Ink50,
+    secondary = Secondary300,
+    onSecondary = Graphite950,
+    secondaryContainer = Graphite700,
+    onSecondaryContainer = Ink50,
+    tertiary = Accent500,
+    onTertiary = Graphite950,
+    background = Graphite950,
+    onBackground = Ink50,
+    surface = Graphite900,
+    onSurface = Ink50,
+    surfaceVariant = Graphite850,
+    onSurfaceVariant = Ink300,
+    surfaceContainer = Graphite900,
+    surfaceContainerHigh = Graphite800,
+    surfaceContainerHighest = Graphite700,
+    outline = Graphite500,
+    outlineVariant = Graphite600,
+    error = Error300,
+    onError = Graphite950
 )
 
 private val AmoledColors = DarkColors.copy(
     background = AmoledBlack,
     surface = AmoledBlack,
-    surfaceVariant = Neutral900
+    surfaceVariant = Graphite900,
+    surfaceContainer = AmoledBlack
 )
 
 /** Corner radius shared by cards and panels. */
@@ -66,22 +79,18 @@ val PanelCorner: Dp = 14.dp
 val PanelGap: Dp = 12.dp
 
 /**
- * Blue → white → pink sweep used for the premium accent surfaces.
+ * Semantic colours that Material's scheme has no slot for.
  *
- * A static brush rather than an infinite animation: an always-running
- * animation would keep Compose's test clock busy and make every UI assertion
- * wait for idle forever.
+ * Provided once by [BedrockOffsetExtractorTheme] so a screen never reaches for
+ * a literal colour: `LocalSemanticColors.current.success` instead of a hex.
  */
-val BrandGradient: Brush = Brush.linearGradient(
-    // White is the surface colour, not a gradient stop: white text on the
-    // app bar has to stay readable at every point of the sweep.
-    colors = listOf(BrandBlue, Amber500, BrandPink)
-)
+val LocalSemanticColors = staticCompositionLocalOf { DarkSemantics }
 
 /**
- * Applies the blue/white/pink colour scheme and the JetBrains Mono data styles.
+ * Applies the graphite colour scheme and the JetBrains Mono data styles.
  *
  * @param themeMode requested palette; [ThemeMode.System] follows the device.
+ * @param content the themed content.
  */
 @Composable
 fun BedrockOffsetExtractorTheme(
@@ -101,9 +110,13 @@ fun BedrockOffsetExtractorTheme(
         ThemeMode.System -> if (dark) DarkColors else LightColors
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = AppTypography,
-        content = content
-    )
+    CompositionLocalProvider(
+        LocalSemanticColors provides if (dark) DarkSemantics else LightSemantics
+    ) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = AppTypography,
+            content = content
+        )
+    }
 }
