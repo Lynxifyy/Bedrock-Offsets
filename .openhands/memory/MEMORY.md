@@ -195,3 +195,26 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   a Compose `FilterChip` label fails it). **`Api28CompatTest`**: shipped sources must not call an API
   newer than 28 — `String.isBlank` (33) is the usual slip, use `s.trim().isEmpty()`.
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
+
+### Part 2 output shape (learned the hard way)
+- A classified scan writes **one JSON document per category** (`{"kind":"internal_cpp_category",
+  "classes":{...},"functions":[...]}`), *not* NDJSON, and `InternalSummary.path` is a **directory**.
+  Only a scan with no category rules writes the single NDJSON table. Any code that opens
+  `summary.path` as a file is dead on the normal path — that is what produced "file is gone (. 0
+  bytes)" and what made `InternalIndex` return nothing for every query.
+- Reference numbers for `minecraft-26-60` (`host_shard_measure`, ~100 s, peak RSS 1,110 MB):
+  6,386 classes, 883,574 functions, 865,399 slots, 11,354 data symbols, 901,314 rows,
+  743,730,101 bytes; `fde_missing = 0`, `functions_without_file_offset = 814` (those rows are
+  written `status:"suspect"`, `suspectReason:"no_file_offset"`).
+- Namespace rules must match at a `::` boundary. The bare `starts_with` let the `Json` prefix claim
+  `JsonUtil` (148,009 functions) and file Mojang code as third-party. Buckets after the fix:
+  thirdparty 349,585 · unnamed 293,854 · other_named 156,323 · scripting 41,026 · ui_screens 21,653
+  · ecs 7,624 · network_packets 4,150 · inventory_items 2,686 · rendering 1,980 · client_game
+  1,204 · world_level 958 · commands 888 · actor_entity 696 · audio 495 · combat 251 ·
+  block_placement 232 · movement 220 · input 153.
+- `CategoryCatalog.load(context)` prefers a **user override** in `filesDir/categories.json`; a test
+  that wants the shipped rules must use `CategoryCatalog.parse(CategoryCatalog.defaultText(ctx))`.
+- Local Kotlin work needs `BEDROCK_ALLOW_MISSING_RUST=1` (no `cargo-ndk` here); the gate now *fails*
+  the build otherwise. CI installs `cargo-ndk` + NDK, so it is unaffected.
+- ktlint: max line 100, `./gradlew :app:ktlintFormat` auto-fixes most of it; `:app:lintDebug` passes
+  in ~50 s. `:app:testDebugUnitTest` is 317 tests, `:app:testReleaseUnitTest` 268.
