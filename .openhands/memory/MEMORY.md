@@ -195,3 +195,14 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   a Compose `FilterChip` label fails it). **`Api28CompatTest`**: shipped sources must not call an API
   newer than 28 — `String.isBlank` (33) is the usual slip, use `s.trim().isEmpty()`.
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
+
+# Bedrock-Offsets (separate repo from the Chimeramc notes above)
+
+- Verify: `JAVA_HOME=/workspace/tools/jdk-21 ANDROID_HOME=/workspace/android-sdk ./gradlew
+  :app:testDebugUnitTest` (**305 tests**) and `cd app/src/main/rust/offset_core && cargo test`
+  (156+11+10+7). Scripts: `python3 -m unittest discover -s scripts/tests` (no pytest).
+- **No NDK/cmake here and no native submodules in a fresh clone**, so `:app:assembleDebug` fails and no
+  APK can be installed on a device; say so instead of claiming a device measurement.
+- Mobilebox workspace `prj_33khrd52ucmr`, phone `ph_qatso4f4flv2` (`offsets-phone`, 2 GB RAM).
+- Palette/UI: graphite tokens + `LocalSemanticColors`; bottom bar < 840 dp, `NavigationRail` above.
+- Live log follows only when the *last* item is visible; a scan id stamps the log, the result and the job.
