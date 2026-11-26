@@ -3,6 +3,7 @@ package com.chimerateam.offsetextractor.ui.state
 import androidx.compose.runtime.Immutable
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
 import com.chimerateam.offsetextractor.data.native.InternalSummary
+import com.chimerateam.offsetextractor.data.native.JniReport
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
@@ -127,7 +128,8 @@ data class ScanResultSummary(
     val verification: VerificationSummary = VerificationSummary.NONE,
     val apkSizeBytes: Long = 0,
     val apkVersion: String = "",
-    val imageBase: Long = 0
+    val imageBase: Long = 0,
+    val jni: JniReport? = null
 ) {
     /**
      * Whether every optional pass finished, so this result may be cached and

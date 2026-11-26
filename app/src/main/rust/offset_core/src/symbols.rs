@@ -20,6 +20,9 @@ use crate::sections::{build_section_map, DYNSTR_SECTION, DYNSYM_SECTION, TEXT_SE
 /// Prefix every exported JNI function carries.
 pub const JNI_SYMBOL_PREFIX: &str = "Java_";
 
+/// Prefix of the lifecycle exports, `JNI_OnLoad` and `JNI_OnUnload`.
+pub const JNI_ENTRY_PREFIX: &str = "JNI_";
+
 /// Upper bound on the number of exported symbols kept.
 ///
 /// A legitimate Minecraft library exports a few thousand JNI entry points. The
@@ -64,7 +67,7 @@ pub struct ExportedSymbol {
 }
 
 /// Every dynamic symbol of a library, plus the names exported to the JVM.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct SymbolTable {
     /// Number of entries in `.dynsym`, including undefined ones.
     pub total: usize,
@@ -72,6 +75,9 @@ pub struct SymbolTable {
     pub defined: usize,
     /// Symbols whose name starts with [`JNI_SYMBOL_PREFIX`].
     pub jni: Vec<ExportedSymbol>,
+    /// Lifecycle exports such as `JNI_OnLoad` and `JNI_OnUnload`.
+    #[serde(default)]
+    pub entry_points: Vec<ExportedSymbol>,
     /// Whether [`MAX_REPORTED_SYMBOLS`] truncated the JNI list.
     pub truncated: bool,
 }
@@ -218,6 +224,7 @@ pub fn read_dynamic_symbols(
             total: 0,
             defined: 0,
             jni: Vec::new(),
+            entry_points: Vec::new(),
             truncated: false,
         });
     };
@@ -226,6 +233,7 @@ pub fn read_dynamic_symbols(
             total: 0,
             defined: 0,
             jni: Vec::new(),
+            entry_points: Vec::new(),
             truncated: false,
         });
     }
@@ -243,6 +251,7 @@ pub fn read_dynamic_symbols(
 
     let mut defined = 0usize;
     let mut jni = Vec::new();
+    let mut entry_points = Vec::new();
     let mut truncated = false;
 
     for symbol in &symbols {
@@ -255,28 +264,37 @@ pub fn read_dynamic_symbols(
         let Some(name) = table.get_at(symbol.st_name) else {
             continue;
         };
-        if !name.starts_with(JNI_SYMBOL_PREFIX) {
+        let is_java = name.starts_with(JNI_SYMBOL_PREFIX);
+        let is_entry = name.starts_with(JNI_ENTRY_PREFIX);
+        if !is_java && !is_entry {
             continue;
         }
-        if jni.len() >= MAX_REPORTED_SYMBOLS {
+        if jni.len() + entry_points.len() >= MAX_REPORTED_SYMBOLS {
             truncated = true;
             break;
         }
-        jni.push(ExportedSymbol {
+        let exported = ExportedSymbol {
             name: name.to_string(),
             address: symbol.st_value,
             address_hex: format!("0x{:x}", symbol.st_value),
             size: symbol.st_size,
             binding,
-        });
+        };
+        if is_java {
+            jni.push(exported);
+        } else {
+            entry_points.push(exported);
+        }
     }
 
     jni.sort_by(|left, right| left.name.cmp(&right.name));
+    entry_points.sort_by(|left, right| left.name.cmp(&right.name));
 
     Ok(SymbolTable {
         total: symbols.len(),
         defined,
         jni,
+        entry_points,
         truncated,
     })
 }

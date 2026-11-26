@@ -7,6 +7,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonWriter
 import java.io.File
+import java.io.StringWriter
 import java.io.Writer
 
 /**
@@ -50,11 +51,6 @@ object OffsetExporter {
     /** Schema version of the JNI document; bumped when the shape breaks. */
     const val SCHEMA_VERSION = 1
 
-    private val gson = GsonBuilder()
-        .setPrettyPrinting()
-        .disableHtmlEscaping()
-        .create()
-
     private val streamingGson = GsonBuilder()
         .disableHtmlEscaping()
         .create()
@@ -67,7 +63,14 @@ object OffsetExporter {
      * @param summary the completed scan.
      * @return a JSON document ending in a newline.
      */
-    fun toJson(summary: ScanResultSummary): String = gson.toJson(jniDocument(summary)) + "\n"
+    fun toJson(summary: ScanResultSummary): String {
+        // One implementation for both paths: Copy and Share must produce the
+        // same document the archive holds, and a second shape drifted once
+        // already.
+        val out = StringWriter()
+        writeJni(summary, out)
+        return out.toString()
+    }
 
     /**
      * Streams the JNI document into [writer].
@@ -129,6 +132,7 @@ object OffsetExporter {
             json.name(symbol.name).value(symbol.addressHex)
         }
         json.endObject()
+        writeJniUnion(json, summary)
         json.name("stats").beginObject()
         json.name("expectedSignatures").value(summary.expectedPatterns.size)
         json.name("matchedSignatures").value(summary.patternHits.map { it.name }.distinct().size)
@@ -144,6 +148,60 @@ object OffsetExporter {
         json.flush()
         writer.write("\n")
         writer.flush()
+    }
+
+    /**
+     * Writes the union of every JNI source, one status per pattern, and the
+     * coverage block.
+     *
+     * The `offsets` map above is the pattern-only view kept for clients that
+     * already read it. `jniOffsets` is the complete set: exported symbols,
+     * `JNI_*` lifecycle exports, `RegisterNatives` tables and patterns, each
+     * with its source and confidence. A native no pattern knows is here, and a
+     * pattern that found nothing says so instead of vanishing.
+     *
+     * @param json writer positioned inside the document object.
+     * @param summary the completed scan.
+     */
+    private fun writeJniUnion(json: JsonWriter, summary: ScanResultSummary) {
+        val report = summary.jni ?: return
+        json.name("jniOffsets").beginArray()
+        for (offset in report.offsets) {
+            json.beginObject()
+            json.name("javaName").value(offset.javaName)
+            offset.signature?.let { json.name("signature").value(it) }
+            offset.className?.let { json.name("class").value(it) }
+            json.name("address").value(offset.addressHex)
+            json.name("offset").value(OffsetRows.hex(offset.address - summary.imageBase))
+            json.name("source").value(offset.source)
+            json.name("confidence").value(offset.confidence)
+            json.endObject()
+        }
+        json.endArray()
+        json.name("signatures").beginArray()
+        for (pattern in report.patterns) {
+            json.beginObject()
+            json.name("name").value(pattern.name)
+            json.name("status").value(pattern.status)
+            json.name("hits").value(pattern.hits)
+            json.endObject()
+        }
+        json.endArray()
+        val coverage = report.coverage
+        json.name("coverage").beginObject()
+        json.name("exports").value(coverage.exports)
+        json.name("entryPoints").value(coverage.entryPoints)
+        json.name("registered").value(coverage.registered)
+        json.name("patterns").value(coverage.patterns)
+        json.name("patternsMatched").value(coverage.patternsMatched)
+        json.name("patternsAmbiguous").value(coverage.patternsAmbiguous)
+        json.name("patternsNotFound").value(coverage.patternsNotFound)
+        json.name("patternsStale").beginArray()
+        for (name in coverage.patternsStale) json.value(name)
+        json.endArray()
+        json.name("union").value(coverage.union)
+        json.name("truncated").value(coverage.truncated)
+        json.endObject()
     }
 
     /**
@@ -372,50 +430,6 @@ object OffsetExporter {
     private fun sanitize(value: String): String =
         value.filter { it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' }
 
-    private fun jniDocument(summary: ScanResultSummary): OffsetDocument = OffsetDocument(
-        schemaVersion = SCHEMA_VERSION,
-        generatedBy = "BedrockOffsetExtractor",
-        source = SourceInfo(
-            apk = summary.displayName,
-            apkVersion = versionLabel(summary),
-            apkSizeBytes = summary.apkSizeBytes,
-            architecture = summary.architecture,
-            librarySha256 = summary.sha256,
-            librarySizeBytes = summary.sizeBytes,
-            buildId = summary.buildId,
-            buildIdSource = summary.buildIdSource,
-            entryPoint = summary.entryPoint,
-            textAddress = summary.textSection?.address,
-            textSize = summary.textSection?.size,
-            textDelta = summary.textSection?.delta
-        ),
-        offsets = buildOffsets(summary),
-        verification = summary.verification,
-        vtables = summary.vtables.entries.values
-            .sortedBy { it.vtableAddress }
-            .associate { vtable ->
-                vtable.name to VTableEntry(
-                    address = vtable.vtableHex,
-                    offset = OffsetRows.hex(vtable.vtableOffset),
-                    typeInfo = OffsetRows.hex(vtable.typeInfoAddress)
-                )
-            },
-        symbols = summary.symbols
-            .sortedBy { it.address }
-            .associate { symbol -> symbol.name to symbol.addressHex },
-        stats = Stats(
-            expectedSignatures = summary.expectedPatterns.size,
-            matchedSignatures = summary.patternHits.map { it.name }.distinct().size,
-            discardedMatches = summary.discardedMatches,
-            vtables = summary.vtables.size,
-            symbols = summary.symbols.size,
-            verifiedOffsets = summary.verification.verified,
-            conflictingOffsets = summary.verification.conflicts,
-            unverifiedOffsets = summary.verification.unverified,
-            confidencePercent = summary.verification.confidencePercent
-        )
-    )
-
     private fun writeInternalSource(json: JsonWriter, summary: ScanResultSummary) {
         json.name("source").beginObject()
         json.name("apk").value(summary.displayName)
@@ -547,51 +561,3 @@ object OffsetExporter {
         return offsets
     }
 }
-
-/** Top-level document written to storage. */
-private data class OffsetDocument(
-    val schemaVersion: Int,
-    val generatedBy: String,
-    val source: SourceInfo,
-    val offsets: Map<String, String>,
-    val verification: VerificationSummary,
-    val vtables: Map<String, VTableEntry>,
-    val symbols: Map<String, String>,
-    val stats: Stats
-)
-
-/** Identity of the library the offsets were read from. */
-private data class SourceInfo(
-    val apk: String,
-    val apkVersion: String,
-    val apkSizeBytes: Long,
-    val architecture: String,
-    val librarySha256: String,
-    val librarySizeBytes: Long,
-    val buildId: String,
-    val buildIdSource: String,
-    val entryPoint: String,
-    val textAddress: Long?,
-    val textSize: Long?,
-    val textDelta: Long?
-)
-
-/** One resolved vtable, in both absolute and rebase-stable form. */
-private data class VTableEntry(
-    val address: String,
-    val offset: String,
-    val typeInfo: String
-)
-
-/** Counts that let a reader judge how complete and how trustworthy the scan was. */
-private data class Stats(
-    val expectedSignatures: Int,
-    val matchedSignatures: Int,
-    val discardedMatches: Int,
-    val vtables: Int,
-    val symbols: Int,
-    val verifiedOffsets: Int,
-    val conflictingOffsets: Int,
-    val unverifiedOffsets: Int,
-    val confidencePercent: Int
-)

@@ -1,6 +1,10 @@
 package com.chimerateam.offsetextractor.data.export
 
 import com.chimerateam.offsetextractor.data.native.ExportedSymbol
+import com.chimerateam.offsetextractor.data.native.JniCoverage
+import com.chimerateam.offsetextractor.data.native.JniOffsetEntry
+import com.chimerateam.offsetextractor.data.native.JniPatternStatus
+import com.chimerateam.offsetextractor.data.native.JniReport
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.SectionInfo
 import com.chimerateam.offsetextractor.data.native.TypeVTable
@@ -88,8 +92,11 @@ class OffsetExporterTest {
         val source = root.getAsJsonObject("source")
         assertEquals("minecraft-1.21.50.apk", source.get("apk").asString)
         assertEquals("410ac215603eebd7", source.get("buildId").asString)
-        assertEquals(0x400000L, source.get("textAddress").asLong)
-        assertEquals(0x3fd000L, source.get("textDelta").asLong)
+        // Documented as `0x`-prefixed hex in OUTPUT_FORMAT.md; the object-graph
+        // path used to write raw numbers, which the two paths now share.
+        assertEquals("0x400000", source.get("textAddress").asString)
+        assertEquals("0x3fd000", source.get("textDelta").asString)
+        assertEquals(0x7a0000L, source.get("textSize").asLong)
     }
 
     @Test
@@ -327,5 +334,85 @@ class OffsetExporterTest {
 
         assertEquals(0, root.getAsJsonObject("offsets").size())
         assertEquals(0, root.getAsJsonObject("vtables").size())
+    }
+
+    @Test
+    fun theUnionCarriesEverySourceAndTheCoverageBlock() {
+        val report = JniReport(
+            offsets = listOf(
+                JniOffsetEntry(
+                    javaName = "Java_com_example_start",
+                    address = 0x410000,
+                    addressHex = "0x410000",
+                    source = "symbol",
+                    confidence = "high"
+                ),
+                JniOffsetEntry(
+                    javaName = "registeredNative",
+                    signature = "(I)V",
+                    className = "com/mojang/Foo",
+                    address = 0x411000,
+                    addressHex = "0x411000",
+                    source = "register_natives",
+                    confidence = "high"
+                ),
+                JniOffsetEntry(
+                    javaName = "JNI_OnLoad",
+                    address = 0x412000,
+                    addressHex = "0x412000",
+                    source = "entry_point",
+                    confidence = "high"
+                )
+            ),
+            patterns = listOf(
+                JniPatternStatus(name = "clientInstance", status = "matched", hits = 1),
+                JniPatternStatus(name = "absentSignature", status = "not_found", hits = 0)
+            ),
+            coverage = JniCoverage(
+                exports = 1,
+                entryPoints = 1,
+                registered = 1,
+                patterns = 2,
+                patternsMatched = 1,
+                patternsNotFound = 1,
+                union = 3
+            )
+        )
+        val root = JsonParser.parseString(
+            OffsetExporter.toJson(summary.copy(jni = report, imageBase = 0x400000))
+        ).asJsonObject
+
+        val offsets = root.getAsJsonArray("jniOffsets")
+        assertEquals(3, offsets.size())
+        val registered = offsets
+            .map { it.asJsonObject }
+            .first { it.get("source").asString == "register_natives" }
+        assertEquals("(I)V", registered.get("signature").asString)
+        assertEquals("com/mojang/Foo", registered.get("class").asString)
+        // 0x411000 - 0x400000 image base
+        assertEquals("0x11000", registered.get("offset").asString)
+
+        val coverage = root.getAsJsonObject("coverage")
+        assertEquals(1, coverage.get("exports").asInt)
+        assertEquals(1, coverage.get("entryPoints").asInt)
+        assertEquals(1, coverage.get("registered").asInt)
+        assertEquals(3, coverage.get("union").asInt)
+        assertFalse(coverage.get("truncated").asBoolean)
+
+        val signatures = root.getAsJsonArray("signatures")
+        assertEquals(2, signatures.size())
+        assertEquals(
+            "not_found",
+            signatures.map { it.asJsonObject }
+                .first { it.get("name").asString == "absentSignature" }
+                .get("status").asString
+        )
+    }
+
+    @Test
+    fun aScanWithoutTheEngineReportStillWritesThePatternView() {
+        val root = JsonParser.parseString(OffsetExporter.toJson(summary)).asJsonObject
+        assertFalse(root.has("jniOffsets"))
+        assertTrue(root.getAsJsonObject("offsets").has("pattern:clientInstance"))
     }
 }

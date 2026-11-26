@@ -53,6 +53,8 @@ data class PatternHit(
  * @property verified whether the prologue check was applied.
  * @property truncated whether the hit list was capped by the engine.
  * @property verification symbol cross-check totals, when the check has run.
+ * @property jni the complete JNI set and its coverage, when the engine built
+ *   one.
  */
 data class ScanOutcome(
     val section: String,
@@ -64,7 +66,8 @@ data class ScanOutcome(
     val discarded: Int = 0,
     val verified: Boolean = false,
     val truncated: Boolean = false,
-    val verification: VerificationSummary? = null
+    val verification: VerificationSummary? = null,
+    val jni: JniReport? = null
 ) {
     /** Number of hits that came from [name]. */
     fun countOf(name: String): Int = hits.count { it.name == name }
@@ -81,5 +84,6 @@ internal data class ScanOutcomePayload(
     val discarded: Int?,
     val verified: Boolean?,
     val truncated: Boolean?,
-    val verification: VerificationSummary?
+    val verification: VerificationSummary?,
+    val jni: JniReport?
 )

@@ -16,6 +16,10 @@
 
 - category documents are written by the engine with the same `categories.json` the UI uses, and a shared expectation set in the Kotlin and Rust tests keeps the two classifiers identical
 - motion tokens (`ui/theme/Motion.kt`): three durations, four easings, three named springs, a 4 dp spacing scale and a reduce-motion switch that collapses every animation to a snap
+- the JNI set is now the union of three sources instead of the signatures alone: every exported `Java_*` symbol, every `JNI_*` lifecycle export, and every entry of a `RegisterNatives` table found through the relocations, each with `source` and `confidence`
+- `signatures` in the JNI document reports every pattern individually as `matched`, `ambiguous`, `not_found` or `symbol_only`, and a pattern the symbol table replaced is listed in `coverage.patternsStale` instead of disappearing
+- `coverage` in the JNI document carries the exports, registered natives, pattern totals and union count, and the live log prints the same line
+- Copy and Share now render through the same streaming writer as the archive, so the two JNI documents cannot drift apart again; `textAddress` and `textDelta` are `0x`-prefixed hex in both, as `docs/OUTPUT_FORMAT.md` already said
 
 ## v1.0.11
 

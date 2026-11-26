@@ -20,6 +20,7 @@ import com.chimerateam.offsetextractor.data.export.OffsetZipBuilder
 import com.chimerateam.offsetextractor.data.native.InternalAnalysis
 import com.chimerateam.offsetextractor.data.native.InternalOptions
 import com.chimerateam.offsetextractor.data.native.InternalPatternSpec
+import com.chimerateam.offsetextractor.data.native.JniReport
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
 import com.chimerateam.offsetextractor.data.native.ScanOutcome
@@ -1319,7 +1320,8 @@ class MainViewModel(
                 verification = scan?.verification ?: VerificationSummary.NONE,
                 apkSizeBytes = source.metadata.sizeBytes,
                 apkVersion = lastApkVersion,
-                imageBase = sections.imageBase
+                imageBase = sections.imageBase,
+                jni = scan?.jni
             )
 
             _uiState.update {
@@ -1651,7 +1653,42 @@ class MainViewModel(
         outcome.peakResidentBytes?.let { peak ->
             emit(Logs.info(TAG_RUST, "Peak resident set ${formatBytes(peak)}"))
         }
+        reportJniCoverage(outcome.jni)
         return outcome
+    }
+
+    /**
+     * Writes the JNI coverage block to the live log.
+     *
+     * The union is what the archive holds, so the counts are the honest answer
+     * to "did the app find everything": a pattern that found nothing while its
+     * symbol exists is named, because that pattern needs updating.
+     *
+     * @param report the engine's union report, or `null` when it sent none.
+     */
+    private fun reportJniCoverage(report: JniReport?) {
+        if (report == null) return
+        val coverage = report.coverage
+        emit(
+            Logs.info(
+                TAG_RUST,
+                "JNI coverage: ${coverage.exports} exports, ${coverage.entryPoints} lifecycle, " +
+                    "${coverage.registered} registered, ${coverage.patternsMatched} of " +
+                    "${coverage.patterns} patterns, ${coverage.union} offsets in total."
+            )
+        )
+        if (coverage.patternsStale.isNotEmpty()) {
+            emit(
+                Logs.warn(
+                    TAG_RUST,
+                    "${coverage.patternsStale.size} stale signature(s) replaced by their " +
+                        "symbol: ${coverage.patternsStale.joinToString()}."
+                )
+            )
+        }
+        if (coverage.truncated) {
+            emit(Logs.warn(TAG_RUST, "A JNI source hit its cap; the union is incomplete."))
+        }
     }
 
     /**

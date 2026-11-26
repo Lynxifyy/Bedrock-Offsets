@@ -657,6 +657,14 @@ impl RelocationIndex {
     /// # Returns
     ///
     /// The target, or `None` when the slot is not relocated by a supported kind.
+    /// The `(slot address, target)` pairs, sorted by slot address.
+    ///
+    /// Exposed so a caller that needs to walk the table (the native-method
+    /// scan) does not have to rebuild it.
+    pub(crate) fn entries(&self) -> &[SlotTarget] {
+        &self.entries
+    }
+
     pub(crate) fn target_of(&self, slot_address: u64) -> Option<u64> {
         let index = self
             .entries

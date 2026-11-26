@@ -517,6 +517,8 @@ struct ScanPayload {
     outcome: ScanOutcome,
     /// Peak resident set of the process after the scan, in bytes.
     peak_resident_bytes: Option<u64>,
+    /// The complete JNI set and its coverage, built from every source.
+    jni: crate::jni::JniReport,
 }
 
 /// Maps `path`, scans `.text` for `patterns_json`, and serialises the result.
@@ -580,9 +582,17 @@ pub fn scan_text_json_with_progress(
     // Verification walked `.text` again; those pages are dead weight now too.
     library.advise_pages_droppable();
 
+    // A pattern alone cannot be the source of truth: the exports and the
+    // RegisterNatives tables name natives no pattern knows, so the three
+    // sources are unioned and every pattern reports its own status.
+    let natives = crate::jninatives::find_register_natives(library.bytes(), &map)?;
+    let expected: Vec<String> = specs.iter().map(|(name, _)| name.clone()).collect();
+    let jni = crate::jni::build_report(&outcome, &symbols.symbols, &natives, &expected);
+
     let payload = ScanPayload {
         outcome,
         peak_resident_bytes: peak_resident_bytes(),
+        jni,
     };
     Ok(serde_json::to_string(&payload).unwrap_or_default())
 }

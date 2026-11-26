@@ -201,7 +201,8 @@ object EnginePayloads {
             discarded = payload.discarded ?: 0,
             verified = payload.verified ?: false,
             truncated = payload.truncated ?: false,
-            verification = payload.verification
+            verification = payload.verification,
+            jni = payload.jni
         )
     }
 

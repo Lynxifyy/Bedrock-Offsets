@@ -154,6 +154,7 @@ mod tests {
             total: symbols.len(),
             defined: symbols.len(),
             jni: symbols,
+            entry_points: Vec::new(),
             truncated: false,
         }
     }

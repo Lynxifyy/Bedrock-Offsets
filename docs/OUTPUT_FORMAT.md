@@ -230,6 +230,61 @@ Diagnostics for a human. Nothing here is required to use the offsets.
 | `verifiedOffsets` / `conflictingOffsets` / `unverifiedOffsets` | Same counts as `verification`. |
 | `confidencePercent` | `confidence * 100`, truncated. |
 
+## `jniOffsets`, `signatures` and `coverage`
+
+`offsets` is the pattern-only view, kept so an existing loader keeps working.
+The complete JNI set is `jniOffsets`: the union of every source, so a native no
+signature knows is still present.
+
+```json
+"jniOffsets": [
+  {
+    "javaName": "nativeInit",
+    "signature": "(JLjava/lang/String;)Z",
+    "class": "com/mojang/minecraftpe/MainActivity",
+    "address": "0x5f0a41c0",
+    "offset": "0x5f0a41c0",
+    "source": "register_natives",
+    "confidence": "high"
+  }
+]
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `javaName` | string | Symbol name, table name, or pattern name. |
+| `signature` | string | JNI descriptor, when a `RegisterNatives` table supplied one. |
+| `class` | string | Owning class, when a class descriptor was found near the table. |
+| `address` | string | Virtual address, `0x`-prefixed hex. |
+| `offset` | string | `address - imageBase`; the value that survives a rebase. |
+| `source` | string | `symbol`, `entry_point`, `register_natives` or `pattern`. |
+| `confidence` | string | `high` (linker or loader wrote the address), `medium` (pattern plus a decoded prologue), `low` (nothing confirmed it). |
+
+`signatures` reports every pattern that was searched for, so a pattern that
+found nothing is visible instead of absent:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | Pattern name. |
+| `status` | string | `matched` (one hit), `ambiguous` (several hits, all kept in `jniOffsets`), `not_found` (no hit, no symbol), `symbol_only` (no usable hit, but the symbol named it: the pattern needs updating). |
+| `hits` | number | Hits the pattern produced. |
+
+`coverage` counts every source:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `exports` | number | Exported `Java_*` symbols. |
+| `entryPoints` | number | `JNI_*` lifecycle exports such as `JNI_OnLoad`. |
+| `registered` | number | Natives found in `RegisterNatives` tables. |
+| `patterns` | number | Patterns searched for. |
+| `patternsMatched` / `patternsAmbiguous` / `patternsNotFound` | number | Status totals. |
+| `patternsStale` | string[] | Patterns whose function the symbol table named. |
+| `union` | number | Entries in `jniOffsets`. |
+| `truncated` | boolean | A source hit its own cap, so the union is incomplete. |
+
+Both `jniOffsets` and `signatures` are absent when the engine sent no union,
+which happens only with an engine older than this field.
+
 ## Versioning rules
 
 1. Adding an optional field keeps `schemaVersion` unchanged. A reader must
