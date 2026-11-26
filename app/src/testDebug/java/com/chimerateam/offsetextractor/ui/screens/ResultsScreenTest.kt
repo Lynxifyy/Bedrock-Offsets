@@ -120,6 +120,10 @@ class ResultsScreenTest {
 
         composeTestRule.onNodeWithTag("results-search").performTextInput("absent")
 
+        // The stat tiles above the list push the single match below the fold,
+        // and a lazy item that is not composed cannot be asserted on.
+        composeTestRule.onNodeWithTag(RESULTS_LIST_TAG)
+            .performScrollToNode(hasText("absentSignature"))
         composeTestRule.onNodeWithText("absentSignature").assertExists()
         composeTestRule.onNodeWithText("clientInstance").assertDoesNotExist()
         composeTestRule.onNodeWithText("1 of 3 entries", substring = true).assertExists()
