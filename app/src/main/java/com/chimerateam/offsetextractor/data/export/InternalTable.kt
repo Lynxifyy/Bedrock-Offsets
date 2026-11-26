@@ -166,7 +166,7 @@ object InternalTable {
             val onDisk = file.length()
             if (shard.bytes > 0L && onDisk != shard.bytes) {
                 throw InternalTableMissingException(
-                    "The ${shard.label} offsets file is ${onDisk} bytes, " +
+                    "The ${shard.label} offsets file is $onDisk bytes, " +
                         "${shard.bytes} expected (${shard.path}). " +
                         "Re-run the internal extraction."
                 )

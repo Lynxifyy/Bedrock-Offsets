@@ -57,7 +57,6 @@ import com.chimerateam.offsetextractor.ui.components.StatTiles
 import com.chimerateam.offsetextractor.ui.components.middleEllipsis
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.MonoText
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext

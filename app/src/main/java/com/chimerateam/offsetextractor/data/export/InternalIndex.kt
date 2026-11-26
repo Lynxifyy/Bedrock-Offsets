@@ -75,12 +75,7 @@ class InternalIndex(private val sources: List<File>) {
         return rows
     }
 
-    private fun searchNdjson(
-        file: File,
-        needle: String,
-        limit: Int,
-        rows: MutableList<OffsetRow>
-    ) {
+    private fun searchNdjson(file: File, needle: String, limit: Int, rows: MutableList<OffsetRow>) {
         file.bufferedReader().useLines { lines ->
             for (line in lines) {
                 if (rows.size >= limit) break

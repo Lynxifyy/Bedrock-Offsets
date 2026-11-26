@@ -19,8 +19,8 @@ import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.export.OffsetZipBuilder
 import com.chimerateam.offsetextractor.data.native.InternalAnalysis
 import com.chimerateam.offsetextractor.data.native.InternalOptions
-import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.InternalPatternSpec
+import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.JniReport
 import com.chimerateam.offsetextractor.data.native.PatternSpec
 import com.chimerateam.offsetextractor.data.native.ProgressCallback
@@ -39,12 +39,12 @@ import com.chimerateam.offsetextractor.data.storage.StorageAreaId
 import com.chimerateam.offsetextractor.data.storage.StorageManager
 import com.chimerateam.offsetextractor.data.storage.StorageUsage
 import com.chimerateam.offsetextractor.ui.error.ErrorMapper
-import com.chimerateam.offsetextractor.ui.state.InternalFailure
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogFile
 import com.chimerateam.offsetextractor.ui.log.LogTimestamp
 import com.chimerateam.offsetextractor.ui.log.Logs
 import com.chimerateam.offsetextractor.ui.state.BatchProgress
+import com.chimerateam.offsetextractor.ui.state.InternalFailure
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.state.ScannerUiState
@@ -1361,7 +1361,9 @@ class MainViewModel(
                 internalError = lastInternalError,
                 symbols = resumed?.symbols ?: symbols.symbols.jni,
                 expectedPatterns = resumed?.expectedPatterns ?: patterns.map { it.name },
-                verification = resumed?.verification ?: scan?.verification ?: VerificationSummary.NONE,
+                verification = resumed?.verification
+                    ?: scan?.verification
+                    ?: VerificationSummary.NONE,
                 apkSizeBytes = source.metadata.sizeBytes,
                 apkVersion = lastApkVersion,
                 imageBase = sections.imageBase,
@@ -1627,8 +1629,13 @@ class MainViewModel(
                     "${summary.tableBytes} expected). Re-run the internal extraction."
             )
         }
-        emit(Logs.info(TAG_RUST, "Internal table: ${file.name} ${formatBytes(bytes)} " +
-            "${summary.rows} rows"))
+        emit(
+            Logs.info(
+                TAG_RUST,
+                "Internal table: ${file.name} ${formatBytes(bytes)} " +
+                    "${summary.rows} rows"
+            )
+        )
     }
 
     /**
