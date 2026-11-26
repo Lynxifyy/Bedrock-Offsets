@@ -511,7 +511,7 @@ mod tests {
     fn function(name: &str) -> FunctionRecord {
         FunctionRecord {
             address: 0x3000,
-            file_offset: 0x200,
+            file_offset: Some(0x200),
             size: 4,
             name: name.to_string(),
             name_source: "symbol".to_string(),

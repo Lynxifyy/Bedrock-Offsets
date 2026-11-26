@@ -258,9 +258,11 @@ pub struct SlotRecord {
     /// Virtual address of the function.
     #[serde(serialize_with = "hex_u64")]
     pub address: u64,
-    /// File offset of the function.
-    #[serde(serialize_with = "hex_u64")]
-    pub file_offset: u64,
+    /// File offset of the function. Absent when the address has no bytes in
+    /// the file (a slot that points into `.bss`), so a consumer can never read
+    /// a silent zero.
+    #[serde(serialize_with = "hex_option", skip_serializing_if = "Option::is_none")]
+    pub file_offset: Option<u64>,
     /// Function size when known.
     pub size: u64,
     /// Slot name.
@@ -336,9 +338,9 @@ pub struct FunctionRecord {
     /// Virtual address.
     #[serde(serialize_with = "hex_u64")]
     pub address: u64,
-    /// File offset.
-    #[serde(serialize_with = "hex_u64")]
-    pub file_offset: u64,
+    /// File offset. Absent when the address has no bytes in the file.
+    #[serde(serialize_with = "hex_option", skip_serializing_if = "Option::is_none")]
+    pub file_offset: Option<u64>,
     /// Size in bytes.
     pub size: u64,
     /// Best name.
@@ -707,9 +709,8 @@ pub fn analyze_with_writer(
             // counted instead of silently carrying a wrong number.
             stats.coverage.functions_without_file_offset += 1;
         }
-        let file_offset = resolved_offset.unwrap_or(0);
         if let Some(releaser) = releaser {
-            let current = file_offset as usize;
+            let current = resolved_offset.unwrap_or(0) as usize;
             if current > released_to + RELEASE_WINDOW {
                 let end = current.saturating_sub(RELEASE_WINDOW / 2);
                 releaser.release(released_to, end);
@@ -790,7 +791,7 @@ pub fn analyze_with_writer(
         };
         let record = FunctionRecord {
             address: *address,
-            file_offset,
+            file_offset: resolved_offset,
             size,
             name,
             name_source: source.to_string(),
@@ -1035,7 +1036,7 @@ fn collect_class_slots(
                         slot,
                         offset: (slot as u64) * 8,
                         address: *address,
-                        file_offset: file_offset_of(map, *address).unwrap_or(0),
+                        file_offset: file_offset_of(map, *address),
                         size: 0,
                         name: slot_name,
                         kind: kind.to_string(),
@@ -2861,7 +2862,7 @@ mod tests {
                     slot: index,
                     offset: (index as u64) * 8,
                     address: *address,
-                    file_offset: *address,
+                    file_offset: Some(*address),
                     size: 4,
                     name: format!("{name}::vfunc_{index}"),
                     kind: "virtual".to_string(),
@@ -3122,5 +3123,41 @@ mod tests {
             .expect("First");
         // 0x3010 .. 0x3078 is 14 slots; 0x3080 is the next header.
         assert_eq!(first.record.slots.len(), 14);
+    }
+
+    /// A row whose address has no bytes in the file must not claim offset 0:
+    /// `.bss` slots are zero-initialised memory, and `0x0` is the ELF header.
+    #[test]
+    fn a_row_without_file_bytes_omits_the_file_offset() {
+        let mut record = sample_function();
+        record.file_offset = None;
+        let json = serde_json::to_string(&record).expect("json");
+        assert!(
+            !json.contains("fileOffset"),
+            "a missing file offset must not be written: {json}"
+        );
+
+        record.file_offset = Some(0x1234);
+        let json = serde_json::to_string(&record).expect("json");
+        assert!(json.contains("\"fileOffset\":\"0x1234\""), "{json}");
+    }
+
+    fn sample_function() -> FunctionRecord {
+        FunctionRecord {
+            address: 0x4000,
+            file_offset: Some(0x4000),
+            size: 4,
+            name: "Actor::vfunc_0".to_string(),
+            name_source: "vtable".to_string(),
+            aliases: Vec::new(),
+            kind: "function".to_string(),
+            status: "verified".to_string(),
+            prologue_kind: "leaf".to_string(),
+            mangled: None,
+            target: None,
+            suspect_reason: None,
+            signature: None,
+            signature_unique: None,
+        }
     }
 }

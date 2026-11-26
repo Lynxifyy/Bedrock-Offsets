@@ -139,7 +139,8 @@ data class ShardPart(
  * model round-trips the NDJSON without a numeric conversion.
  *
  * @property address image-relative virtual address.
- * @property fileOffset offset inside the library file.
+ * @property fileOffset offset inside the library file, or null when the address
+ *   has no bytes in the file (a `.bss` slot). Never a silent zero.
  * @property size size in bytes.
  * @property name best available name.
  * @property nameSource where the name came from.
@@ -154,7 +155,7 @@ data class ShardPart(
  */
 data class InternalFunction(
     val address: String = "0x0",
-    @SerializedName("fileOffset") val fileOffset: String = "0x0",
+    @SerializedName("fileOffset") val fileOffset: String? = null,
     val size: Long = 0,
     val name: String = "",
     @SerializedName("nameSource") val nameSource: String = "auto",
@@ -178,7 +179,8 @@ data class InternalFunction(
  * @property slot slot index.
  * @property offset byte offset from the first function pointer.
  * @property address function virtual address.
- * @property fileOffset function file offset.
+ * @property fileOffset function file offset, or null when the slot points at
+ *   memory with no bytes in the file.
  * @property size function size when known.
  * @property name slot name.
  * @property kind `virtual`, `pure_virtual` or `thunk`.
@@ -192,7 +194,7 @@ data class VtableSlot(
     val slot: Int = 0,
     val offset: String = "0x0",
     val address: String = "0x0",
-    @SerializedName("fileOffset") val fileOffset: String = "0x0",
+    @SerializedName("fileOffset") val fileOffset: String? = null,
     val size: Long = 0,
     val name: String = "",
     val kind: String = "virtual",
