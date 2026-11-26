@@ -139,6 +139,16 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   `node_id`. Then `PUT /pulls/{n}/merge-async {"merge_method":"squash","sha":"<40-char head>"}` (a
   short sha is rejected) and poll `.../merge-async/{uuid}`. `gh` CLI works.
 
+### v2 engine (branch merged to main, 1.1.0-pre.2)
+- `rank()` in `src/internal.rs` is an explicit evidence table: symbol > ABI-encoded > lambda/xref/system
+  > vtable placeholder > signature > string. Appending an `if` to the old chain silently ranked new
+  sources at the placeholder level — the lambda name could never win its own slot.
+- Host stand-in for the phone: `BEDROCK_LIB=<so> BEDROCK_OUT=<dir> cargo test --release --test
+  real_library_stats -- --ignored --nocapture`. `libc++_shared.so` from the NDK is a good 1.5k-function
+  corpus for signatures/demangling.
+- Mobilebox file pull with a space in the name: `curl -G .../v1/phones/{id}/files --data-urlencode
+  "path=NAME (1).zip"`; the `?path=` form 404s.
+
 ### Verify
 - `JAVA_HOME=/workspace/tools/jdk-21.0.13.1+2 ANDROID_HOME=/workspace/android-sdk ./gradlew
   :app:testDebugUnitTest` (**3397 tests, 0 failures, 1 skipped** on the BETA6 snapshot; targeted via
@@ -195,54 +205,3 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   a Compose `FilterChip` label fails it). **`Api28CompatTest`**: shipped sources must not call an API
   newer than 28 — `String.isBlank` (33) is the usual slip, use `s.trim().isEmpty()`.
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
-
-### Part 2 output shape (learned the hard way)
-- A classified scan writes **one JSON document per category** (`{"kind":"internal_cpp_category",
-  "classes":{...},"functions":[...]}`), *not* NDJSON, and `InternalSummary.path` is a **directory**.
-  Only a scan with no category rules writes the single NDJSON table. Any code that opens
-  `summary.path` as a file is dead on the normal path — that is what produced "file is gone (. 0
-  bytes)" and what made `InternalIndex` return nothing for every query.
-- Reference numbers for `minecraft-26-60` (`host_shard_measure`, ~100 s, peak RSS 1,110 MB):
-  6,386 classes, 883,574 functions, 865,399 slots, 11,354 data symbols, 901,314 rows,
-  743,730,101 bytes; `fde_missing = 0`, `functions_without_file_offset = 814` (those rows are
-  written `status:"suspect"`, `suspectReason:"no_file_offset"`).
-- Namespace rules must match at a `::` boundary. The bare `starts_with` let the `Json` prefix claim
-  `JsonUtil` (148,009 functions) and file Mojang code as third-party. Buckets after the fix:
-  thirdparty 349,585 · unnamed 293,854 · other_named 156,323 · scripting 41,026 · ui_screens 21,653
-  · ecs 7,624 · network_packets 4,150 · inventory_items 2,686 · rendering 1,980 · client_game
-  1,204 · world_level 958 · commands 888 · actor_entity 696 · audio 495 · combat 251 ·
-  block_placement 232 · movement 220 · input 153.
-- `CategoryCatalog.load(context)` prefers a **user override** in `filesDir/categories.json`; a test
-  that wants the shipped rules must use `CategoryCatalog.parse(CategoryCatalog.defaultText(ctx))`.
-- Local Kotlin work needs `BEDROCK_ALLOW_MISSING_RUST=1` (no `cargo-ndk` here); the gate now *fails*
-  the build otherwise. CI installs `cargo-ndk` + NDK, so it is unaffected.
-- ktlint: max line 100, `./gradlew :app:ktlintFormat` auto-fixes most of it; `:app:lintDebug` passes
-  in ~50 s. `:app:testDebugUnitTest` is 317 tests, `:app:testReleaseUnitTest` 268.
-
-### 26.60 real library (measured, phase E-lite)
-- `scripts/verify_library_ground_truth.py --library <so> --output-dir <categories>` is the
-  correctness oracle: it cross-checks every class `typeInfo` and every `virtual` slot against
-  `.rela.dyn` addends (26.60: 6,386/6,386 and 157,188/157,188) and compares `functions` with the
-  FDE count in `.eh_frame_hdr` (791,952). RELA means vtable bytes are **zero in the file** —
-  reading the file for a slot value returns zeros, not the address.
-- `.eh_frame_hdr` `table_enc = 0x3b` is **datarel**, so `start = raw + section_addr`; adding the
-  field offset (pcrel-style) shifts every start and makes all rows look "not in an FDE".
-- Two output bugs of this class recur: `image_base` must come from the lowest `PT_LOAD` `p_vaddr`
-  (not the first allocated section — `.gnu.hash` at 0x2463f0 in 26.60), and a vtable slot whose
-  target is not in an executable section must never be named as a function (secondary groups hold
-  vbase offsets and nested vtable pointers).
-- 26.60 has **no gameplay symbols** (75,720 symbol names are v8/cohtml/webrtc/std/Xal/csl/renoir/
-  xbox). It is an EnTT build: `StrictEntityContext`, `ViewT<...>`, `ITickingSystem`,
-  `StrictTickingSystemFunctionAdapter` (643), `EntityComponentDefinition` (164),
-  `entt::basic_storage` (1,406). Components have no vtable → invisible to RTTI.
-- `scripts/measure_surface.py` is the reproducible surface measurement (own ELF64 parser + NDJSON
-  streamer; writes JSON). Its numbers are published in `docs/CARAMEL_26.60_SURFACE.md` §7 and it has
-  5 unit tests. Python tests are `unittest` (no pytest in the image):
-  `python3 -m unittest discover -s scripts/tests -t .` → 131 tests.
-- The 26.60 component types **are** in the binary (`.rodata`): `entt::internal::pretty_function()
-  [Type = ActorOwnerComponent]` and `N4entt13basic_storageI19ActorOwnerComponent8EntityId…`. They are
-  not RTTI classes (plain structs). Grepping the *output* for them returns 0 and proves nothing.
-- String anchors: the engine names **all** candidates `status: "ambiguous"` (it does not pick one) —
-  that is the tested contract. On 26.60 a bare component name has 271/316/125/12 occurrences and
-  133/164/69/8 `ADRP`+`ADD/LDR` refsites (too many → ambiguity); the unique `pretty_function` string
-  has **0** refsites and **0** relocations (dead data). Anchors need a two-hop selector, not shipped yet.
