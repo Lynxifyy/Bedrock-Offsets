@@ -265,16 +265,16 @@ pub fn build_library() -> Vec<u8> {
             ));
         }
     }
-    for class in 0..CLASSES {
+    for (class, name_address) in name_addresses.iter().enumerate().take(CLASSES) {
         let at = 0x100 + class * 0x20;
         // type_info[0] is the type_info vtable pointer, which must not look
         // like a name pointer; type_info[1] is the name.
         data_rel_ro[at..at + 8].copy_from_slice(&(TEXT_ADDRESS + 0x10).to_le_bytes());
-        data_rel_ro[at + 8..at + 16].copy_from_slice(&name_addresses[class].to_le_bytes());
+        data_rel_ro[at + 8..at + 16].copy_from_slice(&name_address.to_le_bytes());
         relocations.extend_from_slice(&rela(
             type_info_address(class) + 8,
             R_AARCH64_RELATIVE,
-            name_addresses[class],
+            *name_address,
         ));
     }
 

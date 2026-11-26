@@ -748,9 +748,7 @@ pub fn analyze_with_writer(
                 if from_fde { "fde_only" } else { "suspect" },
             ),
         };
-        let status = if suspect.contains(address) {
-            "suspect"
-        } else if resolved_offset.is_none() {
+        let status = if suspect.contains(address) || resolved_offset.is_none() {
             "suspect"
         } else {
             status

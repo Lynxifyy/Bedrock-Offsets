@@ -171,19 +171,6 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   (SIGPIPE) even on a match — dump to a file and grep the file. The Rust tree is rustfmt-normalized;
   keep it so.
 
-### CI gates and the release (see 2026-11-26.md for the details)
-- CI runs **both** unit-test variants plus ktlint, lintDebug, rustfmt, clippy,
-  `cargo test --all-targets`, rustdoc with `-D warnings` and the Python script
-  tests. `testDebugUnitTest` alone is not enough.
-- Compose tests must live in `src/testDebug`; the test activity exists only in
-  the debug manifest.
-- `scripts/verify_release.py` fails the release if a class in
-  `GSON_MODEL_CLASSES` is not in the dex, so keep that tuple in step with the
-  source (deleted models count).
-- Release APKs are **debug-signed**: no `SIGNING_KEYSTORE_BASE64` secret.
-- Re-cutting a release: delete the release by id, move the tag, push, then PATCH
-  the body by release id (the tags endpoint is GET-only).
-
 ### Hygiene gates (the four that fail a local change)
 - **`FileSizeBudgetTest`** (`scripts/hygiene/file-sizes-baseline.txt`, threshold 1500 lines): a listed
   file may only **shrink**. `InbuiltModuleProvider.java` was at its 1765 baseline; the fix is to
@@ -208,14 +195,3 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   a Compose `FilterChip` label fails it). **`Api28CompatTest`**: shipped sources must not call an API
   newer than 28 — `String.isBlank` (33) is the usual slip, use `s.trim().isEmpty()`.
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
-
-# Bedrock-Offsets (separate repo from the Chimeramc notes above)
-
-- Verify: `JAVA_HOME=/workspace/tools/jdk-21 ANDROID_HOME=/workspace/android-sdk ./gradlew
-  :app:testDebugUnitTest` (**305 tests**) and `cd app/src/main/rust/offset_core && cargo test`
-  (156+11+10+7). Scripts: `python3 -m unittest discover -s scripts/tests` (no pytest).
-- **No NDK/cmake here and no native submodules in a fresh clone**, so `:app:assembleDebug` fails and no
-  APK can be installed on a device; say so instead of claiming a device measurement.
-- Mobilebox workspace `prj_33khrd52ucmr`, phone `ph_qatso4f4flv2` (`offsets-phone`, 2 GB RAM).
-- Palette/UI: graphite tokens + `LocalSemanticColors`; bottom bar < 840 dp, `NavigationRail` above.
-- Live log follows only when the *last* item is visible; a scan id stamps the log, the result and the job.

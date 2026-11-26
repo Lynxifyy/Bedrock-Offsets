@@ -45,6 +45,7 @@ data class InternalSummary(
     @SerializedName("categoriesApplied") val categoriesApplied: Boolean = false,
     @SerializedName("truncatedSlots") val truncatedSlots: Boolean = false,
     @SerializedName("truncatedSlotClasses") val truncatedSlotClasses: Int = 0,
+    @SerializedName("truncatedSlotNames") val truncatedSlotNames: List<String> = emptyList(),
     val coverage: InternalCoverage = InternalCoverage()
 ) {
     /** Whether the table holds anything worth showing. */
@@ -72,6 +73,9 @@ data class InternalSummary(
  * @property truncated whether any cap cut output.
  * @property truncatedSlotClasses classes the per-class slot cap cut.
  * @property truncatedSignatures whether the signature cap cut generation.
+ * @property functionsWithoutFileOffset functions whose address has no file
+ *   offset, so the row carries 0. Non-zero means the section table does not
+ *   cover an executable address and those rows must not be trusted.
  */
 data class InternalCoverage(
     val functions: Int = 0,
@@ -84,7 +88,8 @@ data class InternalCoverage(
     @SerializedName("functionSource") val functionSource: String = "",
     val truncated: Boolean = false,
     @SerializedName("truncatedSlotClasses") val truncatedSlotClasses: Int = 0,
-    @SerializedName("truncatedSignatures") val truncatedSignatures: Boolean = false
+    @SerializedName("truncatedSignatures") val truncatedSignatures: Boolean = false,
+    @SerializedName("functionsWithoutFileOffset") val functionsWithoutFileOffset: Int = 0
 ) {
     /** One line for the results card, for example `883,574 of 883,574 functions`. */
     val summaryLine: String

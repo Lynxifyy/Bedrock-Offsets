@@ -15,8 +15,10 @@ The app has no `INTERNET` permission. Nothing you scan leaves the device.
 ## Download
 
 The latest release APK is on the
-[releases page](https://github.com/Lynxifyy/Bedrock-Offsets/releases/latest):
-`bedrock-offset-extractor-v1.0.6.apk`, signed and built for `arm64-v8a`.
+[releases page](https://github.com/Lynxifyy/Bedrock-Offsets/releases/latest),
+signed and built for `arm64-v8a`. The asset name carries the version of that
+release (`bedrock-offset-extractor-v<version>.apk`); the version in this tree is
+the one in `app/build.gradle.kts`, and `CHANGELOG.md` lists what changed.
 
 Install it on the device with `adb install`, or open the file on the device and
 allow installation from that source. The APK is signed with the debug key until

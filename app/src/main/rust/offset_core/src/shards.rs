@@ -330,16 +330,20 @@ impl ShardWriter {
     /// Files written so far, in category order.
     pub fn parts(&self) -> Vec<ShardSummary> {
         let mut parts = self.closed.clone();
-        parts.extend(self.shards.values().map(|shard| ShardSummary {
-            id: shard_id(&shard.category, shard.part),
-            category: shard.category.clone(),
-            label: shard.label.clone(),
-            part: shard.part,
-            classes: shard.classes,
-            functions: shard.functions,
-            symbols: shard.symbols,
-            path: shard.path.to_string_lossy().into_owned(),
-            bytes: std::fs::metadata(&shard.path).map(|meta| meta.len()).unwrap_or(0),
+        parts.extend(self.shards.values().map(|shard| {
+            ShardSummary {
+                id: shard_id(&shard.category, shard.part),
+                category: shard.category.clone(),
+                label: shard.label.clone(),
+                part: shard.part,
+                classes: shard.classes,
+                functions: shard.functions,
+                symbols: shard.symbols,
+                path: shard.path.to_string_lossy().into_owned(),
+                bytes: std::fs::metadata(&shard.path)
+                    .map(|meta| meta.len())
+                    .unwrap_or(0),
+            }
         }));
         parts.sort_by(|left, right| left.id.cmp(&right.id));
         parts
@@ -351,7 +355,11 @@ impl ShardWriter {
             + self
                 .shards
                 .values()
-                .map(|shard| std::fs::metadata(&shard.path).map(|meta| meta.len()).unwrap_or(0))
+                .map(|shard| {
+                    std::fs::metadata(&shard.path)
+                        .map(|meta| meta.len())
+                        .unwrap_or(0)
+                })
                 .sum::<u64>()
     }
 

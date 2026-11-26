@@ -235,6 +235,18 @@ object OffsetExporter {
                         "missing from the tables.\n"
                 )
             }
+            if (coverage.truncatedSlotClasses > 0) {
+                writer.write(
+                    "WARNING: the per-class slot cap cut ${coverage.truncatedSlotClasses} " +
+                        "class(es); their vtables are shorter than the real ones.\n"
+                )
+            }
+            if (coverage.functionsWithoutFileOffset > 0) {
+                writer.write(
+                    "WARNING: ${coverage.functionsWithoutFileOffset} functions have no " +
+                        "file offset and carry 0. Trust their address, not their offset.\n"
+                )
+            }
         }
         if (jni != null) {
             writer.write(

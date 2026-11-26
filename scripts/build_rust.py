@@ -23,11 +23,14 @@ import shutil
 import struct
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRATE_DIR = REPO_ROOT / "app" / "src" / "main" / "rust" / "offset_core"
 JNI_LIB_DIR = REPO_ROOT / "app" / "src" / "main" / "jniLibs" / "arm64-v8a"
+ALLOW_MISSING_RUST_ENV = "BEDROCK_ALLOW_MISSING_RUST"
+
 LIB_NAME = "liboffset_core.so"
 TARGET = "arm64-v8a"
 RUST_TARGET_TRIPLE = "aarch64-linux-android"
@@ -145,6 +148,36 @@ def stage_library() -> Path:
     return destination
 
 
+def skip_or_fail(reason: str) -> int:
+    """Stops a build that would ship without the engine.
+
+    Skipping used to be unconditional, so a release built on a machine without
+    cargo produced an APK whose every scan failed with "engine unavailable" and
+    nothing in the build output said why. An explicit opt-out keeps the
+    Kotlin-only workflow available without making the silent case the default.
+
+    Args:
+        reason: why the engine could not be built.
+
+    Returns:
+        `0` when the caller opted out, otherwise `1`.
+    """
+    if os.environ.get(ALLOW_MISSING_RUST_ENV) == "1":
+        print(
+            f"[build_rust] {reason}; {ALLOW_MISSING_RUST_ENV}=1 so the build "
+            "continues without the engine. Scans will fail on this build.",
+            file=sys.stderr,
+        )
+        return 0
+    print(
+        f"[build_rust] ERROR: {reason}. The app cannot extract offsets without "
+        f"the engine. Install the Rust toolchain (scripts/setup_toolchain.sh) or "
+        f"set {ALLOW_MISSING_RUST_ENV}=1 to build a Kotlin-only APK on purpose.",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def main() -> int:
     """Run the build, reporting failures with a non-zero exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -168,23 +201,12 @@ def main() -> int:
 
         cargo = find_cargo()
         if cargo is None:
-            print(
-                "[build_rust] cargo not found; skipping the Rust engine build. "
-                "The app still runs and reports the engine as unavailable.",
-                file=sys.stderr,
-            )
-            return 0
+            return skip_or_fail("cargo not found")
 
         try:
             run_cargo_build(cargo, offline=args.offline)
         except ToolchainMissing as error:
-            print(
-                f"[build_rust] {error}\n"
-                "[build_rust] skipping the Rust engine build; the app still "
-                "runs and reports the engine as unavailable.",
-                file=sys.stderr,
-            )
-            return 0
+            return skip_or_fail(str(error))
         stage_library()
         return 0
     except BuildError as error:

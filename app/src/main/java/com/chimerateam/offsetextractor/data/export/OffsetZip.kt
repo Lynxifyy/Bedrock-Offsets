@@ -389,6 +389,13 @@ class OffsetZipBuilder(
             internal.addProperty("truncated", block.truncated)
             internal.addProperty("truncatedSlotClasses", block.truncatedSlotClasses)
             internal.addProperty("truncatedSignatures", block.truncatedSignatures)
+            internal.addProperty(
+                "functionsWithoutFileOffset",
+                block.functionsWithoutFileOffset
+            )
+            val cutClasses = com.google.gson.JsonArray()
+            summary.internal?.truncatedSlotNames?.forEach { cutClasses.add(it) }
+            internal.add("truncatedSlotNames", cutClasses)
         }
         coverage.add("internal", internal)
         val jni = com.google.gson.JsonObject()
@@ -402,6 +409,9 @@ class OffsetZipBuilder(
             jni.addProperty("patternsNotFound", block.patternsNotFound)
             jni.addProperty("union", block.union)
             jni.addProperty("truncated", block.truncated)
+            val stale = com.google.gson.JsonArray()
+            block.patternsStale.forEach { stale.add(it) }
+            jni.add("patternsStale", stale)
         }
         coverage.add("jni", jni)
         json.add("coverage", coverage)

@@ -102,8 +102,12 @@ fn assert_shards_are_real(summary: &serde_json::Value) {
         let text = std::fs::read_to_string(path).expect("shard readable");
         let document: serde_json::Value = serde_json::from_str(&text).expect("shard is JSON");
         let classes = document["classes"].as_object().map_or(0, |map| map.len());
-        let functions = document["functions"].as_array().map_or(0, |array| array.len());
-        let symbols = document["symbols"].as_array().map_or(0, |array| array.len());
+        let functions = document["functions"]
+            .as_array()
+            .map_or(0, |array| array.len());
+        let symbols = document["symbols"]
+            .as_array()
+            .map_or(0, |array| array.len());
         assert_eq!(
             document["stats"]["entries"].as_u64().expect("stats"),
             (classes + functions + symbols) as u64,
@@ -203,7 +207,10 @@ fn every_planted_function_and_vtable_slot_is_recovered() {
         support::FUNCTIONS as u64
     );
     assert_eq!(coverage["fdeMissing"].as_u64().expect("missing"), 0);
-    assert_eq!(coverage["functionsMatchFdes"], serde_json::Value::Bool(true));
+    assert_eq!(
+        coverage["functionsMatchFdes"],
+        serde_json::Value::Bool(true)
+    );
     assert_eq!(coverage["functionSource"].as_str(), Some("eh_frame"));
 
     // Collect the rows the documents hold.
@@ -294,10 +301,8 @@ fn a_class_with_more_slots_than_the_cap_says_so() {
         summary["coverage"]["truncated"],
         serde_json::Value::Bool(true)
     );
-    assert!(
-        !summary["truncatedSlotNames"]
-            .as_array()
-            .expect("names")
-            .is_empty()
-    );
+    assert!(!summary["truncatedSlotNames"]
+        .as_array()
+        .expect("names")
+        .is_empty());
 }

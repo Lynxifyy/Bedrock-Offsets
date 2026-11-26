@@ -54,7 +54,10 @@ fn the_category_path_writes_every_row() {
     let path = summary["path"].as_str().expect("path");
     assert!(!path.is_empty(), "the category path left `path` empty");
     let table_bytes = summary["tableBytes"].as_u64().expect("tableBytes");
-    assert!(table_bytes > 0, "the category path left `tableBytes` at zero");
+    assert!(
+        table_bytes > 0,
+        "the category path left `tableBytes` at zero"
+    );
 
     let shards = summary["shards"].as_array().expect("shards");
     let mut rows = 0u64;
@@ -78,7 +81,7 @@ fn the_category_path_writes_every_row() {
         rows += c + f + s;
         per_category.push((shard["id"].as_str().unwrap_or("?").to_string(), c, f, s));
     }
-    per_category.sort_by(|left, right| (right.1 + right.2 + right.3).cmp(&(left.1 + left.2 + left.3)));
+    per_category.sort_by_key(|entry| std::cmp::Reverse(entry.1 + entry.2 + entry.3));
     for (id, c, f, s) in &per_category {
         println!("  {id:32} {c:6} classes {f:8} functions {s:6} symbols");
     }
@@ -98,8 +101,12 @@ fn the_category_path_writes_every_row() {
     println!(
         "coverage: functions={} fdes={} missing={} slots={} truncated={} \
          withoutFileOffset={}",
-        coverage["functions"], coverage["fdeFunctions"], coverage["fdeMissing"],
-        coverage["slots"], coverage["truncated"], coverage["functionsWithoutFileOffset"]
+        coverage["functions"],
+        coverage["fdeFunctions"],
+        coverage["fdeMissing"],
+        coverage["slots"],
+        coverage["truncated"],
+        coverage["functionsWithoutFileOffset"]
     );
     assert_eq!(
         coverage["functions"].as_u64().expect("functions"),
