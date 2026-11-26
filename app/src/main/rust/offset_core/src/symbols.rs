@@ -510,10 +510,7 @@ pub fn demangle(name: &str) -> Option<String> {
     if !name.starts_with("_Z") {
         return None;
     }
-    let symbol = cpp_demangle::Symbol::new(name).ok()?;
-    symbol
-        .demangle(&cpp_demangle::DemangleOptions::default())
-        .ok()
+    cpp_demangle::Symbol::new(name).ok()?.demangle().ok()
 }
 
 /// Builds the container context of an ELF image.

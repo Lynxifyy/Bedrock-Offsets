@@ -24,7 +24,7 @@ aho-corasick = "1.1"
 regex = "1.11"
 rayon = "1.12"
 capstone = { version = "0.14", default-features = false, features = ["full", "std", "arch_arm64"] }
-cpp_demangle = { version = "0.4", default-features = false, features = ["alloc"] }
+cpp_demangle = { version = "0.6", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.15"

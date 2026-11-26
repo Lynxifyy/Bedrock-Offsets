@@ -9,6 +9,7 @@
 
 pub mod android;
 pub mod categories;
+pub mod demangle;
 pub mod elf;
 pub mod error;
 pub mod fd;
