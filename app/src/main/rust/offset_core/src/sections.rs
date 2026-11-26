@@ -223,12 +223,30 @@ pub fn build_section_map(image: &[u8]) -> CoreResult<SectionMap> {
         });
     }
 
-    let image_base = sections
-        .iter()
-        .filter(|section| section.allocated && section.address != 0)
-        .map(|section| section.address)
-        .min()
-        .unwrap_or(0);
+    // The load base is the lowest `PT_LOAD` address, not the lowest allocated
+    // section address: the header area before the first section is mapped but
+    // covered by no section, so the section minimum sits above the real base
+    // (`.gnu.hash` at 0x2463f0 in the 26.60 library, whose true base is 0).
+    // Every RVA and every `sub_<hex>` name is relative to this value.
+    let segment_base = match crate::elf::parse_program_headers(image) {
+        Ok(headers) => headers
+            .iter()
+            .filter(|header| header.p_type == goblin::elf::program_header::PT_LOAD)
+            .map(|header| header.p_vaddr)
+            .min(),
+        Err(error) => {
+            log::warn!("cannot read the program headers, using the section base: {error}");
+            None
+        }
+    };
+    let image_base = segment_base.unwrap_or_else(|| {
+        sections
+            .iter()
+            .filter(|section| section.allocated && section.address != 0)
+            .map(|section| section.address)
+            .min()
+            .unwrap_or(0)
+    });
 
     let text = sections
         .iter()
