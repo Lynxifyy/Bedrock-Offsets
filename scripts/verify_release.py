@@ -89,11 +89,11 @@ GSON_MODEL_CLASSES = (
     "Lcom/chimerateam/offsetextractor/data/native/InternalAnalysisPayload;",
     "Lcom/chimerateam/offsetextractor/data/native/InternalPatternSpec;",
     "Lcom/chimerateam/offsetextractor/data/native/StringAnchorSpec;",
-    # data/export -- the exported offsets document.
-    "Lcom/chimerateam/offsetextractor/data/export/OffsetDocument;",
-    "Lcom/chimerateam/offsetextractor/data/export/SourceInfo;",
-    "Lcom/chimerateam/offsetextractor/data/export/VTableEntry;",
-    "Lcom/chimerateam/offsetextractor/data/export/Stats;",
+    # data/export -- the export job and the category rules. The JNI document is
+    # written with JsonWriter, so it has no model class to protect any more.
+    "Lcom/chimerateam/offsetextractor/data/export/PersistedExportJob;",
+    "Lcom/chimerateam/offsetextractor/data/export/ExportProgress;",
+    "Lcom/chimerateam/offsetextractor/data/export/CategoryRule;",
     # data/cache -- the cached scan summary.
     "Lcom/chimerateam/offsetextractor/data/cache/ResultCache$Envelope;",
     # data/patterns -- the bundled signature pack.
