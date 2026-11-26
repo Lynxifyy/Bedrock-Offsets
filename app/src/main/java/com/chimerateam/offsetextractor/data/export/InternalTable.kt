@@ -101,6 +101,14 @@ object InternalTable {
             }
             return null
         }
+        // The engine classifies as it writes, so a normal scan has no single
+        // table at all: the rows live in the category documents, which
+        // [requireShards] validates. Treating `path` as mandatory here rejected
+        // every such scan as "the internal offsets file is gone (. 0 bytes)".
+        if (!internal?.shards.isNullOrEmpty()) {
+            requireShards(summary)
+            return null
+        }
         val path = internal?.path.orEmpty()
         if (path.isBlank()) {
             throw InternalTableMissingException(
@@ -152,6 +160,14 @@ object InternalTable {
             if (!file.isFile || file.length() <= 0L) {
                 throw InternalTableMissingException(
                     "The ${shard.label} offsets file is gone (${shard.path}). " +
+                        "Re-run the internal extraction."
+                )
+            }
+            val onDisk = file.length()
+            if (shard.bytes > 0L && onDisk != shard.bytes) {
+                throw InternalTableMissingException(
+                    "The ${shard.label} offsets file is ${onDisk} bytes, " +
+                        "${shard.bytes} expected (${shard.path}). " +
                         "Re-run the internal extraction."
                 )
             }
@@ -210,7 +226,11 @@ object InternalTable {
     fun problem(summary: ScanResultSummary): String? = try {
         require(summary)
         null
-    } catch (error: InternalTableMissingException) {
-        error.message ?: "The internal offsets file is gone. Re-run the internal extraction."
+    } catch (error: IOException) {
+        // Both a missing document and a count mismatch are "this result cannot
+        // be exported as it stands". Catching only the first let the second
+        // escape into a caller that treats this as a yes/no question, which
+        // crashed the results screen instead of showing the reason.
+        error.message ?: "The internal offsets are unusable. Re-run the internal extraction."
     }
 }

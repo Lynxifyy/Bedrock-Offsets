@@ -236,6 +236,9 @@ impl Shard {
         )?;
         self.writer.flush()?;
         self.writer.get_ref().sync_all()?;
+        // The size is read back from the closed file rather than estimated, so
+        // the summary can never report a finished document as zero bytes.
+        let bytes = self.writer.get_ref().metadata().map(|meta| meta.len())?;
         Ok(ShardSummary {
             id: shard_id(&self.category, self.part),
             category: self.category,
@@ -245,6 +248,7 @@ impl Shard {
             functions: self.functions,
             symbols: self.symbols,
             path: self.path.to_string_lossy().into_owned(),
+            bytes,
         })
     }
 }
@@ -335,9 +339,25 @@ impl ShardWriter {
             functions: shard.functions,
             symbols: shard.symbols,
             path: shard.path.to_string_lossy().into_owned(),
+            bytes: std::fs::metadata(&shard.path).map(|meta| meta.len()).unwrap_or(0),
         }));
         parts.sort_by(|left, right| left.id.cmp(&right.id));
         parts
+    }
+
+    /// Bytes on disk of every finished document.
+    pub fn total_bytes(&self) -> u64 {
+        self.closed.iter().map(|part| part.bytes).sum::<u64>()
+            + self
+                .shards
+                .values()
+                .map(|shard| std::fs::metadata(&shard.path).map(|meta| meta.len()).unwrap_or(0))
+                .sum::<u64>()
+    }
+
+    /// Absolute path of the directory the documents are written into.
+    pub fn directory(&self) -> &Path {
+        &self.dir
     }
 
     /// Writes the class-to-category map the index needs.

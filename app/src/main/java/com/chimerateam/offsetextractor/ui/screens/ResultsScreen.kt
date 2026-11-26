@@ -71,6 +71,9 @@ internal const val RESULTS_LIST_TAG = "results-list"
 /** Test tag of the single ZIP download button. */
 internal const val DOWNLOAD_ZIP_TAG = "download-zip"
 
+/** Tag of the text that explains why the internal pass failed. */
+internal const val INTERNAL_ERROR_TAG = "internal-error-reason"
+
 /** Test tag of the overflow menu holding the JNI actions. */
 internal const val JNI_MENU_TAG = "jni-menu"
 
@@ -103,6 +106,8 @@ internal const val START_NEW_SCAN_TAG = "start-new-scan"
  * @param onDownloadZip opens the save dialog for the single ZIP.
  * @param onRetryInternal re-runs only the internal pass.
  * @param internalBusy whether Part 2 is still running.
+ * @param internalRetryable whether a retry can succeed. A deterministic failure
+ *   is reported with its reason instead of offering a button that cannot work.
  * @param onCopyName copies a long name from a row.
  */
 @Composable
@@ -120,6 +125,7 @@ fun ResultsScreen(
     onRetryInternal: (() -> Unit)? = null,
     internalBusy: Boolean = false,
     internalAvailable: Boolean = true,
+    internalRetryable: Boolean = true,
     onCopyName: (String) -> Unit = {}
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -224,7 +230,8 @@ fun ResultsScreen(
             onDownloadZip = onDownloadZip,
             onRetryInternal = onRetryInternal,
             internalBusy = internalBusy,
-            internalAvailable = internalAvailable
+            internalAvailable = internalAvailable,
+            internalRetryable = internalRetryable
         )
     }
 }
@@ -245,7 +252,8 @@ private fun ExportBar(
     onDownloadZip: (() -> Unit)?,
     onRetryInternal: (() -> Unit)?,
     internalBusy: Boolean,
-    internalAvailable: Boolean
+    internalAvailable: Boolean,
+    internalRetryable: Boolean
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
         when {
@@ -265,16 +273,33 @@ private fun ExportBar(
                 )
             }
 
-            !result.internalResolved && result.internalError != null -> Button(
-                onClick = { onRetryInternal?.invoke() },
-                enabled = onRetryInternal != null,
-                modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_ZIP_TAG)
+            !result.internalResolved && result.internalError != null -> Column(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(Icons.Filled.Warning, contentDescription = null)
+                // The reason, not only the fact. It used to live in the log
+                // pane only, so the card showed a red button with no cause.
                 Text(
-                    text = "Internal extraction failed. Retry",
-                    modifier = Modifier.padding(start = 8.dp)
+                    text = result.internalError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth().testTag(INTERNAL_ERROR_TAG)
                 )
+                Spacer(Modifier.height(4.dp))
+                Button(
+                    onClick = { onRetryInternal?.invoke() },
+                    enabled = onRetryInternal != null && internalRetryable,
+                    modifier = Modifier.fillMaxWidth().testTag(DOWNLOAD_ZIP_TAG)
+                ) {
+                    Icon(Icons.Filled.Warning, contentDescription = null)
+                    Text(
+                        text = if (internalRetryable) {
+                            "Internal extraction failed. Retry"
+                        } else {
+                            "Internal extraction failed. A retry cannot fix this"
+                        },
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                }
             }
 
             // The table is the archive's reason to exist, and it can be

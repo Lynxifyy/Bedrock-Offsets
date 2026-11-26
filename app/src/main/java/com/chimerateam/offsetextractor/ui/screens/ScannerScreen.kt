@@ -340,7 +340,8 @@ private fun SuccessPane(
         onDownloadZip = onDownloadZip,
         onRetryInternal = onRetryInternal,
         internalBusy = internalBusy,
-        internalAvailable = state.internalAvailable
+        internalAvailable = state.internalAvailable,
+        internalRetryable = state.internalRetryable
     )
 }
 

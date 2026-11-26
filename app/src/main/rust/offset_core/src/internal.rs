@@ -173,6 +173,9 @@ pub struct InternalSummary {
     /// Number of classes the slot cap cut.
     #[serde(default)]
     pub truncated_slot_classes: usize,
+    /// Classes whose slot run stopped at the per-class cap.
+    #[serde(default)]
+    pub truncated_slot_names: Vec<String>,
     /// Completeness counts: functions against FDEs, and every cap.
     #[serde(default)]
     pub coverage: InternalCoverage,
@@ -210,6 +213,12 @@ pub struct InternalCoverage {
     pub truncated_slot_classes: usize,
     /// Whether the signature cap cut generation.
     pub truncated_signatures: bool,
+    /// Functions whose address could not be converted to a file offset, so the
+    /// record carries offset 0. A non-zero count means the section table does
+    /// not cover an executable address, which is a real defect and must not be
+    /// mistaken for "the function starts at file offset 0".
+    #[serde(default)]
+    pub functions_without_file_offset: usize,
 }
 
 /// One category file the engine wrote.
@@ -232,6 +241,9 @@ pub struct ShardSummary {
     pub symbols: usize,
     /// Absolute path of the finished JSON document.
     pub path: String,
+    /// Size of the finished JSON document on disk, in bytes.
+    #[serde(default)]
+    pub bytes: u64,
 }
 
 /// One virtual slot.
@@ -453,7 +465,7 @@ pub fn analyze_with_writer(
     report(sink, 0, "Pass A: reading vtable slots");
     let relocation = RelocationIndex::build(image)?;
     let pure_virtual = find_symbol_address(image, "__cxa_pure_virtual");
-    let mut classes = collect_class_slots(
+    let (mut classes, truncated_slot_names) = collect_class_slots(
         map,
         image,
         vtables,
@@ -646,6 +658,9 @@ pub fn analyze_with_writer(
         path: String::new(),
         table_bytes: 0,
         rows: classes.len() + addresses.len() + data_symbols.len(),
+        truncated_slots: !truncated_slot_names.is_empty(),
+        truncated_slot_classes: truncated_slot_names.len(),
+        truncated_slot_names,
         ..Default::default()
     };
     stats.coverage = InternalCoverage {
@@ -660,6 +675,7 @@ pub fn analyze_with_writer(
         truncated: truncated_signatures || stats.truncated_slots,
         truncated_slot_classes: stats.truncated_slot_classes,
         truncated_signatures,
+        functions_without_file_offset: 0,
     };
 
     writer.meta(&stats)?;
@@ -683,7 +699,15 @@ pub fn analyze_with_writer(
                 .and_then(|entry| named_size(named_symbols, *address, &entry.name))
                 .unwrap_or(0)
         });
-        let file_offset = file_offset_of(map, *address).unwrap_or(0);
+        let resolved_offset = file_offset_of(map, *address);
+        if resolved_offset.is_none() {
+            // An executable address outside every section that occupies file
+            // space has no file offset. Writing 0 there would claim the
+            // function lives at the start of the file, so the row is marked and
+            // counted instead of silently carrying a wrong number.
+            stats.coverage.functions_without_file_offset += 1;
+        }
+        let file_offset = resolved_offset.unwrap_or(0);
         if let Some(releaser) = releaser {
             let current = file_offset as usize;
             if current > released_to + RELEASE_WINDOW {
@@ -726,11 +750,15 @@ pub fn analyze_with_writer(
         };
         let status = if suspect.contains(address) {
             "suspect"
+        } else if resolved_offset.is_none() {
+            "suspect"
         } else {
             status
         };
         let suspect_reason = if suspect.contains(address) {
             Some("overlapping_fde".to_string())
+        } else if resolved_offset.is_none() {
+            Some("no_file_offset".to_string())
         } else if status == "suspect" {
             Some(if from_fde {
                 "unverified_name".to_string()
@@ -899,7 +927,7 @@ fn collect_class_slots(
     pure_virtual: Option<u64>,
     max_slots: usize,
     control: &ScanControl,
-) -> CoreResult<Vec<ClassSlots>> {
+) -> CoreResult<(Vec<ClassSlots>, Vec<String>)> {
     let limit = max_slots.min(MAX_SLOTS_PER_CLASS);
     // A class with multiple inheritance owns one vtable per base subobject. The
     // wire format keeps one entry per class name, so the full list is walked
@@ -925,6 +953,7 @@ fn collect_class_slots(
     }
 
     let mut classes = Vec::with_capacity(by_name.len());
+    let mut truncated: Vec<String> = Vec::new();
     for (name, mut groups) in by_name {
         check_cancelled(control)?;
         // The primary vtable is the one whose offset-to-top is zero; the rest
@@ -942,7 +971,12 @@ fn collect_class_slots(
         for vtable in &groups {
             let first_slot = vtable.vtable_address.saturating_add(VTABLE_PREFIX_BYTES);
             let mut addresses: Vec<u64> = Vec::new();
+            // Set when the run reached the cap instead of a terminator. Without
+            // it a class with more slots than the cap lost the rest silently:
+            // the summary claimed a complete table and nothing said otherwise.
+            let mut hit_cap = false;
             for slot in 0..limit {
+                hit_cap = slot + 1 == limit;
                 let slot_address = first_slot.saturating_add((slot as u64) * 8);
                 if headers.contains(&slot_address) {
                     // The run reached another class's header.
@@ -1019,6 +1053,9 @@ fn collect_class_slots(
                 .collect();
 
             let offset_to_top = read_at(map, image, vtable.vtable_address).unwrap_or(0) as i64;
+            if hit_cap && !truncated.iter().any(|name| name == &vtable.name) {
+                truncated.push(vtable.name.clone());
+            }
             group_meta.push((offset_to_top, vtable.vtable_address));
             group_addresses.push(addresses);
             group_slots.push(slots);
@@ -1049,7 +1086,7 @@ fn collect_class_slots(
             addresses: group_addresses[0].clone(),
         });
     }
-    Ok(classes)
+    Ok((classes, truncated))
 }
 fn resolve_bases(
     map: &SectionMap,
@@ -2978,7 +3015,7 @@ mod tests {
             crate::rtti::RelocationIndex::for_tests(vec![(0x3010, 0x1000), (0x3018, 0x1010)]);
         let vtables = vtables(vec![type_vtable("Actor", 0x3000, 0x2f00)]);
 
-        let classes = collect_class_slots(
+        let (classes, _truncated) = collect_class_slots(
             &map,
             &image,
             &vtables,
@@ -3006,7 +3043,7 @@ mod tests {
         ]);
         let vtables = vtables(vec![type_vtable("Mob", 0x3000, 0x2f00)]);
 
-        let classes = collect_class_slots(
+        let (classes, _truncated) = collect_class_slots(
             &map,
             &image,
             &vtables,
@@ -3035,7 +3072,7 @@ mod tests {
             type_vtable("Player", 0x3200, 0x2f00),
         ]);
 
-        let classes = collect_class_slots(
+        let (classes, _truncated) = collect_class_slots(
             &map,
             &image,
             &vtables,
@@ -3070,7 +3107,7 @@ mod tests {
             type_vtable("Second", 0x3080, 0x2f10),
         ]);
 
-        let classes = collect_class_slots(
+        let (classes, _truncated) = collect_class_slots(
             &map,
             &image,
             &vtables,

@@ -32,6 +32,10 @@ import com.chimerateam.offsetextractor.data.saf.ApkMetadata
  * @property internalAvailable whether the internal table behind [result] is
  *   still on disk. A cleared table keeps the result visible but disables the
  *   download, because an archive without it would be worthless.
+ * @property internalRetryable whether a failed internal pass may succeed if it
+ *   is run again. A deterministic failure (unsupported ABI, unparseable
+ *   payload, stale rules) is reported instead of offering a retry that cannot
+ *   work.
  * @property batch progress of a multi-APK run, or `null` when only one APK is
  *   being processed.
  * @property batchSummary outcome of the last multi-APK run, shown once and
@@ -50,6 +54,7 @@ data class ScannerUiState(
     val exportMessage: String? = null,
     val lowMemory: Boolean = false,
     val internalAvailable: Boolean = false,
+    val internalRetryable: Boolean = true,
     val batch: BatchProgress? = null,
     val batchSummary: BatchSummary? = null
 )

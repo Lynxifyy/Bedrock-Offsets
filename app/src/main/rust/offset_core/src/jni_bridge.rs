@@ -700,6 +700,18 @@ pub fn analyze_internal_json(
             summary.shards = writer.parts();
             summary.class_map_path = class_map.to_string_lossy().into_owned();
             summary.categories_applied = true;
+            // The category documents are the table in this mode. Reporting an
+            // empty `path` and `tableBytes: 0` made Kotlin reject a finished
+            // pass as "the internal offsets file is gone (. 0 bytes)", so the
+            // summary carries the directory and the real total size.
+            summary.path = dir.to_string_lossy().into_owned();
+            summary.table_bytes = summary.shards.iter().map(|part| part.bytes).sum();
+            if summary.table_bytes == 0 {
+                return Err(CoreError::Io(format!(
+                    "the category writer finished without writing any bytes to {}",
+                    dir.display()
+                )));
+            }
             summary
         }
         None => {

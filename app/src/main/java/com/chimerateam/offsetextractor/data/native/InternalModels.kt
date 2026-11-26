@@ -110,6 +110,7 @@ data class InternalCoverage(
  * @property functions functions in the file.
  * @property symbols data symbols in the file.
  * @property path absolute path of the document.
+ * @property bytes size of the document on disk.
  */
 data class ShardPart(
     val id: String = "",
@@ -119,7 +120,8 @@ data class ShardPart(
     val classes: Int = 0,
     val functions: Int = 0,
     val symbols: Int = 0,
-    val path: String = ""
+    val path: String = "",
+    val bytes: Long = 0
 ) {
     /** Records in the file. */
     val entries: Int get() = classes + functions + symbols

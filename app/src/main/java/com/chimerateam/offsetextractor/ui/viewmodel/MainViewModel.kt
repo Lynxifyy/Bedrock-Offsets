@@ -19,6 +19,7 @@ import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.export.OffsetZipBuilder
 import com.chimerateam.offsetextractor.data.native.InternalAnalysis
 import com.chimerateam.offsetextractor.data.native.InternalOptions
+import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.InternalPatternSpec
 import com.chimerateam.offsetextractor.data.native.JniReport
 import com.chimerateam.offsetextractor.data.native.PatternSpec
@@ -38,6 +39,7 @@ import com.chimerateam.offsetextractor.data.storage.StorageAreaId
 import com.chimerateam.offsetextractor.data.storage.StorageManager
 import com.chimerateam.offsetextractor.data.storage.StorageUsage
 import com.chimerateam.offsetextractor.ui.error.ErrorMapper
+import com.chimerateam.offsetextractor.ui.state.InternalFailure
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogFile
 import com.chimerateam.offsetextractor.ui.log.LogTimestamp
@@ -229,6 +231,9 @@ class MainViewModel(
 
     /** Detail of the last failed internal pass, or `null`. */
     private var lastInternalError: String? = null
+
+    /** Failure of the last internal pass, used to decide whether a retry can work. */
+    private var lastInternalFailure: Throwable? = null
 
     init {
         cache?.ensureDirectories()
@@ -1082,13 +1087,16 @@ class MainViewModel(
     private fun cachedResultFor(buildId: String): ScanResultSummary? {
         if (_forceRescan.value) return null
         val cached = resultCache?.load(buildId) ?: return null
-        if (!cached.vtablesResolved || !cached.internalResolved) {
-            emit(Logs.warn(TAG_CACHE, "Cached result was incomplete; scanning again."))
+        // Part 1 is the expensive half and it is usable on its own, so a cache
+        // entry is accepted as soon as the signatures and vtables are there.
+        // A missing Part 2 is not "the cache is incomplete": the caller
+        // re-runs that pass and keeps everything else.
+        if (!cached.vtablesResolved) {
+            emit(Logs.warn(TAG_CACHE, "Cached result has no vtables; scanning again."))
             return null
         }
-        val table = cached.internal?.path.orEmpty()
-        if (table.isNotBlank() && !File(table).isFile) {
-            emit(Logs.warn(TAG_CACHE, "Cached internal table is gone; scanning again."))
+        if (cached.internalResolved && InternalTable.problem(cached) != null) {
+            emit(Logs.warn(TAG_CACHE, "Cached internal output is unusable; scanning again."))
             return null
         }
         return cached
@@ -1102,8 +1110,11 @@ class MainViewModel(
      */
     private fun rememberScan(buildId: String, summary: ScanResultSummary?) {
         if (summary == null) return
-        if (!summary.isComplete) {
-            emit(Logs.warn(TAG_CACHE, "Result not cached: an optional pass did not finish."))
+        // Part 1 is stored even when Part 2 failed. Refusing to store it threw
+        // away 68 verified signatures and 6386 vtables because one later pass
+        // hit an error, and left the user with nothing to retry from.
+        if (!summary.vtablesResolved) {
+            emit(Logs.warn(TAG_CACHE, "Result not cached: the vtable pass did not finish."))
             return
         }
         val stored = resultCache?.store(summary) ?: false
@@ -1276,7 +1287,8 @@ class MainViewModel(
             val jniSymbols = symbols.symbols.jni.size
             emit(Logs.info(TAG_RUST, "Symbols: $definedSymbols defined, $jniSymbols JNI exports"))
 
-            cachedResultFor(symbols.identity.buildId)?.let { cached ->
+            val cached = cachedResultFor(symbols.identity.buildId)
+            if (cached != null && cached.internalResolved) {
                 emit(Logs.info(TAG_CACHE, "Loaded offsets from previous scan."))
                 _uiState.update {
                     it.copy(
@@ -1292,20 +1304,38 @@ class MainViewModel(
                             textSection = cached.textSection ?: sections.text,
                             imageBase = sections.imageBase
                         ),
-                        internalAvailable = cached.internalResolved &&
-                            InternalTable.problem(cached) == null,
+                        internalAvailable = InternalTable.problem(cached) == null,
                         error = null,
                         errorHint = null
                     )
                 }
-                releaseLibrary(current, keep = !cached.internalResolved)
+                releaseLibrary(current, keep = false)
                 return true
             }
 
+            // A cached scan whose Part 2 failed still carries every Part 1
+            // result. Reusing it re-runs only the internal pass, which is the
+            // difference between "one pass failed" and "the whole scan is
+            // lost": the 300 MB library and the signature scan are not redone.
+            val resumed = cached
+            if (resumed != null) {
+                emit(
+                    Logs.info(
+                        TAG_CACHE,
+                        "Reusing the cached signatures and vtables; " +
+                            "re-running only the internal extraction."
+                    )
+                )
+            }
+
             current = ensureExtractedFile(source, current)
-            val scan = scanForOffsets(current)
+            val scan = if (resumed == null) scanForOffsets(current) else null
             current = ensureExtractedFile(source, current)
-            val vtables = resolveVtables(current)
+            val vtables = if (resumed == null) {
+                resolveVtables(current)
+            } else {
+                VtableResolution(resumed.vtables, resumed.vtableError)
+            }
             current = ensureExtractedFile(source, current)
             val internal = analyzeInternal(current)
 
@@ -1320,22 +1350,22 @@ class MainViewModel(
                 buildId = symbols.identity.buildId,
                 buildIdSource = symbols.identity.source,
                 jniSymbolCount = symbols.symbols.jni.size,
-                patternHits = scan?.hits.orEmpty(),
-                discardedMatches = scan?.discarded ?: 0,
+                patternHits = resumed?.patternHits ?: scan?.hits.orEmpty(),
+                discardedMatches = resumed?.discardedMatches ?: (scan?.discarded ?: 0),
                 peakResidentBytes = scan?.peakResidentBytes ?: internal?.peakResidentBytes,
-                vtables = vtables.map,
-                vtablesResolved = vtables.error == null,
-                vtableError = vtables.error,
+                vtables = resumed?.vtables ?: vtables.map,
+                vtablesResolved = resumed?.vtablesResolved ?: (vtables.error == null),
+                vtableError = resumed?.vtableError ?: vtables.error,
                 internal = internal?.summary,
                 internalResolved = internal != null,
                 internalError = lastInternalError,
-                symbols = symbols.symbols.jni,
-                expectedPatterns = patterns.map { it.name },
-                verification = scan?.verification ?: VerificationSummary.NONE,
+                symbols = resumed?.symbols ?: symbols.symbols.jni,
+                expectedPatterns = resumed?.expectedPatterns ?: patterns.map { it.name },
+                verification = resumed?.verification ?: scan?.verification ?: VerificationSummary.NONE,
                 apkSizeBytes = source.metadata.sizeBytes,
                 apkVersion = lastApkVersion,
                 imageBase = sections.imageBase,
-                jni = scan?.jni
+                jni = resumed?.jni ?: scan?.jni
             )
 
             _uiState.update {
@@ -1346,6 +1376,7 @@ class MainViewModel(
                     result = summary,
                     internalAvailable = summary.internalResolved &&
                         InternalTable.problem(summary) == null,
+                    internalRetryable = InternalFailure.isRetryable(lastInternalFailure),
                     error = null,
                     errorHint = null
                 )
@@ -1505,7 +1536,7 @@ class MainViewModel(
             }
             val analysis = engine.analyzeInternal(extracted, options, output, reporter)
             val summary = analysis.summary
-            requireInternalTable(summary.path, summary.tableBytes, summary.rows)
+            requireInternalOutput(summary)
             emit(
                 Logs.info(
                     TAG_RUST,
@@ -1526,40 +1557,78 @@ class MainViewModel(
             throw cancelled
         } catch (throwable: Throwable) {
             val detail = "${throwable::class.simpleName}: ${throwable.message ?: "no detail"}"
-            lastInternalError = detail
+            lastInternalFailure = throwable
+            lastInternalError = InternalFailure.describe(throwable) ?: detail
             emit(Logs.warn(TAG_RUST, "Internal extraction failed: $detail"))
             null
         }
     }
 
     /**
-     * Confirms the engine's table is on disk with the size it reported.
+     * Confirms the engine's output is on disk with the size it reported.
      *
      * The table is the only copy of the internal offsets: a pass that reports
      * 883,574 functions but leaves nothing on disk would otherwise produce a
      * "successful" scan and a ZIP with no internal data in it.
      *
-     * @param path absolute path the engine reported.
-     * @param tableBytes size the engine reported, or zero when it did not.
-     * @param rows rows the engine reported.
-     * @throws java.io.IOException when the file is missing, empty or short.
+     * Two shapes are valid. When the engine classifies as it writes — the
+     * normal case, because the app always ships category rules — the rows live
+     * in one document per category and there is no single table at all. Only a
+     * scan without category rules produces the NDJSON table. Checking `path`
+     * unconditionally is what turned a finished category pass into
+     * "The internal offsets file is gone (. 0 bytes)".
+     *
+     * @param summary the engine's summary.
+     * @throws java.io.IOException when nothing usable was written.
      */
-    private fun requireInternalTable(path: String, tableBytes: Long, rows: Int) {
+    private fun requireInternalOutput(summary: InternalSummary) {
+        if (summary.shards.isNotEmpty()) {
+            var bytes = 0L
+            for (shard in summary.shards) {
+                val file = File(shard.path)
+                val onDisk = file.length()
+                if (!file.isFile || onDisk <= 0L) {
+                    throw java.io.IOException(
+                        "The ${shard.label} offsets file is gone " +
+                            "(${shard.path}, $onDisk bytes). Re-run the internal extraction."
+                    )
+                }
+                if (shard.bytes > 0L && onDisk != shard.bytes) {
+                    throw java.io.IOException(
+                        "The ${shard.label} offsets file is truncated (${shard.path}, " +
+                            "$onDisk bytes, ${shard.bytes} expected). " +
+                            "Re-run the internal extraction."
+                    )
+                }
+                bytes += onDisk
+            }
+            emit(
+                Logs.info(
+                    TAG_RUST,
+                    "Internal tables: ${summary.shards.size} category files, " +
+                        "${formatBytes(bytes)} ${summary.rows} rows"
+                )
+            )
+            return
+        }
+
+        val path = summary.path
         val file = File(path)
         val bytes = file.length()
         if (path.isBlank() || !file.isFile || bytes <= 0L) {
             throw java.io.IOException(
-                "The internal offsets file is gone ($path, $bytes bytes). " +
-                    "Re-run the internal extraction."
+                "The internal offsets file is gone ($path, $bytes bytes, " +
+                    "${summary.rows} rows expected). Re-run the internal extraction."
             )
         }
-        if (tableBytes > 0L && bytes != tableBytes) {
+        if (summary.tableBytes > 0L && bytes != summary.tableBytes) {
             throw java.io.IOException(
                 "The internal offsets file is truncated ($path, $bytes bytes, " +
-                    "$tableBytes expected). Re-run the internal extraction."
+                    "${summary.tableBytes} expected). Re-run the internal extraction."
             )
         }
-        emit(Logs.info(TAG_RUST, "Internal table: ${file.name} ${formatBytes(bytes)} $rows rows"))
+        emit(Logs.info(TAG_RUST, "Internal table: ${file.name} ${formatBytes(bytes)} " +
+            "${summary.rows} rows"))
     }
 
     /**
@@ -1572,6 +1641,17 @@ class MainViewModel(
         val result = _uiState.value.result
         if (result == null) {
             emit(Logs.warn(TAG_UI, "There is no scan to extend."))
+            return
+        }
+        // A deterministic failure fails the same way every time. Offering the
+        // button anyway is what produced a retry loop with no exit; the reason
+        // is shown instead.
+        if (!InternalFailure.isRetryable(lastInternalFailure)) {
+            val reason = result.internalError ?: "The internal pass cannot be retried."
+            emit(Logs.warn(TAG_UI, reason))
+            _uiState.update {
+                it.copy(exportMessage = reason, internalRetryable = false)
+            }
             return
         }
         val extracted = lastExtracted
@@ -1594,6 +1674,7 @@ class MainViewModel(
                     result = updated,
                     internalAvailable = updated.internalResolved &&
                         InternalTable.problem(updated) == null,
+                    internalRetryable = InternalFailure.isRetryable(lastInternalFailure),
                     progress = 100,
                     progressTask = if (analysis != null) {
                         "Internal offsets ready"
