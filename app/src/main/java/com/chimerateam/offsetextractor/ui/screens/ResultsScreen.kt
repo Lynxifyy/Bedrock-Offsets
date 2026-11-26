@@ -21,10 +21,10 @@ import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -342,15 +342,24 @@ private fun ExportBar(
                 ) {
                     DropdownMenuItem(
                         text = { Text("Copy JNI JSON") },
-                        onClick = { menuOpen = false; onCopyJson() }
+                        onClick = {
+                            menuOpen = false
+                            onCopyJson()
+                        }
                     )
                     DropdownMenuItem(
                         text = { Text("Share JNI JSON") },
-                        onClick = { menuOpen = false; onShareJson() }
+                        onClick = {
+                            menuOpen = false
+                            onShareJson()
+                        }
                     )
                     DropdownMenuItem(
                         text = { Text("Save JNI JSON") },
-                        onClick = { menuOpen = false; onSaveJson() }
+                        onClick = {
+                            menuOpen = false
+                            onSaveJson()
+                        }
                     )
                 }
             }

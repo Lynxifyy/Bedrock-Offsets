@@ -430,7 +430,7 @@ pub fn analyze(
 
 /// Reads every slot of every vtable and every function the binary exposes.
 ///
-/// The records go to [writer], which either streams the NDJSON table or writes
+/// The records go to `writer`, which either streams the NDJSON table or writes
 /// one finished JSON document per category.
 ///
 /// # Errors

@@ -1,16 +1,15 @@
 package com.chimerateam.offsetextractor.ui.log
 
+import java.io.File
+import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
-import kotlin.io.path.createTempDirectory
 
 /** The spilled log is what Copy and Share hand the user. */
 class LogFileTest {
 
-    private fun entry(message: String, at: Long = 0L) =
-        LogEntry(at, LogLevel.Info, "TAG", message)
+    private fun entry(message: String, at: Long = 0L) = LogEntry(at, LogLevel.Info, "TAG", message)
 
     @Test
     fun appendsEveryLineInOrder() {

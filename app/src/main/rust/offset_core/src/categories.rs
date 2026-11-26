@@ -133,7 +133,7 @@ impl CategoryRules {
         self.rules.iter().map(|rule| rule.id.as_str())
     }
 
-    /// Label of [id], falling back to the identifier itself.
+    /// Label of `id`, falling back to the identifier itself.
     pub fn label_of(&self, id: &str) -> String {
         self.rules
             .iter()

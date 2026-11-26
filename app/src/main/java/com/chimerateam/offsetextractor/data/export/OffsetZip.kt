@@ -166,7 +166,12 @@ class OffsetZipBuilder(
             }
 
             val manifestText = buildManifest(
-                summary, version, manifest, split, expectedRows, categoryPaths
+                summary,
+                version,
+                manifest,
+                split,
+                expectedRows,
+                categoryPaths
             )
             val entry = ZipEntry("manifest.json")
             zip.putNextEntry(entry)

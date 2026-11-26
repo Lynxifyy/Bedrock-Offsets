@@ -4,8 +4,8 @@ import com.chimerateam.offsetextractor.data.native.InternalCoverage
 import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.ShardPart
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
-import java.io.File
 import com.google.gson.JsonParser
+import java.io.File
 import java.util.zip.ZipFile
 import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
@@ -22,7 +22,14 @@ import org.junit.Test
 class OffsetZipShardTest {
 
     private val rules = listOf(
-        CategoryRule("block_placement", "Block placement", emptyList(), emptyList(), emptyList(), true),
+        CategoryRule(
+            "block_placement",
+            "Block placement",
+            emptyList(),
+            emptyList(),
+            emptyList(),
+            true
+        ),
         CategoryRule("rendering", "Rendering", emptyList(), emptyList(), emptyList(), false),
         CategoryRule("other_named", "Other", emptyList(), emptyList(), emptyList(), false)
     )
@@ -47,7 +54,7 @@ class OffsetZipShardTest {
         }
         file.writeText(
             """{"schemaVersion":1,"kind":"internal_cpp_category","category":"$id",""" +
-                """"label":"${id}","classes":{$classRecords},"functions":[$records],""" +
+                """"label":"$id","classes":{$classRecords},"functions":[$records],""" +
                 """"symbols":[$symbolRecords],"stats":{}}"""
         )
         return ShardPart(
@@ -62,10 +69,7 @@ class OffsetZipShardTest {
         )
     }
 
-    private fun summary(
-        shards: List<ShardPart>,
-        classMap: Map<String, String>
-    ): ScanResultSummary {
+    private fun summary(shards: List<ShardPart>, classMap: Map<String, String>): ScanResultSummary {
         val mapFile = File.createTempFile("classmap", ".json").apply {
             writeText(
                 classMap.entries.joinToString(",", "{", "}") { (name, category) ->
@@ -141,7 +145,11 @@ class OffsetZipShardTest {
         val result = OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile())
             .build(summary, target)
 
-        val categoryEntries = result.manifest.filter { it.path.startsWith("InternalCPP/INTERNALCPP_") }
+        val categoryEntries = result.manifest.filter {
+            it.path.startsWith(
+                "InternalCPP/INTERNALCPP_"
+            )
+        }
             .filterNot { it.path.contains("_INDEX_") }
         assertEquals(2, categoryEntries.size)
         // 4 functions + 1 class + 2 symbols in one file, 5 functions in the other.
@@ -206,7 +214,10 @@ class OffsetZipShardTest {
         assertEquals(3, result.rereadRows)
         ZipFile(target).use { zip ->
             val readme = zip.getInputStream(zip.getEntry("README.txt")).bufferedReader().readText()
-            assertTrue("the guide must name the version", readme.contains("BEDROCK_OFFSETS 26.60.3"))
+            assertTrue(
+                "the guide must name the version",
+                readme.contains("BEDROCK_OFFSETS 26.60.3")
+            )
             assertTrue("the guide must explain how to load", readme.contains("HOW TO LOAD"))
             assertTrue("the guide must list the categories", readme.contains("block_placement"))
 
@@ -234,7 +245,9 @@ class OffsetZipShardTest {
         val builder = OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile())
         val result = builder.build(summary, target)
         val categories = result.manifest
-            .filter { it.path.startsWith("InternalCPP/INTERNALCPP_") && !it.path.contains("_INDEX_") }
+            .filter {
+                it.path.startsWith("InternalCPP/INTERNALCPP_") && !it.path.contains("_INDEX_")
+            }
             .map { it.path }
 
         // Re-reading the finished archive must catch a scan that claims more

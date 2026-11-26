@@ -30,11 +30,10 @@ class StorageManagerTest {
         logDir = logDir
     )
 
-    private fun file(dir: File, name: String, bytes: Int = 16): File =
-        File(dir, name).apply {
-            parentFile?.mkdirs()
-            writeBytes(ByteArray(bytes))
-        }
+    private fun file(dir: File, name: String, bytes: Int = 16): File = File(dir, name).apply {
+        parentFile?.mkdirs()
+        writeBytes(ByteArray(bytes))
+    }
 
     @Test
     fun `usage groups files by area and totals them`() {

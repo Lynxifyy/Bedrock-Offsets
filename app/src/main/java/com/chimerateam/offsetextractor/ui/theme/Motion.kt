@@ -1,10 +1,10 @@
 package com.chimerateam.offsetextractor.ui.theme
 
-import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -20,13 +20,13 @@ import androidx.compose.runtime.compositionLocalOf
  */
 object MotionDuration {
     /** 120 ms: press feedback, chip and switch state. */
-    const val Short = 120
+    const val SHORT = 120
 
     /** 240 ms: navigation, sheets, expand and collapse. */
-    const val Medium = 240
+    const val MEDIUM = 240
 
     /** 400 ms: a phase change in the workflow stepper. */
-    const val Long = 400
+    const val LONG = 400
 }
 
 /** Easing tokens, all cubic so they read the same at any duration. */

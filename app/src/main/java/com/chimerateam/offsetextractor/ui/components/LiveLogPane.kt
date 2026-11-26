@@ -52,8 +52,8 @@ import com.chimerateam.offsetextractor.ui.log.LogLevel
 import com.chimerateam.offsetextractor.ui.log.LogPalette
 import com.chimerateam.offsetextractor.ui.log.Logs
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
-import com.chimerateam.offsetextractor.ui.theme.MonoText
 import com.chimerateam.offsetextractor.ui.theme.LocalReduceMotion
+import com.chimerateam.offsetextractor.ui.theme.MonoText
 import com.chimerateam.offsetextractor.ui.theme.MotionDuration
 import com.chimerateam.offsetextractor.ui.theme.MotionEasing
 import com.chimerateam.offsetextractor.ui.theme.PanelCorner
@@ -219,15 +219,15 @@ private fun JumpToLatestChip(
         visible = visible,
         modifier = modifier,
         enter = fadeIn(
-            motionTween(MotionDuration.Short, MotionEasing.Decelerate, reduceMotion)
+            motionTween(MotionDuration.SHORT, MotionEasing.Decelerate, reduceMotion)
         ) + scaleIn(
-            motionTween(MotionDuration.Short, MotionEasing.Decelerate, reduceMotion),
+            motionTween(MotionDuration.SHORT, MotionEasing.Decelerate, reduceMotion),
             initialScale = 0.9f
         ),
         exit = fadeOut(
-            motionTween(MotionDuration.Short, MotionEasing.Accelerate, reduceMotion)
+            motionTween(MotionDuration.SHORT, MotionEasing.Accelerate, reduceMotion)
         ) + scaleOut(
-            motionTween(MotionDuration.Short, MotionEasing.Accelerate, reduceMotion),
+            motionTween(MotionDuration.SHORT, MotionEasing.Accelerate, reduceMotion),
             targetScale = 0.9f
         )
     ) {

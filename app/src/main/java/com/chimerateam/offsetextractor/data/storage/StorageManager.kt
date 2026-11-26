@@ -260,8 +260,10 @@ class StorageManager(
         var freed = 0L
         for (file in listFiles(dir)) {
             val keep = id == StorageAreaId.Internal &&
-                (file.absolutePath == table?.absolutePath ||
-                    file.absolutePath == table?.parentFile?.absolutePath)
+                (
+                    file.absolutePath == table?.absolutePath ||
+                        file.absolutePath == table?.parentFile?.absolutePath
+                    )
             if (keep) continue
             freed += sizeOf(file)
             if (file.isDirectory) deleteTree(file) else delete(file)
@@ -312,10 +314,9 @@ class StorageManager(
      * The sweep keeps it so the cached result of the previous scan can still be
      * exported after the app restarts.
      */
-    fun newestTable(): File? =
-        listFiles(internalDir)
-            .filter { it.isFile && it.name.endsWith(".ndjson") }
-            .maxByOrNull { it.lastModified() }
+    fun newestTable(): File? = listFiles(internalDir)
+        .filter { it.isFile && it.name.endsWith(".ndjson") }
+        .maxByOrNull { it.lastModified() }
 
     /**
      * Deletes one file, used by the per-item delete button.
@@ -343,11 +344,7 @@ class StorageManager(
         StorageAreaId.Logs -> logDir
     }
 
-    private fun areaOf(
-        id: StorageAreaId,
-        dir: File,
-        keep: Set<String>
-    ): StorageArea {
+    private fun areaOf(id: StorageAreaId, dir: File, keep: Set<String>): StorageArea {
         val keepParents = keep.mapNotNull { File(it).parentFile?.absolutePath }.toSet()
         val files = listFiles(dir).map { file ->
             StorageFile(
@@ -441,6 +438,11 @@ class StorageManager(
          * @param neededBytes estimate from [estimateBytes].
          * @param volume directory on the target volume.
          */
+        // getAllocatableBytes would count clearable caches, including the cached
+        // ZIP that Retry resumes from. A preflight must not promise space it may
+        // have to take back, so the raw free space of the volume is the number
+        // to compare against.
+        @Suppress("UsableSpace")
         fun preflight(neededBytes: Long, volume: File): SpaceCheck =
             SpaceCheck(neededBytes, runCatching { volume.usableSpace }.getOrDefault(0L))
 

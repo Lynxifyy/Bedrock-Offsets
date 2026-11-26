@@ -3,8 +3,12 @@ package com.chimerateam.offsetextractor.ui.screens
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollToNode
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.chimerateam.offsetextractor.data.native.InternalSummary
 import com.chimerateam.offsetextractor.data.native.PatternHit
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
@@ -13,14 +17,16 @@ import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
  * Proves the result card is complete, not cut where the pinned controls begin,
  * at a phone size and at a landscape tablet size.
+ *
+ * Lives in the debug source set because `createComposeRule` hosts its content in
+ * the `ComponentActivity` that only the debug manifest declares.
  */
-@RunWith(RobolectricTestRunner::class)
+@RunWith(AndroidJUnit4::class)
 class ResultsLayoutTest {
 
     @get:Rule
@@ -72,11 +78,15 @@ class ResultsLayoutTest {
             )
         }
         // These rows sit at the bottom of the card, which is exactly where the
-        // pane used to be cut.
-        compose.onNodeWithText("Matches").assertIsDisplayed()
-        compose.onNodeWithText("Discarded").assertIsDisplayed()
-        compose.onNodeWithText("Peak resident").assertIsDisplayed()
+        // pane used to be cut. The card scrolls, so reach each row the way a
+        // user would; a cut pane fails here because the row is unreachable and
+        // the pinned footer is gone.
+        listOf("Matches", "Discarded", "Peak resident").forEach { row ->
+            compose.onNodeWithTag(RESULTS_LIST_TAG).performScrollToNode(hasText(row))
+            compose.onNodeWithText(row).assertIsDisplayed()
+        }
         compose.onNodeWithText("Offsets").assertIsDisplayed()
+        compose.onNodeWithTag(DOWNLOAD_ZIP_TAG).assertIsDisplayed()
     }
 
     @Test

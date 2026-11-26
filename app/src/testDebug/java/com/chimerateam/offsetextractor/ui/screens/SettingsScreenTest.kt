@@ -10,13 +10,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import java.io.File
 import com.chimerateam.offsetextractor.data.storage.StorageArea
 import com.chimerateam.offsetextractor.data.storage.StorageAreaId
 import com.chimerateam.offsetextractor.data.storage.StorageFile
 import com.chimerateam.offsetextractor.data.storage.StorageUsage
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test

@@ -1,6 +1,5 @@
 package com.chimerateam.offsetextractor.data.export
 
-import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
@@ -225,19 +224,25 @@ object OffsetExporter {
         writer.write("Library SHA-256: ${summary.sha256}\n")
         writer.write("Build ID: ${summary.buildId} (${summary.buildIdSource})\n")
         if (coverage != null) {
-            writer.write("Internal completeness: ${coverage.summaryLine} " +
-                "from ${coverage.functionSource}, ${coverage.classes} classes, " +
-                "${coverage.slots} slots, ${coverage.dataSymbols} data symbols\n")
+            writer.write(
+                "Internal completeness: ${coverage.summaryLine} " +
+                    "from ${coverage.functionSource}, ${coverage.classes} classes, " +
+                    "${coverage.slots} slots, ${coverage.dataSymbols} data symbols\n"
+            )
             if (!coverage.functionsMatchFdes) {
-                writer.write("WARNING: ${coverage.fdeMissing} functions from .eh_frame are " +
-                    "missing from the tables.\n")
+                writer.write(
+                    "WARNING: ${coverage.fdeMissing} functions from .eh_frame are " +
+                        "missing from the tables.\n"
+                )
             }
         }
         if (jni != null) {
-            writer.write("JNI coverage: ${jni.exports} exports, ${jni.entryPoints} lifecycle " +
-                "entry points, ${jni.registered} registered natives, " +
-                "${jni.patternsMatched} of ${jni.patterns} signatures matched, " +
-                "${jni.union} offsets in total\n")
+            writer.write(
+                "JNI coverage: ${jni.exports} exports, ${jni.entryPoints} lifecycle " +
+                    "entry points, ${jni.registered} registered natives, " +
+                    "${jni.patternsMatched} of ${jni.patterns} signatures matched, " +
+                    "${jni.union} offsets in total\n"
+            )
         }
         writer.write("\n")
         writer.write("WHAT IS HERE\n")

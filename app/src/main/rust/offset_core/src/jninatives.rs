@@ -72,7 +72,7 @@ pub struct NativeTable {
 ///
 /// # Errors
 ///
-/// Returns [`CoreError::OutOfMemory`] when the relocation index cannot be
+/// Returns `CoreError::OutOfMemory` when the relocation index cannot be
 /// built, rather than aborting the process.
 pub fn find_register_natives(image: &[u8], map: &SectionMap) -> CoreResult<NativeTable> {
     let relocations = RelocationIndex::build(image)?;

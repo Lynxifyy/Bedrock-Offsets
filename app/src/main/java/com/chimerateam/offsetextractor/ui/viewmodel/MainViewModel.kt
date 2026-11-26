@@ -127,7 +127,7 @@ class MainViewModel(
 
     private val _logEntries = MutableStateFlow<List<LogEntry>>(emptyList())
 
-    private val _scanId = MutableStateFlow("")
+    private val scanIdState = MutableStateFlow("")
 
     /**
      * Lines of the scan that is on screen, in chronological order.
@@ -1761,7 +1761,7 @@ class MainViewModel(
     }
 
     private fun emit(entry: LogEntry) {
-        val stamped = if (entry.scanId.isEmpty()) entry.copy(scanId = _scanId.value) else entry
+        val stamped = if (entry.scanId.isEmpty()) entry.copy(scanId = scanIdState.value) else entry
         logFile?.append(stamped)
         _logEntries.update { existing ->
             val appended = existing + stamped
@@ -1801,8 +1801,8 @@ class MainViewModel(
      * another scan's progress.
      */
     private fun beginScan() {
-        _scanId.value = "scan-" + clock() + "-" + (++scanCounter)
-        _logEntries.update { existing -> existing.filter { it.scanId == _scanId.value } }
+        scanIdState.value = "scan-" + clock() + "-" + (++scanCounter)
+        _logEntries.update { existing -> existing.filter { it.scanId == scanIdState.value } }
         // The file backs Copy and Share, so it holds one run: keeping older
         // runs would hand the user a log that does not describe the result on
         // screen.

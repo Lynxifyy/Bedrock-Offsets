@@ -114,8 +114,9 @@ private fun CompletenessBadge(result: ScanResultSummary) {
     val coverage = result.internal?.coverage
     val semantics = LocalSemanticColors.current
     val (text, colour) = when {
-        coverage == null -> "No internal table to check" to
-            MaterialTheme.colorScheme.onSurfaceVariant
+        coverage == null ->
+            "No internal table to check" to
+                MaterialTheme.colorScheme.onSurfaceVariant
         coverage.truncated || !coverage.functionsMatchFdes ->
             "Partial: ${coverage.summaryLine}" to semantics.warning
         else -> "Complete: ${coverage.summaryLine}" to semantics.success

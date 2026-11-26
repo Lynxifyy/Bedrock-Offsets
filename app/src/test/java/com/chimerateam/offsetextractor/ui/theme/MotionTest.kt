@@ -9,20 +9,20 @@ class MotionTest {
 
     @Test
     fun theDurationScaleHasThreeSteps() {
-        assertEquals(120, MotionDuration.Short)
-        assertEquals(240, MotionDuration.Medium)
-        assertEquals(400, MotionDuration.Long)
+        assertEquals(120, MotionDuration.SHORT)
+        assertEquals(240, MotionDuration.MEDIUM)
+        assertEquals(400, MotionDuration.LONG)
     }
 
     @Test
     fun aTweenKeepsItsDurationWhenMotionIsAllowed() {
-        val spec = motionTween<Float>(MotionDuration.Medium)
-        assertEquals(MotionDuration.Medium, (spec as TweenSpec<Float>).durationMillis)
+        val spec = motionTween<Float>(MotionDuration.MEDIUM)
+        assertEquals(MotionDuration.MEDIUM, (spec as TweenSpec<Float>).durationMillis)
     }
 
     @Test
     fun aTweenBecomesASnapWhenMotionIsReduced() {
-        val spec = motionTween<Float>(MotionDuration.Long, reduceMotion = true)
+        val spec = motionTween<Float>(MotionDuration.LONG, reduceMotion = true)
         assertEquals(0, (spec as TweenSpec<Float>).durationMillis)
     }
 

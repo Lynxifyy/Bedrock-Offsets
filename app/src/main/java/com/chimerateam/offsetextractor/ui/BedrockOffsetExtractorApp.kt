@@ -10,8 +10,9 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -21,9 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -42,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,9 +50,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -77,7 +74,10 @@ import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
+import com.chimerateam.offsetextractor.ui.theme.LocalReduceMotion
+import com.chimerateam.offsetextractor.ui.theme.MotionDuration
 import com.chimerateam.offsetextractor.ui.theme.ThemeMode
+import com.chimerateam.offsetextractor.ui.theme.motionTween
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
 import com.chimerateam.offsetextractor.util.formatBytes
 import java.io.File
@@ -115,6 +115,8 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val deleteApkAfterScan by viewModel.deleteApkAfterScan.collectAsStateWithLifecycle()
     val cacheCapMb by viewModel.cacheCapMb.collectAsStateWithLifecycle()
     val reduceMotion by viewModel.reduceMotion.collectAsStateWithLifecycle()
+    val toastSpec = motionTween<Float>(MotionDuration.MEDIUM, reduceMotion = reduceMotion)
+    val toastExitSpec = motionTween<Float>(MotionDuration.SHORT, reduceMotion = reduceMotion)
     val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
     val exportProgress by ExportJobRepository.progress.collectAsStateWithLifecycle()
 
@@ -323,218 +325,218 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
 
     BedrockOffsetExtractorTheme(themeMode = themeMode) {
         BoxWithConstraints {
-        // A rail from 840dp: the three destinations stop being a thumb target
-        // and become a permanent left column, which leaves the whole width for
-        // the two panes the scanner already uses on tablets.
-        val wide = maxWidth >= 840.dp
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Bedrock Offset Extractor") },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface,
-                        actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    actions = {
-                        IconButton(onClick = { viewModel.clearCache() }) {
-                            Icon(
-                                imageVector = Icons.Filled.DeleteSweep,
-                                contentDescription = "Clear cache"
-                            )
-                        }
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(
-                                imageVector = Icons.Filled.MoreVert,
-                                contentDescription = "More options"
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = menuOpen,
-                            onDismissRequest = { menuOpen = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Copy offsets as JSON") },
-                                enabled = state.result != null,
-                                onClick = {
-                                    menuOpen = false
-                                    copyJson()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Share offsets as JSON") },
-                                enabled = state.result != null,
-                                onClick = {
-                                    menuOpen = false
-                                    shareJson()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Save offsets to a file") },
-                                enabled = state.result != null,
-                                onClick = {
-                                    menuOpen = false
-                                    saveJson()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Scan several APKs") },
-                                enabled = state.batch == null,
-                                onClick = {
-                                    menuOpen = false
-                                    batchPicker.launch(arrayOf(APK_MIME_TYPE))
-                                }
-                            )
-                        }
-                    }
-                )
-            },
-            snackbarHost = { SnackbarHost(snackbarHostState) },
-            bottomBar = {
-                if (!wide) NavigationBar {
-                    AppTab.entries.forEach { entry ->
-                        NavigationItem(
-                            tab = entry,
-                            selected = tab == entry,
-                            onSelect = { tab = entry }
-                        )
-                    }
-                }
-            }
-        ) { innerPadding ->
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                if (wide) {
-                    AppNavigationRail(current = tab, onSelect = { tab = it })
-                }
-                Box(modifier = Modifier.fillMaxSize()) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    when (tab) {
-                        AppTab.Scanner -> ScannerScreen(
-                            state = state,
-                            entries = logEntries,
-                            onCopyLog = copyLog,
-                            onClearLog = { viewModel.clearLog() },
-                            onSelectApk = { picker.launch(arrayOf(APK_MIME_TYPE)) },
-                            onSelectApks = { batchPicker.launch(arrayOf(APK_MIME_TYPE)) },
-                            onCancelSelection = { viewModel.cancel() },
-                            onRetry = { viewModel.retry() },
-                            onCopyJson = copyJson,
-                            onShareJson = shareJson,
-                            onSaveJson = saveJson,
-                            onDownloadZip = downloadZip,
-                            onRetryInternal = { viewModel.retryInternalExtraction() },
-                            internalBusy = false,
-                            exportProgress = exportProgress,
-                            onRetryExport = { ExportService.retry(context) },
-                            onDiscardExport = { ExportService.discard(context) }
-                        )
-
-                        AppTab.Apks -> ApksScreen(
-                            onExtract = { file ->
-                                tab = AppTab.Scanner
-                                viewModel.onApkFileSelected(file)
+            // A rail from 840dp: the three destinations stop being a thumb target
+            // and become a permanent left column, which leaves the whole width for
+            // the two panes the scanner already uses on tablets.
+            val wide = maxWidth >= 840.dp
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Bedrock Offset Extractor") },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            titleContentColor = MaterialTheme.colorScheme.onSurface,
+                            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        actions = {
+                            IconButton(onClick = { viewModel.clearCache() }) {
+                                Icon(
+                                    imageVector = Icons.Filled.DeleteSweep,
+                                    contentDescription = "Clear cache"
+                                )
                             }
-                        )
-
-                        AppTab.Settings -> SettingsScreen(
-                            themeMode = themeMode,
-                            onThemeModeChange = { viewModel.setThemeMode(it.name) },
-                            cacheSizeLabel = formatBytes(cacheSizeBytes),
-                            forceRescan = forceRescan,
-                            onForceRescanChange = { viewModel.setForceRescan(it) },
-                            onClearCache = { viewModel.clearCache() },
-                            lastBuildId = lastBuildId,
-                            includeAllFunctions = includeAllFunctions,
-                            generateSignatures = generateSignatures,
-                            maxSlotsPerClass = maxSlotsPerClass,
-                            onIncludeAllFunctionsChange = { viewModel.setIncludeAllFunctions(it) },
-                            onGenerateSignaturesChange = { viewModel.setGenerateSignatures(it) },
-                            onMaxSlotsPerClassChange = { viewModel.setMaxSlotsPerClass(it) },
-                            includeCombined = includeCombined,
-                            onIncludeCombinedChange = { viewModel.setIncludeCombined(it) },
-                            lowMemoryWarnings = lowMemoryWarnings,
-                            onLowMemoryWarningsChange = {
-                                viewModel.setLowMemoryWarnings(it)
-                            },
-                            onImportCategories = {
-                                categoryPicker.launch(
-                                    arrayOf("application/json")
+                            IconButton(onClick = { menuOpen = true }) {
+                                Icon(
+                                    imageVector = Icons.Filled.MoreVert,
+                                    contentDescription = "More options"
                                 )
-                            },
-                            onResetCategories = {
-                                CategoryCatalog.reset(context)
-                                viewModel.setCategories(CategoryCatalog.load(context))
-                                viewModel.onExportActionTaken(
-                                    "Default category rules restored."
+                            }
+                            DropdownMenu(
+                                expanded = menuOpen,
+                                onDismissRequest = { menuOpen = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Copy offsets as JSON") },
+                                    enabled = state.result != null,
+                                    onClick = {
+                                        menuOpen = false
+                                        copyJson()
+                                    }
                                 )
-                            },
-                            storageUsage = storageUsage,
-                            deleteApkAfterScan = deleteApkAfterScan,
-                            onDeleteApkAfterScanChange = {
-                                viewModel.setDeleteApkAfterScan(it)
-                            },
-                            cacheCapMb = cacheCapMb,
-                            onCacheCapMbChange = { viewModel.setCacheCapMb(it) },
-                            onFreeUpSpace = { viewModel.freeUpSpace() },
-                            onDeleteArea = { viewModel.deleteStorageArea(it) },
-                            onDeleteFile = { viewModel.deleteStorageFile(it) },
-                            jobRunning = state.phase == ScannerPhase.Extracting ||
-                                state.phase == ScannerPhase.Scanning ||
-                                exportProgress.isRunning,
-                            reduceMotion = reduceMotion,
-                            onReduceMotionChange = { viewModel.setReduceMotion(it) }
-                        )
+                                DropdownMenuItem(
+                                    text = { Text("Share offsets as JSON") },
+                                    enabled = state.result != null,
+                                    onClick = {
+                                        menuOpen = false
+                                        shareJson()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Save offsets to a file") },
+                                    enabled = state.result != null,
+                                    onClick = {
+                                        menuOpen = false
+                                        saveJson()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Scan several APKs") },
+                                    enabled = state.batch == null,
+                                    onClick = {
+                                        menuOpen = false
+                                        batchPicker.launch(arrayOf(APK_MIME_TYPE))
+                                    }
+                                )
+                            }
+                        }
+                    )
+                },
+                snackbarHost = { SnackbarHost(snackbarHostState) },
+                bottomBar = {
+                    if (!wide) {
+                        NavigationBar {
+                            AppTab.entries.forEach { entry ->
+                                NavigationItem(
+                                    tab = entry,
+                                    selected = tab == entry,
+                                    onSelect = { tab = entry }
+                                )
+                            }
+                        }
                     }
                 }
-                androidx.compose.runtime.CompositionLocalProvider(
-                    com.chimerateam.offsetextractor.ui.theme.LocalReduceMotion
-                        .provides(reduceMotion)
+            ) { innerPadding ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
                 ) {
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = exportProgress.state != ExportState.Idle &&
-                        exportProgress.state != ExportState.Cancelled,
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                    enter = androidx.compose.animation.fadeIn(
-                        com.chimerateam.offsetextractor.ui.theme.motionTween(
-                            com.chimerateam.offsetextractor.ui.theme.MotionDuration.Medium,
-                            reduceMotion = reduceMotion
-                        )
-                    ) + androidx.compose.animation.scaleIn(
-                        initialScale = 0.96f,
-                        animationSpec = com.chimerateam.offsetextractor.ui.theme.motionTween(
-                            com.chimerateam.offsetextractor.ui.theme.MotionDuration.Medium,
-                            reduceMotion = reduceMotion
-                        )
-                    ),
-                    exit = androidx.compose.animation.fadeOut(
-                        com.chimerateam.offsetextractor.ui.theme.motionTween(
-                            com.chimerateam.offsetextractor.ui.theme.MotionDuration.Short,
-                            reduceMotion = reduceMotion
-                        )
-                    )
-                ) {
-                    ExportProgressToast(
-                        progress = exportProgress,
-                        onCancel = { ExportService.cancel(context) },
-                        onRetry = { ExportService.retry(context) },
-                        onShare = shareZip,
-                        onDismiss = { ExportJobRepository.clear() },
-                        modifier = Modifier
-                            // Clears the navigation bar and the pinned action
-                            // row: the pill used to sit on top of Copy, Share
-                            // and Start new scan.
-                            .padding(horizontal = 16.dp)
-                            .padding(bottom = if (wide) 24.dp else TOAST_BOTTOM_INSET)
-                    )
-                }
-                }
+                    if (wide) {
+                        AppNavigationRail(current = tab, onSelect = { tab = it })
+                    }
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            when (tab) {
+                                AppTab.Scanner -> ScannerScreen(
+                                    state = state,
+                                    entries = logEntries,
+                                    onCopyLog = copyLog,
+                                    onClearLog = { viewModel.clearLog() },
+                                    onSelectApk = { picker.launch(arrayOf(APK_MIME_TYPE)) },
+                                    onSelectApks = { batchPicker.launch(arrayOf(APK_MIME_TYPE)) },
+                                    onCancelSelection = { viewModel.cancel() },
+                                    onRetry = { viewModel.retry() },
+                                    onCopyJson = copyJson,
+                                    onShareJson = shareJson,
+                                    onSaveJson = saveJson,
+                                    onDownloadZip = downloadZip,
+                                    onRetryInternal = { viewModel.retryInternalExtraction() },
+                                    internalBusy = false,
+                                    exportProgress = exportProgress,
+                                    onRetryExport = { ExportService.retry(context) },
+                                    onDiscardExport = { ExportService.discard(context) }
+                                )
+
+                                AppTab.Apks -> ApksScreen(
+                                    onExtract = { file ->
+                                        tab = AppTab.Scanner
+                                        viewModel.onApkFileSelected(file)
+                                    }
+                                )
+
+                                AppTab.Settings -> SettingsScreen(
+                                    themeMode = themeMode,
+                                    onThemeModeChange = { viewModel.setThemeMode(it.name) },
+                                    cacheSizeLabel = formatBytes(cacheSizeBytes),
+                                    forceRescan = forceRescan,
+                                    onForceRescanChange = { viewModel.setForceRescan(it) },
+                                    onClearCache = { viewModel.clearCache() },
+                                    lastBuildId = lastBuildId,
+                                    includeAllFunctions = includeAllFunctions,
+                                    generateSignatures = generateSignatures,
+                                    maxSlotsPerClass = maxSlotsPerClass,
+                                    onIncludeAllFunctionsChange = {
+                                        viewModel.setIncludeAllFunctions(
+                                            it
+                                        )
+                                    },
+                                    onGenerateSignaturesChange = {
+                                        viewModel.setGenerateSignatures(
+                                            it
+                                        )
+                                    },
+                                    onMaxSlotsPerClassChange = {
+                                        viewModel.setMaxSlotsPerClass(
+                                            it
+                                        )
+                                    },
+                                    includeCombined = includeCombined,
+                                    onIncludeCombinedChange = { viewModel.setIncludeCombined(it) },
+                                    lowMemoryWarnings = lowMemoryWarnings,
+                                    onLowMemoryWarningsChange = {
+                                        viewModel.setLowMemoryWarnings(it)
+                                    },
+                                    onImportCategories = {
+                                        categoryPicker.launch(
+                                            arrayOf("application/json")
+                                        )
+                                    },
+                                    onResetCategories = {
+                                        CategoryCatalog.reset(context)
+                                        viewModel.setCategories(CategoryCatalog.load(context))
+                                        viewModel.onExportActionTaken(
+                                            "Default category rules restored."
+                                        )
+                                    },
+                                    storageUsage = storageUsage,
+                                    deleteApkAfterScan = deleteApkAfterScan,
+                                    onDeleteApkAfterScanChange = {
+                                        viewModel.setDeleteApkAfterScan(it)
+                                    },
+                                    cacheCapMb = cacheCapMb,
+                                    onCacheCapMbChange = { viewModel.setCacheCapMb(it) },
+                                    onFreeUpSpace = { viewModel.freeUpSpace() },
+                                    onDeleteArea = { viewModel.deleteStorageArea(it) },
+                                    onDeleteFile = { viewModel.deleteStorageFile(it) },
+                                    jobRunning = state.phase == ScannerPhase.Extracting ||
+                                        state.phase == ScannerPhase.Scanning ||
+                                        exportProgress.isRunning,
+                                    reduceMotion = reduceMotion,
+                                    onReduceMotionChange = { viewModel.setReduceMotion(it) }
+                                )
+                            }
+                        }
+                        CompositionLocalProvider(
+                            LocalReduceMotion.provides(reduceMotion)
+                        ) {
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = exportProgress.state != ExportState.Idle &&
+                                    exportProgress.state != ExportState.Cancelled,
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                                enter = fadeIn(toastSpec) + scaleIn(
+                                    initialScale = 0.96f,
+                                    animationSpec = toastSpec
+                                ),
+                                exit = fadeOut(toastExitSpec)
+                            ) {
+                                ExportProgressToast(
+                                    progress = exportProgress,
+                                    onCancel = { ExportService.cancel(context) },
+                                    onRetry = { ExportService.retry(context) },
+                                    onShare = shareZip,
+                                    onDismiss = { ExportJobRepository.clear() },
+                                    modifier = Modifier
+                                        // Clears the navigation bar and the pinned action
+                                        // row: the pill used to sit on top of Copy, Share
+                                        // and Start new scan.
+                                        .padding(horizontal = 16.dp)
+                                        .padding(bottom = if (wide) 24.dp else TOAST_BOTTOM_INSET)
+                                )
+                            }
+                        }
+                    }
                 }
             }
-        }
         }
     }
 }
@@ -560,11 +562,7 @@ private fun AppNavigationRail(current: AppTab, onSelect: (AppTab) -> Unit) {
 }
 
 @Composable
-private fun RowScope.NavigationItem(
-    tab: AppTab,
-    selected: Boolean,
-    onSelect: () -> Unit
-) {
+private fun RowScope.NavigationItem(tab: AppTab, selected: Boolean, onSelect: () -> Unit) {
     NavigationBarItem(
         selected = selected,
         onClick = onSelect,

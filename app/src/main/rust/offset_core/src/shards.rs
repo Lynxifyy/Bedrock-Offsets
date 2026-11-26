@@ -69,7 +69,7 @@ pub struct NdjsonWriter<'a> {
 }
 
 impl<'a> NdjsonWriter<'a> {
-    /// Wraps [out].
+    /// Wraps `out`.
     pub fn new(out: &'a mut dyn Write) -> Self {
         Self { out }
     }
@@ -269,7 +269,7 @@ pub struct ShardWriter {
 }
 
 impl ShardWriter {
-    /// Creates a writer that puts its files in [dir].
+    /// Creates a writer that puts its files in `dir`.
     ///
     /// @param header extra top-level fields (version and source), already
     ///   serialised, or an empty string.

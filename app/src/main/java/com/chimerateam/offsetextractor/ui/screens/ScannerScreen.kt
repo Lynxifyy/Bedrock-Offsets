@@ -1,7 +1,6 @@
 package com.chimerateam.offsetextractor.ui.screens
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -23,10 +22,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.data.export.ExportProgress
@@ -36,11 +35,11 @@ import com.chimerateam.offsetextractor.ui.components.ResultsPanel
 import com.chimerateam.offsetextractor.ui.components.SelectedApkCard
 import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
+import com.chimerateam.offsetextractor.ui.state.ScannerUiState
 import com.chimerateam.offsetextractor.ui.theme.MotionDuration
 import com.chimerateam.offsetextractor.ui.theme.MotionEasing
-import com.chimerateam.offsetextractor.ui.theme.motionTween
-import com.chimerateam.offsetextractor.ui.state.ScannerUiState
 import com.chimerateam.offsetextractor.ui.theme.PanelGap
+import com.chimerateam.offsetextractor.ui.theme.motionTween
 
 /**
  * Scanner destination: controls and results on one side, live log on the other.
@@ -219,12 +218,12 @@ private fun ControlsPane(
         modifier = modifier,
         targetState = state.phase,
         transitionSpec = {
-            val enter = motionTween<Float>(MotionDuration.Medium, MotionEasing.Decelerate)
+            val enter = motionTween<Float>(MotionDuration.MEDIUM, MotionEasing.Decelerate)
             val slide = motionTween<androidx.compose.ui.unit.IntOffset>(
-                MotionDuration.Medium,
+                MotionDuration.MEDIUM,
                 MotionEasing.Decelerate
             )
-            val exit = motionTween<Float>(MotionDuration.Short, MotionEasing.Accelerate)
+            val exit = motionTween<Float>(MotionDuration.SHORT, MotionEasing.Accelerate)
             (fadeIn(enter) + slideInVertically(slide) { it / 12 })
                 .togetherWith(fadeOut(exit))
         },
