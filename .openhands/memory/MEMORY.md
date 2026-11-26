@@ -205,3 +205,16 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   a Compose `FilterChip` label fails it). **`Api28CompatTest`**: shipped sources must not call an API
   newer than 28 — `String.isBlank` (33) is the usual slip, use `s.trim().isEmpty()`.
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
+
+### Signatures & memory (v1.1.0-pre.3)
+- Signature patterns are **bytes + wildcard bitmap**, hex rendered per row only. `Signature::byte_len()`
+  (not `len()`), `MAX_SIGNATURE_BYTES=48` start, `MAX_SIGNATURE_EXTENDED_BYTES=512`,
+  `SIGNATURE_MEMORY_BUDGET=192 MB`. The matcher scans one bounded `.text` window at a time and
+  borrows patterns; growing all patterns to 512 B at once is what the LMK killed.
+- Host `real_library_stats` on a 700k-function/500k-named library: peak 709 MB worst case, 556 MB
+  realistic (was 929 MB). 2 GB cloud phone: completes, 500k unique signatures, 261.5 MB table,
+  logcat `exits: []`, live log 761 MB (round 1) / 790 MB (round 2).
+- `MAX_NAMED_SYMBOLS = 500_000` in `symbols.rs` is a real data cap; it now logs
+  "Symbols: capped at …" via `internal::report` (made `pub(crate)`).
+- Crash reporting: `ui/log/CrashLog.kt` appends `CRASH …` lines to `live.log`; `MainViewModel`
+  replays the last 40 on start. `CrashLogTest` covers it.
