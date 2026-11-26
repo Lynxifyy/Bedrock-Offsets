@@ -589,7 +589,7 @@ fn the_whole_pipeline_agrees_on_one_offset() {
     let vtables = resolve_vtables(library.bytes()).expect("vtables");
     let entry = vtables
         .entries
-        .get("ClientInstance")
+        .get("14ClientInstance")
         .expect("ClientInstance must resolve");
     assert_eq!(entry.vtable_address, DATA_REL_RO_ADDRESS);
     assert_eq!(entry.type_info_address, DATA_REL_RO_ADDRESS + 0x80);

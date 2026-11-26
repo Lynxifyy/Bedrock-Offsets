@@ -497,8 +497,10 @@ mod tests {
     fn class(name: &str) -> ClassRecord {
         ClassRecord {
             name: name.to_string(),
+            base_name: name.to_string(),
             mangled: format!("_{name}"),
             bases: Vec::new(),
+            base_classes: Vec::new(),
             vtable: 0x1000,
             file_offset: Some(0x10),
             vtable_offset: 0x10,
@@ -516,6 +518,7 @@ mod tests {
             size: 4,
             name: name.to_string(),
             name_source: "symbol".to_string(),
+            confidence: None,
             aliases: Vec::new(),
             kind: "function".to_string(),
             status: "verified".to_string(),

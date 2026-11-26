@@ -236,8 +236,10 @@ data class VtableSlot(
  */
 data class ClassInfo(
     val name: String = "",
+    @SerializedName("baseName") val baseName: String = "",
     val mangled: String = "",
     val bases: List<String> = emptyList(),
+    @SerializedName("baseClasses") val baseClasses: List<BaseClass> = emptyList(),
     val vtable: String = "0x0",
     @SerializedName("fileOffset") val fileOffset: String? = null,
     @SerializedName("vtableOffset") val vtableOffset: String = "0x0",
@@ -245,6 +247,25 @@ data class ClassInfo(
     @SerializedName("slotCount") val slotCount: Int = 0,
     val slots: List<VtableSlot> = emptyList(),
     @SerializedName("vtableGroups") val vtableGroups: List<VtableGroup> = emptyList()
+)
+
+/**
+ * One base class of an RTTI class, decoded from the type_info base array.
+ *
+ * @property name demangled base name.
+ * @property mangled mangled identity of the base.
+ * @property offset byte offset of the base subobject inside this class.
+ * @property flags the ABI flags word: bit 0 public, bit 1 virtual.
+ * @property isPublic whether the base is public.
+ * @property isVirtual whether the base is virtual.
+ */
+data class BaseClass(
+    val name: String = "",
+    val mangled: String = "",
+    val offset: Long = 0,
+    val flags: Int = 0,
+    @SerializedName("isPublic") val isPublic: Boolean = false,
+    @SerializedName("isVirtual") val isVirtual: Boolean = false
 )
 
 /**

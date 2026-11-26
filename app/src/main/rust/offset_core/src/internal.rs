@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, CoreResult};
 use crate::patterns::PatternSet;
 use crate::prologue::{PrologueKind, PrologueVerifier};
-use crate::rtti::{read_u64, RelocationIndex, VtableMap};
+use crate::rtti::{read_u64, RelocationIndex, TypeInfoKind, VtableMap};
 use crate::scanner::{scan_section_releasing_pages, PageReleaser, ProgressSink, ScanControl};
 use crate::sections::{SectionMap, RODATA_SECTION, TEXT_SECTION};
 use crate::shards::{NdjsonWriter, RecordWriter};
@@ -314,12 +314,17 @@ pub struct SlotRecord {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassRecord {
-    /// Demangled class name.
+    /// Full demangled identity, template arguments included.
     pub name: String,
-    /// Mangled name.
+    /// Template-stripped family name, for example `entt::basic_storage`.
+    pub base_name: String,
+    /// Mangled name: the identity of this row.
     pub mangled: String,
     /// Base classes, most-derived first.
     pub bases: Vec<String>,
+    /// The inheritance graph entry for each base: name, offset and ABI flags.
+    #[serde(default)]
+    pub base_classes: Vec<BaseRecord>,
     /// Virtual address of the vtable header.
     #[serde(serialize_with = "hex_u64")]
     pub vtable: u64,
@@ -347,6 +352,24 @@ pub struct ClassRecord {
     /// Multiple inheritance gives a class one group per base subobject; the
     /// primary group is the one the class pointer points at.
     pub vtable_groups: Vec<VtableGroup>,
+}
+
+/// One base class of an RTTI class.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseRecord {
+    /// Demangled name of the base.
+    pub name: String,
+    /// Mangled identity of the base, which is what the graph is keyed by.
+    pub mangled: String,
+    /// Byte offset of the base subobject, decoded from the `__vmi` pair.
+    pub offset: i64,
+    /// `__vmi` flags word: bit 0 is `public`, bit 1 is `virtual`.
+    pub flags: u32,
+    /// Whether the base is public.
+    pub is_public: bool,
+    /// Whether the base is virtual.
+    pub is_virtual: bool,
 }
 
 /// One vtable group of a class with multiple inheritance.
@@ -378,6 +401,9 @@ pub struct FunctionRecord {
     pub name: String,
     /// Where the name came from.
     pub name_source: String,
+    /// How sure the naming engine is: `certain`, `high`, `medium` or `low`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
     /// Other names for the same address.
     pub aliases: Vec<String>,
     /// `function`, `thunk`, or `pure_virtual`.
@@ -427,6 +453,7 @@ pub struct DataSymbolRecord {
 struct NamedEntry {
     name: String,
     source: &'static str,
+    confidence: Option<&'static str>,
     aliases: Vec<String>,
     kind: &'static str,
     mangled: Option<String>,
@@ -511,6 +538,7 @@ pub fn analyze_with_writer(
     report(sink, 15, "Pass A: resolving base classes");
     let bases = resolve_bases(map, image, &relocation, vtables);
     apply_inheritance(&mut classes, &bases);
+    unify_slot_names_by_address(&mut classes);
 
     check_cancelled(control)?;
     report(sink, 30, "Pass B: reading .eh_frame");
@@ -535,6 +563,35 @@ pub fn analyze_with_writer(
     let mut names: HashMap<u64, NamedEntry> = HashMap::new();
     insert_symbol_names(&mut names, named_symbols);
     insert_slot_names(map, &mut names, &classes);
+
+    // The naming engine needs the cross-reference table: a lambda's identity
+    // lives in the function that constructs its vtable, and the adapter's tick
+    // function is the caller of its call operator.
+    report(sink, 55, "Pass C: cross-references and evidence names");
+    let xrefs = crate::xref::scan(map, image, &functions);
+    let slots_by_vtable = slots_by_vtable_address(&classes);
+    let lambda_evidence = crate::naming::lambda_slot_names(vtables, &slots_by_vtable);
+    let xref_evidence = crate::naming::vtable_xref_names(vtables, &xrefs);
+    let systems = crate::naming::ecs_systems(vtables, &slots_by_vtable);
+    let system_evidence = crate::naming::ecs_system_names(&systems);
+    let mut evidence_counts = EvidenceCounts::default();
+    for evidence in lambda_evidence
+        .iter()
+        .chain(&xref_evidence)
+        .chain(&system_evidence)
+    {
+        insert_name(
+            &mut names,
+            evidence.address,
+            evidence.name.clone(),
+            evidence.source.as_str(),
+            "function",
+            None,
+            None,
+            Some(evidence.confidence.as_str()),
+        );
+        evidence_counts.bump(evidence.source);
+    }
 
     check_cancelled(control)?;
     report(sink, 60, "Pass D/E: internal signatures and string anchors");
@@ -753,7 +810,7 @@ pub fn analyze_with_writer(
         let (prologue_kind, thunk_target) = classify_function(map, image, *address, &verifier);
         let from_fde = fde_sizes.contains(*address);
 
-        let (name, source, aliases, kind, mangled, status) = match entry {
+        let (name, source, confidence, aliases, kind, mangled, status) = match entry {
             Some(entry) => {
                 let status = entry.status.unwrap_or_else(|| {
                     if entry.source != "auto" && (from_fde || prologue_kind != "none") {
@@ -767,6 +824,7 @@ pub fn analyze_with_writer(
                 (
                     entry.name,
                     entry.source,
+                    entry.confidence,
                     entry.aliases,
                     entry.kind,
                     entry.mangled,
@@ -776,6 +834,7 @@ pub fn analyze_with_writer(
             None => (
                 auto_name(*address, map.image_base),
                 "auto",
+                None,
                 Vec::new(),
                 "function",
                 None,
@@ -828,6 +887,7 @@ pub fn analyze_with_writer(
             size,
             name,
             name_source: source.to_string(),
+            confidence: confidence.map(str::to_string),
             aliases,
             kind: kind.to_string(),
             status: status.to_string(),
@@ -979,14 +1039,19 @@ fn collect_class_slots(
         headers.insert(vtable.vtable_address.saturating_add(8));
     }
 
-    let mut by_name: BTreeMap<String, Vec<&crate::rtti::TypeVTable>> = BTreeMap::new();
+    // The mangled name is the identity. Grouping by demangled name merged
+    // every template instantiation whose arguments the old demangler dropped.
+    let mut by_identity: BTreeMap<String, Vec<&crate::rtti::TypeVTable>> = BTreeMap::new();
     for vtable in all {
-        by_name.entry(vtable.name.clone()).or_default().push(vtable);
+        by_identity
+            .entry(vtable.mangled.clone())
+            .or_default()
+            .push(vtable);
     }
 
-    let mut classes = Vec::with_capacity(by_name.len());
+    let mut classes = Vec::with_capacity(by_identity.len());
     let mut truncated: Vec<String> = Vec::new();
-    for (name, mut groups) in by_name {
+    for (_, mut groups) in by_identity {
         check_cancelled(control)?;
         // The primary vtable is the one whose offset-to-top is zero; the rest
         // are base-subobject groups. Sorting by address alone put a secondary
@@ -1095,9 +1160,11 @@ fn collect_class_slots(
 
         let primary = &group_slots[0];
         let record = ClassRecord {
-            name: name.clone(),
+            name: groups[0].name.clone(),
+            base_name: groups[0].base_name.clone(),
             mangled: groups[0].mangled.clone(),
             bases: Vec::new(),
+            base_classes: Vec::new(),
             vtable: groups[0].vtable_address,
             file_offset: file_offset_of(map, groups[0].vtable_address),
             vtable_offset: groups[0].vtable_offset,
@@ -1126,44 +1193,75 @@ fn resolve_bases(
     image: &[u8],
     relocation: &RelocationIndex,
     vtables: &VtableMap,
-) -> HashMap<String, Vec<String>> {
-    let type_info_to_name: HashMap<u64, String> = vtables
-        .entries
-        .values()
-        .map(|vtable| (vtable.type_info_address, vtable.name.clone()))
+) -> HashMap<String, Vec<BaseRecord>> {
+    // Every group is needed: a base that only appears as a secondary vtable
+    // group would otherwise be invisible to the graph.
+    let type_info_to_class: HashMap<u64, &crate::rtti::TypeVTable> = vtables
+        .all
+        .iter()
+        .map(|vtable| (vtable.type_info_address, vtable))
         .collect();
-    let mut bases = HashMap::new();
-    for vtable in vtables.entries.values() {
-        let mut found = Vec::new();
-        // Single-inheritance (`__si_class_type_info`) has one base pointer at
-        // type_info + 16.
-        if let Some(pointer) = read_pointer(map, image, relocation, vtable.type_info_address + 16) {
-            if let Some(name) = type_info_to_name.get(&pointer) {
-                if name != &vtable.name {
-                    found.push(name.clone());
-                }
-            }
-        }
-        // Virtual/multiple inheritance (`__vmi_class_type_info`) stores a count
-        // and then 16-byte (base, offset/flags) pairs.
-        if found.is_empty() {
-            if let Some(count_raw) = read_at(map, image, vtable.type_info_address + 20) {
-                let count = (count_raw & 0xffff_ffff) as usize;
-                if count > 0 && count < 256 {
-                    for index in 0..count {
-                        let at = vtable.type_info_address + 24 + (index as u64) * 16;
-                        if let Some(pointer) = read_pointer(map, image, relocation, at) {
-                            if let Some(name) = type_info_to_name.get(&pointer) {
-                                if name != &vtable.name && !found.contains(name) {
-                                    found.push(name.clone());
-                                }
-                            }
+    let mut bases = HashMap::with_capacity(vtables.all.len());
+    for vtable in &vtables.all {
+        let mut found: Vec<BaseRecord> = Vec::new();
+        match vtable.type_info_kind {
+            // Neither shape carries a base array. Reading +16 anyway is what
+            // produced bases pointing at unrelated `type_info` objects.
+            TypeInfoKind::Class | TypeInfoKind::Unknown => {}
+            TypeInfoKind::SiClass => {
+                if let Some(pointer) =
+                    read_pointer(map, image, relocation, vtable.type_info_address + 16)
+                {
+                    if let Some(base) = type_info_to_class.get(&pointer) {
+                        if base.mangled != vtable.mangled {
+                            found.push(BaseRecord {
+                                name: base.name.clone(),
+                                mangled: base.mangled.clone(),
+                                // A single public base always starts at offset 0.
+                                offset: 0,
+                                flags: 3,
+                                is_public: true,
+                                is_virtual: false,
+                            });
                         }
                     }
                 }
             }
+            TypeInfoKind::VmiClass => {
+                // `__vmi_class_type_info` layout: flags at +16, base count at
+                // +20, then `count` pairs of (type_info*, offset<<8 | flags).
+                let count = read_at(map, image, vtable.type_info_address + 20)
+                    .map(|raw| (raw & 0xffff_ffff) as usize)
+                    .unwrap_or(0);
+                if count > 0 && count < 256 {
+                    for index in 0..count {
+                        let at = vtable.type_info_address + 24 + (index as u64) * 16;
+                        let Some(pointer) = read_pointer(map, image, relocation, at) else {
+                            continue;
+                        };
+                        let Some(base) = type_info_to_class.get(&pointer) else {
+                            continue;
+                        };
+                        if found.iter().any(|known| known.mangled == base.mangled) {
+                            continue;
+                        }
+                        let offset_flags =
+                            read_pointer(map, image, relocation, at + 8).unwrap_or(0);
+                        let offset = (offset_flags as i64) >> 8;
+                        let flags = (offset_flags & 0xff) as u32;
+                        found.push(BaseRecord {
+                            name: base.name.clone(),
+                            mangled: base.mangled.clone(),
+                            offset,
+                            flags,
+                            is_public: flags & 1 != 0,
+                            is_virtual: flags & 2 != 0,
+                        });
+                    }
+                }
+            }
         }
-        bases.insert(vtable.name.clone(), found);
+        bases.insert(vtable.mangled.clone(), found);
     }
     bases
 }
@@ -1175,67 +1273,126 @@ fn resolve_bases(
 /// base rather than only the first one is what makes multiple inheritance
 /// correct: the secondary vtable group of a class belongs to a base that is not
 /// the first in the list.
-fn apply_inheritance(classes: &mut [ClassSlots], bases: &HashMap<String, Vec<String>>) {
-    let by_name: HashMap<String, Vec<u64>> = classes
+fn apply_inheritance(classes: &mut [ClassSlots], bases: &HashMap<String, Vec<BaseRecord>>) {
+    // Everything is keyed by mangled identity, so two instantiations of the
+    // same template never inherit from each other's slots.
+    let by_id: HashMap<String, usize> = classes
         .iter()
-        .map(|class| (class.record.name.clone(), class.addresses.clone()))
+        .enumerate()
+        .map(|(index, class)| (class.record.mangled.clone(), index))
         .collect();
-    let slot_names: HashMap<String, Vec<String>> = classes
+    let base_ids: Vec<Vec<usize>> = classes
         .iter()
         .map(|class| {
-            (
-                class.record.name.clone(),
-                class
-                    .record
-                    .slots
-                    .iter()
-                    .map(|slot| slot.name.clone())
-                    .collect(),
-            )
+            let mut ids: Vec<usize> = bases
+                .get(&class.record.mangled)
+                .map(|records| {
+                    records
+                        .iter()
+                        .filter_map(|record| by_id.get(&record.mangled).copied())
+                        .collect()
+                })
+                .unwrap_or_default();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        })
+        .collect();
+    let addresses: Vec<Vec<u64>> = classes
+        .iter()
+        .map(|class| class.addresses.clone())
+        .collect();
+    let names: Vec<String> = classes
+        .iter()
+        .map(|class| class.record.name.clone())
+        .collect();
+
+    // Declaring-class pass: a slot belongs to the class that introduced it. A
+    // slot byte-identical to a base's slot belongs to whatever that base says;
+    // a differing address is an override and belongs to this class. This is
+    // what stops naming every slot after the most-derived class.
+    let mut declaring: Vec<Vec<usize>> = Vec::with_capacity(classes.len());
+    for (index, row) in addresses.iter().enumerate() {
+        let mut owners = Vec::with_capacity(row.len());
+        for slot in 0..row.len() {
+            owners.push(declaring_owner(
+                index,
+                slot,
+                &addresses,
+                &base_ids,
+                &mut HashMap::new(),
+                0,
+            ));
+        }
+        declaring.push(owners);
+    }
+
+    let base_names: Vec<Vec<String>> = classes
+        .iter()
+        .map(|class| {
+            bases
+                .get(&class.record.mangled)
+                .map(|records| records.iter().map(|record| record.name.clone()).collect())
+                .unwrap_or_default()
+        })
+        .collect();
+    let base_records: Vec<Vec<BaseRecord>> = classes
+        .iter()
+        .map(|class| {
+            bases
+                .get(&class.record.mangled)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect();
+    let slot_names: Vec<Vec<String>> = classes
+        .iter()
+        .map(|class| {
+            class
+                .record
+                .slots
+                .iter()
+                .map(|slot| slot.name.clone())
+                .collect()
         })
         .collect();
 
-    for class in classes.iter_mut() {
-        let base_names = bases.get(&class.record.name).cloned().unwrap_or_default();
-        class.record.bases = base_names.clone();
-        let base_slots: Vec<&Vec<u64>> = base_names
-            .iter()
-            .filter_map(|name| by_name.get(name))
-            .collect();
-        let base_slot_names: Vec<Option<&Vec<String>>> =
-            base_names.iter().map(|name| slot_names.get(name)).collect();
-        if base_slots.is_empty() {
-            continue;
+    for (index, class) in classes.iter_mut().enumerate() {
+        class.record.bases = base_names[index].clone();
+        class.record.base_classes = base_records[index].clone();
+        if let Some(primary) = class.record.vtable_groups.first_mut() {
+            for (slot_index, slot) in primary.slots.iter_mut().enumerate() {
+                let slot = Arc::make_mut(slot);
+                let owner = declaring[index].get(slot_index).copied().unwrap_or(index);
+                slot.name = format!("{}::vfunc_{slot_index}", names[owner]);
+                slot.inherited = owner != index;
+                slot.overrides = owner == index && !base_ids[index].is_empty();
+            }
         }
 
-        for group in class.record.vtable_groups.iter_mut() {
-            for (index, slot) in group.slots.iter_mut().enumerate() {
-                let slot = Arc::make_mut(slot);
-                let mut has_base = false;
-                let mut inherited_name: Option<&String> = None;
-                for (base_index, slots) in base_slots.iter().enumerate() {
-                    let Some(address) = slots.get(index) else {
-                        continue;
-                    };
-                    has_base = true;
-                    if *address == slot.address {
-                        inherited_name = base_slot_names
-                            .get(base_index)
-                            .copied()
-                            .flatten()
-                            .and_then(|names| names.get(index));
-                        break;
-                    }
+        // Real names propagate along the inheritance graph: if a base's slot
+        // carries a recovered name (a symbol, a lambda, an adapter), every
+        // inherited copy of that slot uses it.
+        let mut inherited_names: HashMap<usize, String> = HashMap::new();
+        for base in &base_ids[index] {
+            for (slot_index, name) in slot_names[*base].iter().enumerate() {
+                if !is_placeholder_slot_name(name) {
+                    inherited_names
+                        .entry(slot_index)
+                        .or_insert_with(|| name.clone());
                 }
-                if !has_base {
+            }
+        }
+        for group in class.record.vtable_groups.iter_mut() {
+            for (slot_index, slot) in group.slots.iter_mut().enumerate() {
+                let owner = declaring[index].get(slot_index).copied().unwrap_or(index);
+                if owner == index {
                     continue;
                 }
-                slot.inherited = inherited_name.is_some();
-                slot.overrides = inherited_name.is_none();
-                if let Some(name) = inherited_name {
-                    if !is_placeholder_slot_name(name) {
-                        slot.name = name.clone();
-                    }
+                if let Some(name) = inherited_names.get(&slot_index) {
+                    let slot = Arc::make_mut(slot);
+                    slot.name = name.clone();
+                    slot.inherited = true;
                 }
             }
         }
@@ -1243,6 +1400,145 @@ fn apply_inheritance(classes: &mut [ClassSlots], bases: &HashMap<String, Vec<Str
             class.record.slots = primary.slots.clone();
         }
     }
+}
+
+/// The slot targets of every vtable group, keyed by the group's header address.
+///
+/// The naming engine reads slot 0 of a lambda's group; keeping the map next to
+/// the classes avoids re-walking `.data.rel.ro`.
+fn slots_by_vtable_address(classes: &[ClassSlots]) -> std::collections::HashMap<u64, Vec<u64>> {
+    let mut map: HashMap<u64, Vec<u64>> = HashMap::with_capacity(classes.len());
+    for class in classes {
+        for group in &class.record.vtable_groups {
+            // The stored address is the header (offset-to-top), and the group's
+            // own `address` is what the RTTI entry and the caller use.
+            let address = group.address;
+            if address == 0 {
+                continue;
+            }
+            map.insert(
+                address,
+                group
+                    .slots
+                    .iter()
+                    .map(|slot| slot.address)
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+    map
+}
+
+/// Counts how many names each evidence source contributed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceCounts {
+    /// Names from a lambda's enclosing function.
+    pub lambda: usize,
+    /// Names from a unique vtable reference.
+    pub vtable_xref: usize,
+    /// Names from an ECS system adapter.
+    pub ecs_system: usize,
+    /// Names from scripting reflection.
+    pub scripting: usize,
+    /// Names from a unique string reference.
+    pub string_anchor: usize,
+}
+
+impl EvidenceCounts {
+    fn bump(&mut self, source: crate::naming::EvidenceSource) {
+        use crate::naming::EvidenceSource as Source;
+        match source {
+            Source::LambdaEnclosing => self.lambda += 1,
+            Source::VtableXref => self.vtable_xref += 1,
+            Source::EcsSystem => self.ecs_system += 1,
+            Source::ScriptingReflection => self.scripting += 1,
+            Source::StringAnchor => self.string_anchor += 1,
+            Source::Symbol | Source::CallGraph | Source::Shape => {}
+        }
+    }
+}
+
+/// Gives every slot row at the same address the same name.
+///
+/// A name learned for `Actor::vfunc_3` through one class must reach every other
+/// class that inherits or shares that function, even when RTTI does not link
+/// the two (a class with no RTTI, a secondary group, a shared thunk). Real
+/// names win over placeholders; among real names the lexicographically first
+/// wins so the output does not depend on hash order.
+fn unify_slot_names_by_address(classes: &mut [ClassSlots]) {
+    let mut best: HashMap<u64, String> = HashMap::new();
+    for class in classes.iter() {
+        for group in &class.record.vtable_groups {
+            for slot in &group.slots {
+                if slot.address == 0 || is_placeholder_slot_name(&slot.name) {
+                    continue;
+                }
+                best.entry(slot.address)
+                    .and_modify(|current| {
+                        if slot.name < *current {
+                            *current = slot.name.clone();
+                        }
+                    })
+                    .or_insert_with(|| slot.name.clone());
+            }
+        }
+    }
+    if best.is_empty() {
+        return;
+    }
+    for class in classes.iter_mut() {
+        for group in class.record.vtable_groups.iter_mut() {
+            for slot in group.slots.iter_mut() {
+                let Some(name) = best.get(&slot.address) else {
+                    continue;
+                };
+                if &slot.name == name {
+                    continue;
+                }
+                let slot = Arc::make_mut(slot);
+                slot.name = name.clone();
+                slot.inherited = true;
+            }
+        }
+        if let Some(primary) = class.record.vtable_groups.first() {
+            class.record.slots = primary.slots.clone();
+        }
+    }
+}
+
+/// Which class a slot index belongs to, following `identical to base` links.
+///
+/// Bounded by depth so a malformed (cyclic) inheritance graph cannot recurse
+/// forever: a cycle leaves the slot with the class the walk started from.
+fn declaring_owner(
+    class: usize,
+    slot: usize,
+    addresses: &[Vec<u64>],
+    bases: &[Vec<usize>],
+    memo: &mut HashMap<usize, usize>,
+    depth: usize,
+) -> usize {
+    if depth > 64 {
+        return class;
+    }
+    let Some(address) = addresses[class].get(slot).copied() else {
+        return class;
+    };
+    for base in &bases[class] {
+        let Some(base_address) = addresses[*base].get(slot).copied() else {
+            continue;
+        };
+        if base_address == address {
+            if let Some(known) = memo.get(base) {
+                return *known;
+            }
+            let owner = declaring_owner(*base, slot, addresses, bases, memo, depth + 1);
+            memo.insert(*base, owner);
+            return owner;
+        }
+    }
+    class
 }
 
 /// Whether a slot name is the generated `Class::vfunc_N` placeholder.
@@ -1273,6 +1569,7 @@ fn insert_symbol_names(names: &mut HashMap<u64, NamedEntry>, symbols: &[NamedSym
             source,
             "function",
             Some(symbol.mangled.clone()),
+            None,
             None,
         );
     }
@@ -1311,6 +1608,7 @@ fn insert_slot_names(
                     },
                     None,
                     None,
+                    None,
                 );
             }
         }
@@ -1326,6 +1624,7 @@ fn insert_name(
     kind: &'static str,
     mangled: Option<String>,
     status: Option<&'static str>,
+    confidence: Option<&'static str>,
 ) {
     if address == 0 {
         return;
@@ -1341,6 +1640,7 @@ fn insert_name(
                 existing.kind = kind;
                 existing.mangled = mangled;
                 existing.status = status;
+                existing.confidence = confidence;
             } else if existing.name != name && !existing.aliases.contains(&name) {
                 existing.aliases.push(name);
             }
@@ -1351,6 +1651,7 @@ fn insert_name(
                 NamedEntry {
                     name,
                     source,
+                    confidence,
                     aliases: Vec::new(),
                     kind,
                     mangled,
@@ -1425,6 +1726,7 @@ fn apply_internal_patterns(
                 "function",
                 None,
                 None,
+                None,
             ),
             _ => {
                 *ambiguous += 1;
@@ -1437,6 +1739,7 @@ fn apply_internal_patterns(
                         "function",
                         None,
                         Some("ambiguous"),
+                        None,
                     );
                 }
             }
@@ -1555,6 +1858,7 @@ fn apply_string_anchors(
                 "function",
                 None,
                 None,
+                None,
             ),
             _ => {
                 *ambiguous += 1;
@@ -1567,6 +1871,7 @@ fn apply_string_anchors(
                         "function",
                         None,
                         Some("ambiguous"),
+                        None,
                     );
                 }
             }
@@ -2132,7 +2437,7 @@ fn read_pointer(
 }
 
 /// Converts a virtual address to a file offset.
-fn file_offset_of(map: &SectionMap, address: u64) -> Option<u64> {
+pub(crate) fn file_offset_of(map: &SectionMap, address: u64) -> Option<u64> {
     let section = map.sections.iter().find(|section| {
         section.occupies_file
             && address >= section.address
@@ -2607,6 +2912,7 @@ mod tests {
             "function",
             None,
             None,
+            None,
         );
         insert_name(
             &mut names,
@@ -2614,6 +2920,7 @@ mod tests {
             "update".to_string(),
             "symbol",
             "function",
+            None,
             None,
             None,
         );
@@ -2893,13 +3200,24 @@ mod tests {
     }
 
     fn vtable(name: &str, type_info: u64) -> crate::rtti::TypeVTable {
+        vtable_of_kind(name, type_info, crate::rtti::TypeInfoKind::Class)
+    }
+
+    fn vtable_of_kind(
+        name: &str,
+        type_info: u64,
+        kind: crate::rtti::TypeInfoKind,
+    ) -> crate::rtti::TypeVTable {
         crate::rtti::TypeVTable {
             name: name.to_string(),
+            base_name: name.to_string(),
             mangled: name.to_string(),
             vtable_address: type_info + 0x100,
             vtable_hex: format!("0x{:x}", type_info + 0x100),
             vtable_offset: type_info + 0x100,
             type_info_address: type_info,
+            type_info_kind: kind,
+            offset_to_top: 0,
         }
     }
 
@@ -2909,7 +3227,10 @@ mod tests {
             source: crate::rtti::VtableSource::Relocations,
             type_info_candidates: entries.len(),
             relocations_examined: 0,
-            entries: entries.into_iter().map(|v| (v.name.clone(), v)).collect(),
+            entries: entries
+                .into_iter()
+                .map(|v| (v.mangled.clone(), v))
+                .collect(),
             all,
         }
     }
@@ -2923,12 +3244,19 @@ mod tests {
         let mut image = vec![0u8; 0x4000];
         // Derived's type_info at 0x3080 points at Base's type_info at 0x3000.
         image[0x3090..0x3098].copy_from_slice(&0x3000u64.to_le_bytes());
-        let map_vtables = vtables(vec![vtable("Base", 0x3000), vtable("Derived", 0x3080)]);
+        let map_vtables = vtables(vec![
+            vtable("Base", 0x3000),
+            vtable_of_kind("Derived", 0x3080, crate::rtti::TypeInfoKind::SiClass),
+        ]);
         let relocations = crate::rtti::RelocationIndex::for_tests(Vec::new());
 
         let bases = resolve_bases(&map, &image, &relocations, &map_vtables);
 
-        assert_eq!(bases.get("Derived"), Some(&vec!["Base".to_string()]));
+        let found = bases.get("Derived").expect("Derived has a base");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "Base");
+        assert!(found[0].is_public);
+        assert!(!found[0].is_virtual);
     }
 
     #[test]
@@ -2942,12 +3270,19 @@ mod tests {
         image[0x3094..0x3098].copy_from_slice(&2u32.to_le_bytes());
         image[0x3098..0x30A0].copy_from_slice(&0x3000u64.to_le_bytes());
         image[0x30A8..0x30B0].copy_from_slice(&0x3000u64.to_le_bytes());
-        let map_vtables = vtables(vec![vtable("Base", 0x3000), vtable("Derived", 0x3080)]);
+        image[0x30A0..0x30A8].copy_from_slice(&((16i64 << 8) | 1).to_le_bytes() as &[u8]);
+        let map_vtables = vtables(vec![
+            vtable("Base", 0x3000),
+            vtable_of_kind("Derived", 0x3080, crate::rtti::TypeInfoKind::VmiClass),
+        ]);
         let relocations = crate::rtti::RelocationIndex::for_tests(Vec::new());
 
         let bases = resolve_bases(&map, &image, &relocations, &map_vtables);
 
-        assert_eq!(bases.get("Derived"), Some(&vec!["Base".to_string()]));
+        let found = bases.get("Derived").expect("Derived has bases");
+        assert_eq!(found.len(), 1, "duplicate base pointers collapse to one");
+        assert_eq!(found[0].offset, 16);
+        assert!(found[0].is_public);
     }
 
     fn class(name: &str, addresses: Vec<u64>) -> ClassSlots {
@@ -2975,8 +3310,10 @@ mod tests {
         ClassSlots {
             record: ClassRecord {
                 name: name.to_string(),
+                base_name: name.to_string(),
                 mangled: name.to_string(),
                 bases: Vec::new(),
+                base_classes: Vec::new(),
                 vtable: 0,
                 file_offset: Some(0),
                 vtable_offset: 0,
@@ -2994,13 +3331,46 @@ mod tests {
     }
 
     #[test]
+    fn a_name_learned_for_one_class_reaches_every_class_sharing_the_address() {
+        let mut classes = vec![
+            class("Mob", vec![0x1000, 0x2000]),
+            class("Player", vec![0x1000, 0x2000]),
+        ];
+        classes[0].record.vtable_groups[0].slots[0] = Arc::new(SlotRecord {
+            name: "Actor::getHealth".to_string(),
+            ..(*classes[0].record.vtable_groups[0].slots[0]).clone()
+        });
+        unify_slot_names_by_address(&mut classes);
+        assert_eq!(
+            classes[1].record.vtable_groups[0].slots[0].name,
+            "Actor::getHealth"
+        );
+        assert!(classes[1].record.vtable_groups[0].slots[0].inherited);
+        // A different address keeps its own name.
+        assert_eq!(
+            classes[1].record.vtable_groups[0].slots[1].name,
+            "Player::vfunc_1"
+        );
+    }
+
+    #[test]
     fn inheritance_marks_identical_slots_inherited_and_different_ones_overridden() {
         let mut classes = vec![
             class("Base", vec![0x1000, 0x2000]),
             class("Derived", vec![0x1000, 0x3000]),
         ];
         let mut bases = HashMap::new();
-        bases.insert("Derived".to_string(), vec!["Base".to_string()]);
+        bases.insert(
+            "Derived".to_string(),
+            vec![BaseRecord {
+                name: "Base".to_string(),
+                mangled: "Base".to_string(),
+                offset: 0,
+                flags: 3,
+                is_public: true,
+                is_virtual: false,
+            }],
+        );
 
         apply_inheritance(&mut classes, &bases);
 
@@ -3015,11 +3385,14 @@ mod tests {
     fn type_vtable(name: &str, vtable_address: u64, type_info: u64) -> crate::rtti::TypeVTable {
         crate::rtti::TypeVTable {
             name: name.to_string(),
+            base_name: name.to_string(),
             mangled: name.to_string(),
             vtable_address,
             vtable_hex: format!("0x{vtable_address:x}"),
             vtable_offset: vtable_address,
             type_info_address: type_info,
+            type_info_kind: crate::rtti::TypeInfoKind::Class,
+            offset_to_top: 0,
         }
     }
 
@@ -3292,6 +3665,7 @@ mod tests {
             size: 4,
             name: "Actor::vfunc_0".to_string(),
             name_source: "vtable".to_string(),
+            confidence: None,
             aliases: Vec::new(),
             kind: "function".to_string(),
             status: "verified".to_string(),

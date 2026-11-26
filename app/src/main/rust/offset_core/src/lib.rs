@@ -18,6 +18,7 @@ pub mod jni;
 pub mod jni_bridge;
 pub mod jninatives;
 pub mod memory;
+pub mod naming;
 pub mod patterns;
 pub mod progress;
 pub mod prologue;
@@ -27,6 +28,7 @@ pub mod sections;
 pub mod shards;
 pub mod symbols;
 pub mod verify;
+pub mod xref;
 pub mod zip_extract;
 
 pub use error::{CoreError, CoreResult};

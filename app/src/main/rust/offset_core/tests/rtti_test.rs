@@ -394,7 +394,7 @@ fn function_pointers_are_not_mistaken_for_type_info_candidates() {
         map.type_info_candidates
     );
     assert_eq!(map.len(), 1, "{map:#?}");
-    assert!(map.get("ClientInstance").is_some());
+    assert!(map.get("14ClientInstance").is_some());
 }
 
 #[test]
@@ -403,7 +403,7 @@ fn resolves_the_vtable_of_a_polymorphic_class() {
     let map = resolve_vtables(&image).expect("resolve vtables");
 
     assert_eq!(map.len(), 1, "{map:#?}");
-    let entry = map.get("ClientInstance").expect("ClientInstance");
+    let entry = map.get("14ClientInstance").expect("ClientInstance");
     assert_eq!(entry.name, "ClientInstance");
     assert_eq!(entry.mangled, "14ClientInstance");
     assert_eq!(entry.type_info_address, TYPE_INFO_ADDRESS);
@@ -506,7 +506,7 @@ fn a_type_info_pointer_in_a_base_array_is_not_a_vtable() {
 fn the_vtable_address_is_consistent_with_the_image_base() {
     let image = image_with_client_instance();
     let map = resolve_vtables(&image).expect("resolve vtables");
-    let entry = map.get("ClientInstance").expect("ClientInstance");
+    let entry = map.get("14ClientInstance").expect("ClientInstance");
 
     // The image base is the lowest allocated address, which is `.text` here.
     assert_eq!(entry.vtable_offset, entry.vtable_address - TEXT_ADDRESS);
@@ -544,7 +544,7 @@ fn the_vtable_offset_is_measured_from_the_load_base_not_the_first_section() {
     // offsets that were 0x2463f0 short on the real library.
     let image = with_load_base(image_with_client_instance(), 0);
     let map = resolve_vtables(&image).expect("resolve vtables");
-    let entry = map.get("ClientInstance").expect("ClientInstance");
+    let entry = map.get("14ClientInstance").expect("ClientInstance");
 
     assert_eq!(entry.vtable_address, VTABLE_ADDRESS);
     assert_eq!(
@@ -572,7 +572,7 @@ fn a_rela_build_with_zeroed_slots_still_resolves_the_vtable() {
 
     assert_eq!(map.source, VtableSource::Relocations);
     assert_eq!(map.len(), 1, "{map:#?}");
-    let entry = map.get("ClientInstance").expect("ClientInstance");
+    let entry = map.get("14ClientInstance").expect("ClientInstance");
     assert_eq!(entry.type_info_address, TYPE_INFO_ADDRESS);
     assert_eq!(entry.vtable_address, VTABLE_ADDRESS);
 }

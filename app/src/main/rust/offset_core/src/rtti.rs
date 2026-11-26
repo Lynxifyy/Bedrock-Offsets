@@ -24,7 +24,7 @@
 //!
 //! Nothing here executes the library: the pointers are read as data.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use goblin::elf::reloc::{
     R_AARCH64_ABS64, R_AARCH64_GLOB_DAT, R_AARCH64_JUMP_SLOT, R_AARCH64_RELATIVE,
@@ -54,9 +54,19 @@ pub const SLOT_BYTES: u64 = 8;
 /// A resolved RTTI type and its vtable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TypeVTable {
-    /// Demangled class name, for example `ClientInstance`.
+    /// Full demangled identity, template arguments included.
+    ///
+    /// Two instantiations of the same template are two classes and must not
+    /// share this string: `std::__ndk1::vector<int>` is not
+    /// `std::__ndk1::vector<char>`.
     pub name: String,
-    /// The mangled name as it appears in `.rodata`.
+    /// [`TypeVTable::name`] with every template argument group removed.
+    ///
+    /// `std::__ndk1::__function::__func` for the whole `__func` family. Kept as
+    /// a secondary field because a lookup by family is useful, but it is never
+    /// the key of a class row.
+    pub base_name: String,
+    /// The mangled name as it appears in `.rodata`, the real identity.
     pub mangled: String,
     /// Virtual address of the vtable itself.
     ///
@@ -71,6 +81,33 @@ pub struct TypeVTable {
     pub vtable_offset: u64,
     /// Virtual address of the `type_info` object.
     pub type_info_address: u64,
+    /// Which `type_info` class this object is an instance of.
+    pub type_info_kind: TypeInfoKind,
+    /// `offset-to-top` word of this vtable group: the distance from this
+    /// subobject to the most-derived object.
+    pub offset_to_top: i64,
+}
+
+/// Which `type_info` subclass an RTTI object instantiates.
+///
+/// The three shapes carry different inheritance data: `__class_type_info` has
+/// none, `__si_class_type_info` has one base pointer, and
+/// `__vmi_class_type_info` has a public/size flag word, a base count and one
+/// (base, offset/flags) pair per base. Reading a base array without knowing
+/// which shape it is reads whatever happens to follow the name pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TypeInfoKind {
+    /// The class was not recognised; the base array must not be read.
+    #[default]
+    Unknown,
+    /// `__cxxabiv1::__class_type_info`: no bases.
+    Class,
+    /// `__cxxabiv1::__si_class_type_info`: one public base at +16.
+    SiClass,
+    /// `__cxxabiv1::__vmi_class_type_info`: flags at +16, count at +20, pairs
+    /// from +24.
+    VmiClass,
 }
 
 /// Every vtable the engine could resolve.
@@ -82,11 +119,14 @@ pub struct VtableMap {
     pub type_info_candidates: usize,
     /// Number of relocations examined.
     pub relocations_examined: usize,
-    /// Resolved vtables, keyed by class name.
+    /// Resolved vtables, keyed by **mangled name**.
     ///
-    /// A class with multiple inheritance has one vtable per base subobject; the
-    /// map keeps the primary one (lowest `type_info` address) so a name lookup
-    /// is unambiguous.
+    /// The mangled name is the identity: it is unique per class and per
+    /// template instantiation. Keying by demangled name kept only the lowest
+    /// `type_info` address per name, which collapsed 62,306 vtable groups into
+    /// 6,386 rows on the 26.60 library. A class with multiple inheritance still
+    /// has one entry per `type_info`, because each base subobject has its own
+    /// `type_info` pointer; `all` preserves every group.
     pub entries: BTreeMap<String, TypeVTable>,
     /// Every resolved vtable, including the secondary groups of a class with
     /// multiple inheritance.
@@ -98,9 +138,17 @@ pub struct VtableMap {
 }
 
 impl VtableMap {
-    /// Looks a class up by its demangled name.
-    pub fn get(&self, name: &str) -> Option<&TypeVTable> {
-        self.entries.get(name)
+    /// Looks a class up by its mangled name.
+    pub fn get(&self, mangled: &str) -> Option<&TypeVTable> {
+        self.entries.get(mangled)
+    }
+
+    /// Looks a class up by its full demangled name.
+    ///
+    /// Linear, because the map is keyed by mangled name. Callers that need this
+    /// in a loop build their own index.
+    pub fn get_by_name(&self, name: &str) -> Option<&TypeVTable> {
+        self.entries.values().find(|vtable| vtable.name == name)
     }
 
     /// Number of resolved vtables.
@@ -177,22 +225,27 @@ pub fn resolve_vtables_with_releaser(
     // a 200k-element vector.
     let (type_info_candidates, resolved) = collect_vtables(&map, image, &reloc_pointer);
 
+    let kinds = classify_type_infos(&resolved, &reloc_pointer, &map, image);
     let mut entries: BTreeMap<String, TypeVTable> = BTreeMap::new();
-    let mut all = Vec::with_capacity(resolved.len());
-    for vtable in resolved {
+    let mut all: Vec<TypeVTable> = Vec::with_capacity(resolved.len());
+    for (vtable, kind) in resolved.into_iter().zip(kinds) {
+        let vtable = ResolvedVtable {
+            type_info_kind: kind,
+            ..vtable
+        };
         let resolved = TypeVTable {
             vtable_hex: format!("0x{:x}", vtable.vtable_address),
             vtable_offset: vtable.vtable_address.saturating_sub(map.image_base),
             name: vtable.name,
+            base_name: vtable.base_name,
             mangled: vtable.mangled,
             vtable_address: vtable.vtable_address,
             type_info_address: vtable.type_info_address,
+            type_info_kind: vtable.type_info_kind,
+            offset_to_top: vtable.offset_to_top,
         };
-        // Insertion order is by `type_info` address, so when two candidates
-        // claim the same class name the lower address wins and the output is
-        // reproducible.
         entries
-            .entry(resolved.name.clone())
+            .entry(resolved.mangled.clone())
             .or_insert_with(|| resolved.clone());
         all.push(resolved);
     }
@@ -206,6 +259,44 @@ pub fn resolve_vtables_with_releaser(
     })
 }
 
+/// Maps each `type_info` object to the `type_info` class it instantiates.
+///
+/// The classes' own vtables are in the same list, so this is a plain
+/// classification by name and needs no symbols.
+fn classify_type_infos(
+    resolved: &[ResolvedVtable],
+    relocation: &RelocationIndex,
+    map: &crate::sections::SectionMap,
+    image: &[u8],
+) -> Vec<TypeInfoKind> {
+    let mut kind_vtables: HashMap<u64, TypeInfoKind> = HashMap::new();
+    for vtable in resolved {
+        let kind = if vtable.name.ends_with("__class_type_info") {
+            TypeInfoKind::Class
+        } else if vtable.name.ends_with("__si_class_type_info") {
+            TypeInfoKind::SiClass
+        } else if vtable.name.ends_with("__vmi_class_type_info") {
+            TypeInfoKind::VmiClass
+        } else {
+            continue;
+        };
+        kind_vtables.insert(vtable.vtable_address, kind);
+    }
+    resolved
+        .iter()
+        .map(|vtable| {
+            let pointer = relocation
+                .target_of(vtable.type_info_address)
+                .or_else(|| crate::internal::read_at(map, image, vtable.type_info_address))
+                .unwrap_or(0);
+            kind_vtables
+                .get(&pointer)
+                .copied()
+                .unwrap_or(TypeInfoKind::Unknown)
+        })
+        .collect()
+}
+
 /// A vtable whose class name was read back successfully.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedVtable {
@@ -214,10 +305,16 @@ struct ResolvedVtable {
     /// Virtual address of the vtable itself, one slot before the `type_info`
     /// pointer.
     vtable_address: u64,
-    /// Demangled class name.
+    /// Full demangled name.
     name: String,
+    /// Template-stripped family name.
+    base_name: String,
     /// Mangled name as it appears in `.rodata`.
     mangled: String,
+    /// Which `type_info` class this object instantiates.
+    type_info_kind: TypeInfoKind,
+    /// Offset from this subobject to the most-derived object.
+    offset_to_top: i64,
 }
 
 /// Walks `.data.rel.ro` and returns every vtable whose class name parses.
@@ -262,7 +359,7 @@ fn collect_vtables(
                 continue;
             };
             candidates += 1;
-            let Some((name, mangled)) = read_type_name(map, image, name_address) else {
+            let Some((demangled, mangled)) = read_type_name(map, image, name_address) else {
                 continue;
             };
             // The `type_info` pointer occupies `vtable[-1]`, so the vtable
@@ -273,11 +370,16 @@ fn collect_vtables(
             if !is_plausible_vtable(map, image, relocation_targets, vtable_address, slot_address) {
                 continue;
             }
+            let offset_to_top =
+                crate::internal::read_at(map, image, vtable_address).unwrap_or(0) as i64;
             resolved.push(ResolvedVtable {
                 type_info_address,
                 vtable_address,
-                name,
+                name: demangled.display,
+                base_name: demangled.base,
                 mangled,
+                type_info_kind: TypeInfoKind::Unknown,
+                offset_to_top,
             });
         }
     }
@@ -388,7 +490,7 @@ fn read_type_name(
     map: &crate::sections::SectionMap,
     image: &[u8],
     name_address: u64,
-) -> Option<(String, String)> {
+) -> Option<(crate::demangle::Demangled, String)> {
     let section = map.sections.iter().find(|section| {
         section.occupies_file
             && section.allocated
@@ -426,106 +528,8 @@ fn read_type_name(
 /// such as `N6icu_6913BreakIteratorE`. Rejecting the nested form silently
 /// dropped every namespaced class, which on a real library meant no vtables at
 /// all.
-fn demangle_type_name(text: &str) -> Option<String> {
-    if let Some(rest) = text.strip_prefix('N') {
-        let mut rest = rest;
-        let mut parts: Vec<&str> = Vec::new();
-        loop {
-            let bytes = rest.as_bytes();
-            let first = *bytes.first()?;
-            match first {
-                b'E' => break,
-                // Template arguments do not change the class name.
-                b'I' => break,
-                b'K' | b'V' | b'r' => rest = &rest[1..],
-                b'S' => {
-                    if let Some(after) = rest.strip_prefix("St") {
-                        parts.push("std");
-                        rest = after;
-                    } else {
-                        // Substitution: skip `S` and its one-character key.
-                        rest = &rest[1..];
-                        if let Some(next) = rest.as_bytes().first() {
-                            if next.is_ascii_alphanumeric() || *next == b'_' {
-                                rest = &rest[1..];
-                            }
-                        }
-                    }
-                }
-                b'0'..=b'9' => {
-                    let (length, digits) = read_length_prefix(bytes)?;
-                    if length == 0 || length > MAX_TYPE_NAME_BYTES || digits + length > rest.len() {
-                        return None;
-                    }
-                    let part = &rest[digits..digits + length];
-                    if !part.as_bytes().iter().all(|byte| is_name_byte(*byte)) {
-                        return None;
-                    }
-                    parts.push(part);
-                    rest = &rest[digits + length..];
-                }
-                _ => return None,
-            }
-        }
-        if parts.is_empty() {
-            None
-        } else {
-            Some(parts.join("::"))
-        }
-    } else if let Some(rest) = text.strip_prefix("St") {
-        let (length, digits) = read_length_prefix(rest.as_bytes())?;
-        if length == 0 || length > MAX_TYPE_NAME_BYTES || digits + length > rest.len() {
-            return None;
-        }
-        let part = &rest[digits..digits + length];
-        if !part.as_bytes().iter().all(|byte| is_name_byte(*byte)) {
-            return None;
-        }
-        Some(format!("std::{part}"))
-    } else {
-        let (length, digits) = read_length_prefix(text.as_bytes())?;
-        if length == 0 || length > MAX_TYPE_NAME_BYTES || digits + length > text.len() {
-            return None;
-        }
-        let part = &text[digits..digits + length];
-        if !part.as_bytes().iter().all(|byte| is_name_byte(*byte)) {
-            return None;
-        }
-        Some(part.to_string())
-    }
-}
-
-/// Reads the decimal length prefix of a mangled type name.
-///
-/// # Returns
-///
-/// `(length, digits consumed)`.
-fn read_length_prefix(bytes: &[u8]) -> Option<(usize, usize)> {
-    let mut digits = 0usize;
-    let mut value = 0usize;
-    for byte in bytes {
-        if !byte.is_ascii_digit() {
-            break;
-        }
-        // A leading zero would make the length ambiguous.
-        if digits == 0 && *byte == b'0' {
-            return None;
-        }
-        value = value.checked_mul(10)?.checked_add((byte - b'0') as usize)?;
-        digits += 1;
-        if digits > 4 {
-            return None;
-        }
-    }
-    if digits == 0 {
-        return None;
-    }
-    Some((value, digits))
-}
-
-/// Whether a byte may appear inside a C++ type name.
-fn is_name_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b':' || byte == b'.' || byte == b'$'
+fn demangle_type_name(text: &str) -> Option<crate::demangle::Demangled> {
+    crate::demangle::demangle_type(text)
 }
 
 /// One slot address and the target it resolves to.
@@ -731,37 +735,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_length_prefix_is_parsed() {
-        assert_eq!(read_length_prefix(b"14ClientInstance"), Some((14, 2)));
-        assert_eq!(read_length_prefix(b"3Foo"), Some((3, 1)));
-    }
-
-    #[test]
-    fn a_missing_length_prefix_is_rejected() {
-        assert_eq!(read_length_prefix(b"ClientInstance"), None);
-        assert_eq!(read_length_prefix(b""), None);
-        assert_eq!(read_length_prefix(b"01Foo"), None);
-    }
-
-    #[test]
-    fn an_absurd_length_prefix_is_rejected() {
-        assert_eq!(read_length_prefix(b"99999Foo"), None);
-        assert_eq!(read_length_prefix(b"99999999999999999999"), None);
-    }
-
-    #[test]
-    fn name_bytes_are_restricted() {
-        assert!(is_name_byte(b'A'));
-        assert!(is_name_byte(b'z'));
-        assert!(is_name_byte(b'0'));
-        assert!(is_name_byte(b'_'));
-        assert!(is_name_byte(b':'));
-        assert!(!is_name_byte(b' '));
-        assert!(!is_name_byte(b'\n'));
-        assert!(!is_name_byte(0xff));
-    }
-
-    #[test]
     fn relative_relocations_resolve_to_their_addend() {
         // Exercised through the streaming path so the filter, the sort and the
         // lookup are all covered by the same fixture.
@@ -833,29 +806,32 @@ mod tests {
     #[test]
     fn demangles_simple_and_nested_type_names() {
         assert_eq!(
-            demangle_type_name("14ClientInstance").as_deref(),
-            Some("ClientInstance")
+            demangle_type_name("14ClientInstance").map(|name| name.display),
+            Some("ClientInstance".to_string())
         );
         assert_eq!(
-            demangle_type_name("N6icu_6913BreakIteratorE").as_deref(),
-            Some("icu_69::BreakIterator")
+            demangle_type_name("N6icu_6913BreakIteratorE").map(|name| name.display),
+            Some("icu_69::BreakIterator".to_string())
         );
         assert_eq!(
-            demangle_type_name("N10__cxxabiv117__class_type_infoE").as_deref(),
-            Some("__cxxabiv1::__class_type_info")
+            demangle_type_name("N10__cxxabiv117__class_type_infoE").map(|name| name.display),
+            Some("__cxxabiv1::__class_type_info".to_string())
         );
         assert_eq!(
-            demangle_type_name("St12length_error").as_deref(),
-            Some("std::length_error")
+            demangle_type_name("St12length_error").map(|name| name.display),
+            Some("std::length_error".to_string())
         );
     }
 
     #[test]
-    fn template_arguments_are_dropped_from_the_class_name() {
+    fn template_arguments_stay_in_the_name_and_leave_a_family_base() {
+        let demangled = demangle_type_name("NSt6__ndk19basic_iosIcNS_11char_traitsIcEEEE")
+            .expect("basic_ios<char>");
         assert_eq!(
-            demangle_type_name("NSt6__ndk19basic_iosIcNS_11char_traitsIcEEEE").as_deref(),
-            Some("std::__ndk1::basic_ios")
+            demangled.display,
+            "std::__ndk1::basic_ios<char, std::__ndk1::char_traits<char> >"
         );
+        assert_eq!(demangled.base, "std::__ndk1::basic_ios");
     }
 
     /// Dumps the raw context of three classes that came back with no slots in
