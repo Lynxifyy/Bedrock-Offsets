@@ -46,7 +46,7 @@ interface ScanPreferences {
     val generateSignatures: Flow<Boolean> get() = flowOf(true)
 
     /** Maximum virtual slots read per class. */
-    val maxSlotsPerClass: Flow<Int> get() = flowOf(4096)
+    val maxSlotsPerClass: Flow<Int> get() = flowOf(DEFAULT_SLOTS_PER_CLASS)
 
     /** Whether the advisory low-memory notice is shown. */
     val lowMemoryWarnings: Flow<Boolean> get() = flowOf(DEFAULT_LOW_MEMORY_WARNINGS)
@@ -145,6 +145,29 @@ const val DEFAULT_DELETE_APK_AFTER_SCAN = true
  */
 const val DEFAULT_CACHE_CAP_MB = 2048
 
+/** Smallest per-class slot cap the engine accepts. */
+const val MIN_SLOTS_PER_CLASS = 64
+
+/**
+ * Largest per-class slot cap the engine accepts.
+ *
+ * It must cover every value the Settings screen offers: a chip the user can
+ * press whose value the engine then reduces is a silent lie. The engine's own
+ * hard limit is `offset_core::internal::MAX_SLOTS_PER_CLASS`.
+ */
+const val MAX_SLOTS_PER_CLASS = 65_536
+
+/** Default per-class slot cap. */
+const val DEFAULT_SLOTS_PER_CLASS = 4096
+
+/**
+ * Clamps a requested slot cap into the range the engine supports.
+ *
+ * @param slots requested cap.
+ * @return [slots] limited to [MIN_SLOTS_PER_CLASS]..[MAX_SLOTS_PER_CLASS].
+ */
+fun clampSlotsPerClass(slots: Int): Int = slots.coerceIn(MIN_SLOTS_PER_CLASS, MAX_SLOTS_PER_CLASS)
+
 /** File-backed [ScanPreferences] on top of DataStore. */
 class DataStoreScanPreferences(private val store: DataStore<Preferences>) : ScanPreferences {
 
@@ -172,7 +195,7 @@ class DataStoreScanPreferences(private val store: DataStore<Preferences>) : Scan
         store.data.map { it[GENERATE_SIGNATURES] ?: true }
 
     override val maxSlotsPerClass: Flow<Int> =
-        store.data.map { it[MAX_SLOTS_PER_CLASS] ?: 4096 }
+        store.data.map { it[SLOTS_PER_CLASS_KEY] ?: DEFAULT_SLOTS_PER_CLASS }
 
     override suspend fun setThemeMode(mode: String) {
         store.edit { it[THEME_MODE] = mode }
@@ -187,7 +210,7 @@ class DataStoreScanPreferences(private val store: DataStore<Preferences>) : Scan
     }
 
     override suspend fun setMaxSlotsPerClass(slots: Int) {
-        store.edit { it[MAX_SLOTS_PER_CLASS] = slots.coerceIn(64, 4096) }
+        store.edit { it[SLOTS_PER_CLASS_KEY] = clampSlotsPerClass(slots) }
     }
 
     override val lowMemoryWarnings: Flow<Boolean> =
@@ -227,7 +250,7 @@ class DataStoreScanPreferences(private val store: DataStore<Preferences>) : Scan
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val INCLUDE_ALL_FUNCTIONS = booleanPreferencesKey("include_all_functions")
         val GENERATE_SIGNATURES = booleanPreferencesKey("generate_signatures")
-        val MAX_SLOTS_PER_CLASS = intPreferencesKey("max_slots_per_class")
+        val SLOTS_PER_CLASS_KEY = intPreferencesKey("max_slots_per_class")
         val LOW_MEMORY_WARNINGS = booleanPreferencesKey("low_memory_warnings")
         val DELETE_APK_AFTER_SCAN = booleanPreferencesKey("delete_apk_after_scan")
         val CACHE_CAP_MB = intPreferencesKey("cache_cap_mb")

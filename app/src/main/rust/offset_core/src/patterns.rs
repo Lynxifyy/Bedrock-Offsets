@@ -225,6 +225,24 @@ impl PatternSet {
     /// Returns [`CoreError::InvalidPattern`] when any pattern is unusable, and
     /// [`CoreError::InvalidElf`] when the automaton cannot be built.
     pub fn new(specs: &[(String, String)]) -> CoreResult<Self> {
+        let pairs: Vec<(&str, &str)> = specs
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect();
+        Self::new_borrowed(&pairs)
+    }
+
+    /// Compiles `specs` into a matcher without copying the pattern strings.
+    ///
+    /// The signature pass keeps a few hundred thousand signatures alive, so a
+    /// per-group copy of every pattern is hundreds of megabytes on a real
+    /// library; callers that already own the strings pass references instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::InvalidPattern`] when any pattern is unusable, and
+    /// [`CoreError::InvalidElf`] when the automaton cannot be built.
+    pub fn new_borrowed(specs: &[(&str, &str)]) -> CoreResult<Self> {
         let started = Instant::now();
 
         let mut patterns = Vec::with_capacity(specs.len());

@@ -3,11 +3,13 @@ package com.chimerateam.offsetextractor.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.chimerateam.offsetextractor.data.cache.DEFAULT_CACHE_CAP_MB
+import com.chimerateam.offsetextractor.data.cache.DEFAULT_SLOTS_PER_CLASS
 import com.chimerateam.offsetextractor.data.cache.DEFAULT_DELETE_APK_AFTER_SCAN
 import com.chimerateam.offsetextractor.data.cache.DEFAULT_LOW_MEMORY_WARNINGS
 import com.chimerateam.offsetextractor.data.cache.ResultCache
 import com.chimerateam.offsetextractor.data.cache.ScanCache
 import com.chimerateam.offsetextractor.data.cache.ScanPreferences
+import com.chimerateam.offsetextractor.data.cache.clampSlotsPerClass
 import com.chimerateam.offsetextractor.data.export.CategoryRule
 import com.chimerateam.offsetextractor.data.export.CategoryRulesJson
 import com.chimerateam.offsetextractor.data.export.Classifier
@@ -174,7 +176,7 @@ class MainViewModel(
     /** Whether the ZIP also contains one combined internal document. */
     val includeCombined: StateFlow<Boolean> = _includeCombined.asStateFlow()
 
-    private val _maxSlotsPerClass = MutableStateFlow(4096)
+    private val _maxSlotsPerClass = MutableStateFlow(DEFAULT_SLOTS_PER_CLASS)
 
     /** Maximum virtual slots read per class. */
     val maxSlotsPerClass: StateFlow<Int> = _maxSlotsPerClass.asStateFlow()
@@ -270,6 +272,23 @@ class MainViewModel(
                 store.reduceMotion.collect { _reduceMotion.value = it }
             }
         }
+        // A crash leaves its stack in `live.log` but nothing on screen, and the
+        // tablet has no easy way to reach `logcat`. Reading the previous run's
+        // crash back into the pane is what makes it visible, and Copy log then
+        // carries it off the device.
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            val previous = runCatching { logFile?.read().orEmpty() }.getOrDefault("")
+            val crashes = previous.lineSequence().filter { "CRASH" in it }.take(40).toList()
+            if (crashes.isNotEmpty()) {
+                // Added to the pane only: re-emitting them would spill the same
+                // crash into `live.log` again on every start.
+                val lines = listOf("Previous run crashed; Copy log carries the report.") + crashes
+                _logEntries.value = _logEntries.value + lines.map { line ->
+                    Logs.error(TAG_UI, line.trim())
+                }
+            }
+        }
+
         // A previous process may have died mid-download or mid-ZIP. Sweeping on
         // start is what stops those leftovers from becoming the reason the next
         // scan runs out of space.
@@ -1014,10 +1033,14 @@ class MainViewModel(
     /**
      * Changes the per-class slot cap.
      *
+     * The value is persisted and sent to the engine unchanged: the engine's own
+     * hard limit is the only ceiling, so a chip the Settings screen offers is
+     * never silently reduced.
+     *
      * @param slots maximum slots per class, clamped to the supported range.
      */
     fun setMaxSlotsPerClass(slots: Int) {
-        val clamped = slots.coerceIn(64, 4096)
+        val clamped = clampSlotsPerClass(slots)
         _maxSlotsPerClass.value = clamped
         viewModelScope.launch(supervisor + ioDispatcher) {
             preferences?.setMaxSlotsPerClass(clamped)

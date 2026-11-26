@@ -31,6 +31,7 @@ import com.chimerateam.offsetextractor.data.saf.AndroidSafApkAccess
 import com.chimerateam.offsetextractor.data.storage.StorageManager
 import com.chimerateam.offsetextractor.export.ExportService
 import com.chimerateam.offsetextractor.ui.BedrockOffsetExtractorApp
+import com.chimerateam.offsetextractor.ui.log.CrashLog
 import com.chimerateam.offsetextractor.ui.log.LogFile
 import com.chimerateam.offsetextractor.ui.theme.BedrockOffsetExtractorTheme
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
@@ -101,6 +102,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before anything else: a crash has to leave a trace the log pane can
+        // copy, because the tablet has no other way to read a stack trace.
+        CrashLog(File(cacheDir, "logs").apply { mkdirs() }).install()
         enableEdgeToEdge()
         applyFullScreen()
         ExportService.loadJob(applicationContext)?.let { job ->

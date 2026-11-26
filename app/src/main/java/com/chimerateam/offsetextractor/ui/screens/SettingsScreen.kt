@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.chimerateam.offsetextractor.data.cache.DEFAULT_SLOTS_PER_CLASS
 import com.chimerateam.offsetextractor.data.storage.StorageArea
 import com.chimerateam.offsetextractor.data.storage.StorageAreaId
 import com.chimerateam.offsetextractor.data.storage.StorageUsage
@@ -49,6 +50,14 @@ const val STORAGE_LIST_TAG = "storage-list"
 
 /** Cache caps offered in Settings, in megabytes; zero means no cap. */
 val CACHE_CAP_CHOICES = listOf(512, 1024, 2048, 4096, 0)
+
+/**
+ * Per-class slot caps the Settings screen offers.
+ *
+ * Every entry is accepted unchanged by the engine; the cap is only a safeguard
+ * against a corrupt vtable, and reaching it is reported in the archive.
+ */
+val SLOT_CAP_CHOICES = listOf(1024, DEFAULT_SLOTS_PER_CLASS, 16_384)
 
 /**
  * Settings destination.
@@ -153,15 +162,19 @@ fun SettingsScreen(
             )
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(1024, 4096, 16384).forEach { slots ->
-                    OutlinedButton(
+                SLOT_CAP_CHOICES.forEach { slots ->
+                    FilterChip(
+                        selected = maxSlotsPerClass == slots,
                         onClick = { onMaxSlotsPerClassChange(slots) },
-                        enabled = slots != maxSlotsPerClass
-                    ) {
-                        Text(slots.toString())
-                    }
+                        label = { Text(slots.toString()) }
+                    )
                 }
             }
+            Text(
+                text = "Selected: $maxSlotsPerClass slots per class.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         SectionPanel(title = "Export") {
