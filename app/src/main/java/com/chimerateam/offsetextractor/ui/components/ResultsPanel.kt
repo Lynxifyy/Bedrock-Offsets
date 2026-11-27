@@ -107,6 +107,7 @@ fun ResultsPanel(
                     color = MaterialTheme.colorScheme.error
                 )
             }
+            CoverageSection(result)
             if (internal.truncatedSignatures) {
                 Text(
                     text = "Signature generation was capped; the first " +
