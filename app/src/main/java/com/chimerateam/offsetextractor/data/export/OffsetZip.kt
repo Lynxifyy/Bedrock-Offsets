@@ -344,6 +344,13 @@ class OffsetZipBuilder(
         // tell a table written against the wrong base from a correct one.
         json.addProperty("imageBase", OffsetRows.hex(summary.imageBase))
         json.addProperty("engineVersion", summary.engineVersion)
+        // The peak resident set is the number that decides whether the scan can
+        // finish on the device it ran on. It is written here so the figure
+        // travels with the archive instead of living only in the app's log.
+        val engine = com.google.gson.JsonObject()
+        engine.addProperty("version", summary.engineVersion)
+        summary.peakResidentBytes?.let { engine.addProperty("peakResidentBytes", it) }
+        json.add("engine", engine)
         json.addProperty("entryCount", entries.size)
         writeCoverage(json, summary, split, expectedRows, categoryPaths)
         val files = com.google.gson.JsonArray()

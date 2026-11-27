@@ -7,6 +7,7 @@ import java.io.File
 import java.util.zip.ZipFile
 import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -174,6 +175,41 @@ class OffsetZipBuilderTest {
                 assertNotNull("missing ${entry.path}", zipped)
                 assertEquals(entry.size, zipped.size)
             }
+        }
+    }
+
+    @Test
+    fun theManifestCarriesThePeakResidentSetWhenTheScanMeasuredIt() {
+        val table = table()
+        val target = File(createTempDirectory().toFile(), "BEDROCK_OFFSETS_26.60.3.zip")
+        val summary = summary(table).copy(peakResidentBytes = 878L * 1024 * 1024)
+
+        OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile())
+            .build(summary, target)
+
+        ZipFile(target).use { zip ->
+            val manifest = zip.getInputStream(zip.getEntry("manifest.json"))
+                .bufferedReader()
+                .use { JsonParser.parseReader(it).asJsonObject }
+            val engine = manifest.getAsJsonObject("engine")
+            assertEquals(878L * 1024 * 1024, engine.get("peakResidentBytes").asLong)
+            assertEquals(summary.engineVersion, engine.get("version").asString)
+        }
+    }
+
+    @Test
+    fun theManifestOmitsThePeakResidentSetWhenItWasNotMeasured() {
+        val table = table()
+        val target = File(createTempDirectory().toFile(), "BEDROCK_OFFSETS_26.60.3.zip")
+
+        OffsetZipBuilder(Classifier(rules), createTempDirectory().toFile())
+            .build(summary(table), target)
+
+        ZipFile(target).use { zip ->
+            val manifest = zip.getInputStream(zip.getEntry("manifest.json"))
+                .bufferedReader()
+                .use { JsonParser.parseReader(it).asJsonObject }
+            assertFalse(manifest.getAsJsonObject("engine").has("peakResidentBytes"))
         }
     }
 

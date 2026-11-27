@@ -59,6 +59,10 @@ with vtable groups.
 | Device run (cloud phone, Android 14) | fixture library scanned: 662 functions, 89 classes, 317 named, 305 unique signatures, export zip 61 KB written and re-parsed by `coverage_report.py` |
 | Device export coverage, pre.1 build | overall 81/662 named (12.24 %), gameplay 34/606 (5.61 %), third party 47/56 (83.93 %), 305 of 307 signatures unique, 89 class rows for 89 groups |
 | Device export coverage, 1.1.0-pre.2 release build | overall **82/662 named (12.39 %)**, 307 of 307 signatures unique, 89 class rows for 89 groups — the one new name is the `Level::tick()::$_0` lambda body, and the two colliding signatures were separated by the 512-byte reach |
+| Device run, 1.1.0-pre.3 debug build, 4,000-function fixture | host `bench` 2,465 unique signatures, phone **2,465** — the two agree; 2,627 signatures, 89 classes, 576 slots |
+| Device run, 1.1.0-pre.3 debug build, **800,000-function library** on a **2 GB** phone | 800,000 functions, 6,386 classes, 41,505 slots, 496,600 signatures, **417,721 unique**, 6,477 Part 1 entries, **no OOM, no kill**; 878 MB resident at the table write (measured by the app's own counter) |
+| Device export, 800,000-function library | 13 entries, 381.3 MB of JSON raw, **20.3 MB zipped**, largest single file 121 MB raw — against the owner's 663 MB 26.60 export, on a build with more functions |
+| `scripts/coverage_report.py` on that device export | 480,000 of 800,000 named (60.0 %), 417,721 unique signatures (52.2 %), 6,386 class rows for 6,386 groups — nothing collapsed |
 
 The fixture is a 451 KB library built for this test, not Minecraft, so its
 percentages say nothing about 26.60. They do show the pipeline end to end: the
@@ -83,4 +87,5 @@ is a property of the library, not of the code. Quote the number from
 | Unique signature per named function | ≥ 98 % | **84.1 %** on the synthetic fixture. The missing 15.9 % are thunk families whose members are byte-identical (400 per family), so no byte pattern can separate them; each gets a group plus an anchor instead. Real-library figure unmeasured here |
 | Every vtable group its own identity | 100 % | done in the engine: groups are keyed by mangled name |
 | Component registry | every ECS component | parsing of `Include<…>`/`Exclude<…>` done; storage accessors not recovered |
-| Export size | ≤ 5 MB gameplay pack | not done |
+| Export size | ≤ 5 MB gameplay pack | gameplay pack not done; the whole 800k-function archive is **20.3 MB zipped** on device (was 663 MB for 26.60) |
+| Scan completes on a 2 GB phone | no OOM | **done**: 800,000 functions finished, 878 MB resident at the peak |
