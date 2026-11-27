@@ -36,7 +36,9 @@ address. It is generated from the same values as the manifest, so the two cannot
 disagree.
 
 `manifest.json` lists every other entry with its size, its record count and its
-SHA-256. The archive is re-opened after writing and every CRC, size and digest
+SHA-256. The `engine` block carries the peak resident set the process reached
+while writing the archive (absent, not zero, when the platform does not report
+it), so the cost of a scan travels with its result. The archive is re-opened after writing and every CRC, size and digest
 is checked, then every category document is walked with a streaming reader and
 its records are counted: `scan rows == table rows == sum of category-file
 entries == entries re-read from the finished ZIP`. A mismatch fails the export
@@ -52,6 +54,12 @@ instead of shipping a broken file, and the numbers are logged.
   "apk": "minecraft-26-60-arm64-v8a-xbox.apk",
   "buildId": "...",
   "librarySha256": "...",
+  "imageBase": "0x1000",
+  "engineVersion": "0.1.0+2",
+  "engine": {
+    "version": "0.1.0+2",
+    "peakResidentBytes": 258678784
+  },
   "entryCount": 19,
   "coverage": {
     "internal": {
