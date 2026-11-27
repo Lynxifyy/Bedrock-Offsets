@@ -666,6 +666,12 @@ pub fn analyze_internal_json(
         CoreError::InvalidPattern(format!("cannot parse the internal options: {error}"))
     })?;
     let library = MappedLibrary::open_shared(Path::new(path), sha256.to_string())?;
+    let threads = crate::limits::configure_threads();
+    crate::internal::report(
+        sink,
+        0,
+        &format!("Engine: {threads} worker threads for this device"),
+    );
     let map = build_section_map(library.bytes())?;
     let vtables = resolve_vtables_with_releaser(library.bytes(), Some(library.as_ref()))?;
     let symbols = read_named_symbols(library.bytes())?;

@@ -17,6 +17,7 @@ pub mod internal;
 pub mod jni;
 pub mod jni_bridge;
 pub mod jninatives;
+pub mod limits;
 pub mod memory;
 pub mod naming;
 pub mod patterns;

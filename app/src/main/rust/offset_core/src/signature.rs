@@ -38,7 +38,6 @@
 
 use crate::error::CoreResult;
 use crate::scanner::{ProgressSink, ScanControl};
-use rayon::prelude::*;
 
 /// Instruction words kept in the head array that drives the sort.
 ///
@@ -543,7 +542,7 @@ pub fn plan(
     // Sort by head. Equal heads keep address order, which is already the order
     // of the slice, so the sort is deterministic without a tiebreak comparison.
     let mut order: Vec<u32> = (0..functions.len() as u32).collect();
-    order.par_sort_unstable_by(|left, right| {
+    order.sort_unstable_by(|left, right| {
         let (left, right) = (*left as usize, *right as usize);
         let left_head = &heads[left][..usize::from(body_words[left]).min(HEAD_WORDS)];
         let right_head = &heads[right][..usize::from(body_words[right]).min(HEAD_WORDS)];
@@ -555,8 +554,10 @@ pub fn plan(
     report(sink, 84, "Signatures: sorted, measuring common prefixes");
 
     let count = order.len();
+    // Serial on purpose: this is a linear scan over a few megabytes of heads, so
+    // a thread pool adds start-up and per-worker buffers for no wall time.
     let mut lcp = vec![0u16; count.saturating_sub(1)];
-    lcp.par_iter_mut().enumerate().for_each(|(slot, value)| {
+    for (slot, value) in lcp.iter_mut().enumerate() {
         let left = order[slot] as usize;
         let right = order[slot + 1] as usize;
         let limit = usize::from(body_words[left]).min(usize::from(body_words[right]));
@@ -565,7 +566,7 @@ pub fn plan(
             shared += 1;
         }
         *value = u16::try_from(shared).unwrap_or(u16::MAX);
-    });
+    }
 
     // Everything that needs more than the head is a run of functions with the
     // same eight words. Refine those runs from the text; the runs are small

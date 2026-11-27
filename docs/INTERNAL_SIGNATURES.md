@@ -106,7 +106,7 @@ vtables, symbols, strings and thunk families. 800,000 functions, 48.7 MB of
 |---|---|---|
 | `.eh_frame` | 27 ms | 26 ms |
 | cross-references and naming | 330 ms | 337 ms |
-| **signature planning** | **226-234 ms** | round 1: 1.4 s, round 2: **846 s, unfinished** |
+| **signature planning** | **294-316 ms** | round 1: 1.4 s, round 2: **846 s, unfinished** |
 | writing the table | 7.7 s | never reached |
 | whole pipeline | **9.2-9.3 s** | killed at 900 s |
 | peak resident | **619-635 MB** | 565 MB and climbing at round 2 |
@@ -126,6 +126,13 @@ whole of `.text`, and the pattern set only shrank by a few percent per round.
 Result on the fixture: 496,600 signatures, **417,721 unique** (84.1 %), 78,879
 grouped with an anchor. The remaining gap is exactly the thunk families: 400
 byte-identical members per family cannot be separated by any byte pattern.
+
+The planner runs on one thread on purpose. Sorting the heads and measuring their
+common prefixes is a linear sweep over a few megabytes, so the parallel version
+measured 234 ms against 298 ms serial: seventy milliseconds is not worth a
+worker pool, its per-thread buffers and its start-up on a two-gigabyte phone.
+The only remaining pool is the Part 1 pattern scan, and it is capped at two
+threads below three gigabytes of RAM (`src/limits.rs`), four above.
 
 `signatureStability` is the share of signature bits that are literal, so a mod
 can rank locators by how likely they are to survive a rebuild (57 % for the
