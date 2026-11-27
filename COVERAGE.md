@@ -45,6 +45,7 @@ with vtable groups.
 | WP3 | ECS adapter parsed into system + Include/Exclude lists | `an_ecs_adapter_yields_its_system_and_components` |
 | WP2 | xref table: calls, tail calls, ADRP+ADD data refs, referrers | 6 `xref.rs` tests on a synthetic ELF |
 | WP4 | signature length cap 128 → 512 bytes (rounds at 48…512) | `libc++_shared.so` (aarch64, 1591 signatures): unique 1,523 → **1,583** (95.7 % → 99.5 %); slot signatures 839/841 → **841/841**; pass 0.09 s → 0.31 s |
+| WP4 | round-based planner replaced by one plan pass (see below) | 800,000-function fixture: stage **846 s and unfinished** (round 2 of 29) → **294-316 ms**; whole pipeline 9.2 s at 635 MB peak; `cargo run --release --bin bench -- /tmp/scale_a.so` |
 | WP0 | coverage measured from the export, not from enumeration | `scripts/coverage_report.py --self-test` |
 
 ## Measured here
@@ -52,6 +53,7 @@ with vtable groups.
 | Suite | Result |
 |---|---|
 | `cargo test --all-targets` | 185 + 66 tests, 0 failures (5 ignored) |
+| `cargo run --release --bin bench -- /tmp/scale_a.so` | 800,000 functions, 6,386 vtable groups: 496,600 signatures, **417,721 unique (84.1 %)**, 78,879 in identical-body groups with an anchor; 9.2 s wall, 635 MB peak |
 | `:app:testDebugUnitTest` | 325 tests, 0 failures |
 | `scripts/coverage_report.py --self-test` | ok, fixture with known answers |
 | Device run (cloud phone, Android 14) | fixture library scanned: 662 functions, 89 classes, 317 named, 305 unique signatures, export zip 61 KB written and re-parsed by `coverage_report.py` |
@@ -78,7 +80,7 @@ is a property of the library, not of the code. Quote the number from
 | Goal | Target | Status |
 |---|---|---|
 | Real names, gameplay classes | > 0, honest figure | code path exists; figure unmeasured on 26.60 |
-| Unique signature per named function | ≥ 98 % | not reached; signature work package not landed in this commit |
+| Unique signature per named function | ≥ 98 % | **84.1 %** on the synthetic fixture. The missing 15.9 % are thunk families whose members are byte-identical (400 per family), so no byte pattern can separate them; each gets a group plus an anchor instead. Real-library figure unmeasured here |
 | Every vtable group its own identity | 100 % | done in the engine: groups are keyed by mangled name |
 | Component registry | every ECS component | parsing of `Include<…>`/`Exclude<…>` done; storage accessors not recovered |
 | Export size | ≤ 5 MB gameplay pack | not done |

@@ -45,6 +45,7 @@ import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.log.LogFile
 import com.chimerateam.offsetextractor.ui.log.LogTimestamp
 import com.chimerateam.offsetextractor.ui.log.Logs
+import com.chimerateam.offsetextractor.ui.log.ProgressGate
 import com.chimerateam.offsetextractor.ui.state.BatchProgress
 import com.chimerateam.offsetextractor.ui.state.InternalFailure
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
@@ -1560,14 +1561,7 @@ class MainViewModel(
         val output = cache?.internalDir ?: File(cacheDir, "internal")
         return try {
             emit(Logs.info(TAG_RUST, "Extracting internal C++ offsets..."))
-            val lastStep = java.util.concurrent.atomic.AtomicReference("")
-            val reporter = ProgressCallback { percent, message ->
-                _uiState.update { it.copy(progress = percent, progressTask = message) }
-                runCatching { android.util.Log.i("OffsetProgress", "$percent% $message") }
-                if (lastStep.getAndSet(message) != message) {
-                    emit(Logs.info(TAG_RUST, message))
-                }
-            }
+            val reporter = progressReporter()
             val analysis = engine.analyzeInternal(extracted, options, output, reporter)
             val summary = analysis.summary
             requireInternalOutput(summary)
@@ -1748,14 +1742,7 @@ class MainViewModel(
 
         // The engine reports from its own worker threads, so the callback only
         // touches thread-safe state: the state flow and the log flow.
-        val lastStep = java.util.concurrent.atomic.AtomicReference("")
-        val reporter = ProgressCallback { percent, message ->
-            _uiState.update { it.copy(progress = percent, progressTask = message) }
-            runCatching { android.util.Log.i("OffsetProgress", "$percent% $message") }
-            if (lastStep.getAndSet(message) != message) {
-                emit(Logs.info(TAG_RUST, message))
-            }
-        }
+        val reporter = progressReporter()
         val outcome = engine.scanText(extracted, patterns, reporter)
         emit(
             Logs.info(
@@ -1878,6 +1865,27 @@ class MainViewModel(
                 .onFailure { emit(Logs.warn(TAG_SAF, "Descriptor close reported: ${it.message}")) }
         }
         activeApk = null
+    }
+
+    /**
+     * Builds the callback the engine reports progress through.
+     *
+     * A stage on a large library reports thousands of times, and every report
+     * used to update the screen state, write a log line and append it to the log
+     * file. The pane then spent its time laying out rows while the scan waited,
+     * which is what made a running scan look frozen. The gate keeps the bar
+     * moving and the log readable instead.
+     *
+     * @return the callback to hand to the engine.
+     */
+    private fun progressReporter(): ProgressCallback {
+        val gate = ProgressGate(
+            forward = { percent, message, writeLine ->
+                _uiState.update { it.copy(progress = percent, progressTask = message) }
+                if (writeLine) emit(Logs.info(TAG_RUST, message))
+            }
+        )
+        return ProgressCallback { percent, message -> gate.report(percent, message) }
     }
 
     private fun emit(entry: LogEntry) {

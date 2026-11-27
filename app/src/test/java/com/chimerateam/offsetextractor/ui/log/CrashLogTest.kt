@@ -19,7 +19,10 @@ class CrashLogTest {
         val text = crashText()
 
         assertTrue(text, text.contains("CRASH on "))
-        assertTrue(text, text.contains("java.lang.IllegalStateException: signature table ran out of memory"))
+        assertTrue(
+            text,
+            text.contains("java.lang.IllegalStateException: signature table ran out of memory")
+        )
         assertTrue(text, text.contains("CRASH end of report"))
     }
 
