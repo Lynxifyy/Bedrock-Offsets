@@ -72,6 +72,21 @@ export parses, class rows equal vtable groups, and a lambda inside
 `std::__ndk1::__function::__func<Level::tick()::$_0, …>::operator()` with
 `nameSource: "lambda"` instead of `vfunc_0`.
 
+## Where to read these numbers
+
+Two places, and they agree because they share the rules:
+
+* `scripts/coverage_report.py <export.zip> --markdown` on a desktop, for a
+  written report.
+* The **Coverage** section of the app's results panel, which streams the scan's
+  own category documents on the phone. Measured on the cloud phone with the
+  4,000-function fixture: gameplay 60.0 % named / 61.6 % signed, `other_named`
+  100 % / 95.0 %, `unnamed` 1,373 functions at 0 % / 0 %.
+
+Both count a name as real only when it is neither `sub_<rva>` nor
+`Class::vfunc_N`, and a signature as unique only when the engine says it matched
+exactly one place in `.text`. Neither number is a completeness figure.
+
 ## Deltas that this branch cannot claim
 
 The named-function delta on 26.60 is **unknown until the owner re-exports**.

@@ -1,3 +1,22 @@
+## v1.1.0-pre.4
+
+### Features
+
+- the results panel has a **Coverage** section. It streams the scan's own category documents off the main thread and reports, per category and overall, how many functions carry a real name and how many carry a signature that matches exactly one place in `.text`. A real name is neither `sub_<rva>` nor `Class::vfunc_N`; gameplay leaves out the `thirdparty` category. The rules are the same ones `scripts/coverage_report.py` uses, so a number read on the phone matches a number read from the same export
+- the export manifest carries an `engine` block with the peak resident set the scan reached (`engine.peakResidentBytes`), so the cost of a scan travels with its result instead of living only in a screenshot of the log. The key is absent rather than zero when the platform does not report it
+
+### Performance
+
+- the signature pass plans every signature in one walk instead of round after round. On the 800,000-function fixture the stage went from 846 s and still unfinished at round 2 of 29 to 294-316 ms, and the whole pipeline finishes in 9.2 s
+- the worker pool is sized from the device's core count and memory budget, read once from the kernel, instead of from a fixed constant
+- the scan no longer waits on the log pane: progress is throttled and forwarded off the main thread, so a slow UI cannot stall the engine
+
+### Tests
+
+- coverage counting: placeholders and `sub_` names are not real names, a null signature is not a signature, vtable groups are counted per class so a collapse would show, a missing document is skipped, and the overall row is the sum of the categories
+- manifest: the peak resident set is present when the scan measured it and absent, not zero, when it did not
+- progress forwarding: a throttled gate never drops the final progress value
+
 ## v1.1.0-pre.3
 
 ### Bug Fixes
