@@ -22,7 +22,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::sync::Arc;
 
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, CoreResult};
@@ -32,6 +31,7 @@ use crate::rtti::{read_u64, RelocationIndex, TypeInfoKind, VtableMap};
 use crate::scanner::{scan_section_releasing_pages, PageReleaser, ProgressSink, ScanControl};
 use crate::sections::{SectionMap, RODATA_SECTION, TEXT_SECTION};
 use crate::shards::{NdjsonWriter, RecordWriter};
+use crate::signature::Signature;
 use crate::symbols::{find_symbol_address, DataSymbol, NamedSymbol};
 
 /// Hard sanity limit on the slots read for one class.
@@ -324,6 +324,27 @@ pub struct SlotRecord {
     /// Whether the signature matched exactly once.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_unique: Option<bool>,
+    /// The exact signature form: raw bytes, two hex digits per byte.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_hex: Option<Arc<str>>,
+    /// The AND mask that belongs to `signatureHex`; `FF` means the byte must
+    /// match, `00` means it is ignored, and anything between is a bit mask the
+    /// scanner applies instead of a whole-byte wildcard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_mask: Option<Arc<str>>,
+    /// How much of the signature is literal, as a percentage. A signature that
+    /// keeps most of its bits survives a rebuild that moves code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_stability: Option<u8>,
+    /// Locator for a function whose body is byte-identical to another's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_anchor: Option<Arc<str>>,
+    /// Group of functions sharing one normalised body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identical_group: Option<u32>,
+    /// Members of that group, including this function.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identical_group_size: Option<u32>,
 }
 
 /// One RTTI class and its slots.
@@ -440,6 +461,26 @@ pub struct FunctionRecord {
     /// Whether the signature matched exactly once.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_unique: Option<bool>,
+    /// The exact signature form: raw bytes, two hex digits per byte.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_hex: Option<Arc<str>>,
+    /// The AND mask that belongs to `signatureHex`; `FF` means the byte must
+    /// match, `00` means it is ignored, and anything between is a bit mask the
+    /// scanner applies instead of a whole-byte wildcard.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_mask: Option<Arc<str>>,
+    /// How much of the signature is literal, as a percentage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_stability: Option<u8>,
+    /// Locator for a function whose body is byte-identical to another's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_anchor: Option<Arc<str>>,
+    /// Group of functions sharing one normalised body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identical_group: Option<u32>,
+    /// Members of that group, including this function.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identical_group_size: Option<u32>,
     /// Why the entry is marked `suspect`, when it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suspect_reason: Option<String>,
@@ -646,19 +687,25 @@ pub fn analyze_with_writer(
         releaser.release(0, usize::MAX);
     }
     report(sink, 80, "Signatures: generating");
-    let (signatures, truncated_signatures) = if options.generate_signatures {
+    let (signatures, truncated_signatures, _signature_stats) = if options.generate_signatures {
         generate_signatures(
             map,
             image,
             &names,
             &functions,
+            &classes,
+            &xrefs,
             options.max_signatures,
             control,
             sink,
             releaser,
         )?
     } else {
-        (HashMap::new(), false)
+        (
+            HashMap::new(),
+            false,
+            crate::signature::PlanStats::default(),
+        )
     };
 
     check_cancelled(control)?;
@@ -726,8 +773,15 @@ pub fn analyze_with_writer(
                     }
                 }
                 if let Some((signature, unique)) = signatures.get(&slot.address) {
-                    slot.signature = Some(Arc::from(signature.render()));
+                    let extra = SignatureExtras::of(signature);
+                    slot.signature = extra.pattern;
                     slot.signature_unique = Some(*unique);
+                    slot.signature_hex = extra.hex;
+                    slot.signature_mask = extra.mask;
+                    slot.signature_stability = extra.stability;
+                    slot.signature_anchor = extra.anchor;
+                    slot.identical_group = extra.group;
+                    slot.identical_group_size = extra.group_size;
                 }
             }
         }
@@ -889,10 +943,13 @@ pub fn analyze_with_writer(
             stats.ambiguous += 1;
         }
 
-        let (signature, signature_unique) = signatures
+        let (signature_unique, extras) = signatures
             .get(address)
-            .map(|(signature, unique)| (Some(Arc::from(signature.render())), Some(*unique)))
-            .unwrap_or((None, None));
+            .map(|(signature, unique)| {
+                let extras = SignatureExtras::of(signature);
+                (Some(*unique), extras)
+            })
+            .unwrap_or((None, SignatureExtras::default()));
 
         let kind = if thunk_target.is_some() {
             "thunk"
@@ -912,8 +969,14 @@ pub fn analyze_with_writer(
             prologue_kind,
             mangled,
             target: thunk_target,
-            signature,
+            signature: extras.pattern,
             signature_unique,
+            signature_hex: extras.hex,
+            signature_mask: extras.mask,
+            signature_stability: extras.stability,
+            signature_anchor: extras.anchor,
+            identical_group: extras.group,
+            identical_group_size: extras.group_size,
             suspect_reason,
         };
         writer.function(&record)?;
@@ -1162,6 +1225,12 @@ fn collect_class_slots(
                         status: "pending".to_string(),
                         signature: None,
                         signature_unique: None,
+                        signature_hex: None,
+                        signature_mask: None,
+                        signature_stability: None,
+                        signature_anchor: None,
+                        identical_group: None,
+                        identical_group_size: None,
                     }
                     .into()
                 })
@@ -1954,30 +2023,69 @@ fn find_string_xrefs(
     }
 }
 
-/// Generates a wildcarded signature per named function and checks uniqueness.
+/// The exported form of a signature, one field per JSON key.
+///
+/// Built in one place so the function table and the slot table can never drift
+/// apart on what a signature looks like.
+#[derive(Default)]
+struct SignatureExtras {
+    pattern: Option<Arc<str>>,
+    hex: Option<Arc<str>>,
+    mask: Option<Arc<str>>,
+    stability: Option<u8>,
+    anchor: Option<Arc<str>>,
+    group: Option<u32>,
+    group_size: Option<u32>,
+}
+
+impl SignatureExtras {
+    fn of(signature: &Signature) -> Self {
+        Self {
+            pattern: Some(Arc::from(signature.render())),
+            hex: Some(Arc::from(signature.hex())),
+            mask: Some(Arc::from(signature.bit_mask_hex())),
+            stability: Some(signature.stability()),
+            anchor: signature.anchor().map(Arc::from),
+            group: signature.identical_group(),
+            group_size: (signature.group_size() > 1).then(|| signature.group_size()),
+        }
+    }
+}
+
+/// Signature per address, plus whether it is unique among function starts.
 type SignatureMap = HashMap<u64, (Signature, bool)>;
 
-/// Builds and extends a signature for every named function and every slot.
+/// Generates a signature per named function and per vtable slot.
 ///
-/// A signature starts at 48 bytes. When it is not unique among function starts
-/// the pattern is extended by 16 bytes at a time, up to 128, and re-checked
-/// against the real matcher. A pattern that is still ambiguous at 128 bytes is
-/// kept with `signatureUnique: false` rather than dropped, so a client can see
-/// what the engine managed.
+/// The plan is one sort plus one refinement pass (see
+/// [`crate::signature::plan`]); the old implementation grew every unresolved
+/// pattern by 16 bytes a round and re-matched the whole table each time, which
+/// is what took minutes and then ran out of memory at round 19.
+///
+/// Functions whose body is byte-identical to another function cannot be told
+/// apart by bytes at all. They are grouped, counted, and given an anchor — a
+/// declaring vtable slot, a unique caller or a string only they reference — so a
+/// consumer still has a way to find them.
 #[allow(clippy::too_many_arguments)]
 fn generate_signatures(
     map: &SectionMap,
     image: &[u8],
     names: &HashMap<u64, NamedEntry>,
     functions: &[(u64, u64)],
+    classes: &[ClassSlots],
+    xrefs: &crate::xref::XrefTable,
     max_signatures: usize,
     control: &ScanControl,
     sink: Option<&dyn ProgressSink>,
     releaser: Option<&dyn PageReleaser>,
-) -> CoreResult<(SignatureMap, bool)> {
+) -> CoreResult<(SignatureMap, bool, crate::signature::PlanStats)> {
     let text = map.bytes_of(TEXT_SECTION, image);
     if text.is_empty() {
-        return Ok((HashMap::new(), false));
+        return Ok((
+            HashMap::new(),
+            false,
+            crate::signature::PlanStats::default(),
+        ));
     }
 
     let mut addresses: Vec<u64> = names
@@ -1985,250 +2093,133 @@ fn generate_signatures(
         .filter(|(address, entry)| entry.source != "auto" && **address != 0)
         .map(|(address, _)| *address)
         .collect();
+    for class in classes {
+        for group in &class.record.vtable_groups {
+            for slot in &group.slots {
+                if slot.address != 0 {
+                    addresses.push(slot.address);
+                }
+            }
+        }
+    }
     addresses.sort_unstable();
     addresses.dedup();
     let limit = max_signatures.max(1);
-    let mut truncated = addresses.len() > limit;
+    let truncated = addresses.len() > limit;
     addresses.truncate(limit);
 
-    // `Arc<str>` from the start: extending a signature replaces the shared
-    // string instead of leaving two copies alive, and the map the caller keeps
-    // then takes the same allocation rather than duplicating every signature
-    // once more. At the 512-byte reach that is hundreds of megabytes saved.
-    let mut candidates: Vec<(u64, Signature)> = Vec::with_capacity(addresses.len());
-    for address in &addresses {
-        if control.is_cancelled() {
-            return Err(CoreError::Cancelled);
-        }
-        let Some(file_offset) = file_offset_of(map, *address) else {
-            continue;
-        };
-        let Some(pattern) = wildcard_signature(map, image, file_offset, MAX_SIGNATURE_BYTES) else {
-            continue;
-        };
-        let Ok(compiled) = crate::patterns::compile(&address.to_string(), &pattern.render()) else {
-            continue;
-        };
-        // A signature whose longest fixed run is tiny matches thousands of
-        // functions; extending it would not converge.
-        if compiled.longest_literal_run() < MIN_SIGNATURE_RUN {
-            continue;
-        }
-        candidates.push((*address, pattern));
-    }
-    if candidates.is_empty() {
-        return Ok((HashMap::new(), truncated));
-    }
+    let (planned, stats) =
+        crate::signature::plan(text, map.text.address, functions, &addresses, control, sink)?;
 
-    // Most signatures are already unique among function starts after eight
-    // bytes, and proving that needs one sorted list of start prefixes instead of
-    // a matcher run over the whole buffer. Only the rest go through the rounds.
-    let prefixes = StartPrefixes::new(map, image, functions);
-    let mut unique = vec![false; candidates.len()];
-    let mut remaining = 0usize;
-    for (index, (_, pattern)) in candidates.iter().enumerate() {
-        match fixed_prefix_word(pattern) {
-            Some(word) if prefixes.count(word) == 1 => unique[index] = true,
-            _ => remaining += 1,
+    // The anchor map is built only for the addresses that actually need one, so
+    // a library with no identical bodies pays nothing for it.
+    let mut needs_anchor: HashSet<u64> = HashSet::new();
+    for (address, signature) in &planned {
+        if signature.identical_group().is_some() {
+            needs_anchor.insert(*address);
         }
+    }
+    let slot_names = if needs_anchor.is_empty() {
+        HashMap::new()
+    } else {
+        slot_anchor_names(classes, &needs_anchor)
+    };
+
+    let mut signatures: SignatureMap = HashMap::with_capacity(planned.len());
+    for (address, mut signature) in planned {
+        if signature.identical_group().is_some() {
+            // A group member has no byte pattern of its own, so the last resort
+            // is its ordinal inside the group: resolve the shared pattern, then
+            // take the Nth hit in address order.
+            let anchor = find_anchor(address, &slot_names, xrefs, &needs_anchor).or_else(|| {
+                signature.identical_group().map(|group| {
+                    format!(
+                        "group:{group}/{}#{}",
+                        signature.group_size(),
+                        signature.ordinal()
+                    )
+                    .into()
+                })
+            });
+            signature.set_anchor(anchor);
+        }
+        let unique = signature.is_unique();
+        signatures.insert(address, (signature, unique));
     }
     report(
         sink,
-        80,
+        79,
         &format!(
-            "Signatures: {} resolved by prefix, {remaining} need scanning",
-            candidates.len() - remaining
+            "Signatures: {} text passes, {} heads, {} unique, {} identical-body",
+            stats.text_passes, stats.functions, stats.unique, stats.identical_functions
         ),
     );
-
-    let mut lengths = vec![MAX_SIGNATURE_BYTES];
-    let mut next = MAX_SIGNATURE_BYTES;
-    while next < MAX_SIGNATURE_EXTENDED_BYTES {
-        next = (next + 16).min(MAX_SIGNATURE_EXTENDED_BYTES);
-        lengths.push(next);
+    if let Some(releaser) = releaser {
+        releaser.release(0, usize::MAX);
     }
-
-    // Beyond the memory budget, longer patterns buy less uniqueness than they
-    // cost in resident bytes: the pass drops the reach for the remaining rounds
-    // and says so instead of being killed by the low-memory killer.
-    for (round, length) in lengths.iter().enumerate() {
-        if control.is_cancelled() {
-            return Err(CoreError::Cancelled);
-        }
-        if *length > MAX_SIGNATURE_BYTES {
-            {
-                let projected = candidates
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| !unique[*index])
-                    .map(|(_, (_, pattern))| {
-                        pattern.storage_bytes() * *length / pattern.byte_len().max(1)
-                    })
-                    .sum::<usize>();
-                if projected > SIGNATURE_MEMORY_BUDGET {
-                    report(
-                        sink,
-                        88,
-                        &format!(
-                            "Signatures: reach stopped at {} bytes, the next round would hold {} MB of patterns (budget {} MB)",
-                            length.saturating_sub(16),
-                            projected / (1024 * 1024),
-                            SIGNATURE_MEMORY_BUDGET / (1024 * 1024)
-                        ),
-                    );
-                    truncated = true;
-                    break;
-                }
-            }
-            for (index, (address, pattern)) in candidates.iter_mut().enumerate() {
-                if unique[index] {
-                    continue;
-                }
-                let Some(file_offset) = file_offset_of(map, *address) else {
-                    continue;
-                };
-                if let Some(extended) = wildcard_signature(map, image, file_offset, *length) {
-                    *pattern = extended;
-                }
-            }
-        }
-
-        // Borrowed, not cloned: a round with 400,000 unresolved signatures would
-        // otherwise copy every pattern string, which is hundreds of megabytes
-        // once the reach is 512 bytes.
-        let active: Vec<(usize, &Signature)> = candidates
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| !unique[*index])
-            .map(|(index, (_, pattern))| (index, pattern))
-            .collect();
-        if active.is_empty() {
-            break;
-        }
-        let percent = 80 + (round as u32).min(8) * 2;
-        report(
-            sink,
-            percent,
-            &format!(
-                "Signatures: round {} ({} bytes, {} candidates)",
-                round + 1,
-                length,
-                active.len()
-            ),
-        );
-        let counts = count_at_function_starts(map, image, functions, &active, control, releaser)?;
-        for (index, count) in counts.iter().enumerate() {
-            if *count == 1 {
-                unique[active[index].0] = true;
-            }
-        }
-    }
-
-    let mut signatures = HashMap::with_capacity(candidates.len());
-    for (index, (address, pattern)) in candidates.into_iter().enumerate() {
-        signatures.insert(address, (pattern, unique[index]));
-    }
-    Ok((signatures, truncated))
+    Ok((signatures, truncated, stats))
 }
 
-/// Counts how many function starts each pattern matches, capped at two.
-///
-/// The scan packs one prefix per function start and runs the real matcher over
-/// that buffer, so a count is the number of distinct functions a signature
-/// would select. The work is split across Rayon workers in waves, and each wave
-/// is offered for page release afterwards.
-fn count_at_function_starts(
-    map: &SectionMap,
-    image: &[u8],
-    functions: &[(u64, u64)],
-    active: &[(usize, &Signature)],
-    control: &ScanControl,
-    releaser: Option<&dyn PageReleaser>,
-) -> CoreResult<Vec<u8>> {
-    let text = map.bytes_of(TEXT_SECTION, image);
-
-    const STRIDE: usize = 64;
-    const PREFIX: usize = MAX_SIGNATURE_EXTENDED_BYTES;
-    const CHUNK: usize = 4096;
-    /// Bytes of function prefixes one scratch buffer may hold.
-    const SAMPLE_BYTES: usize = 256 * 1024;
-    const WAVE: usize = 64;
-    // One matcher for every candidate needs about a kilobyte of automaton per
-    // pattern, which is gigabytes at a million candidates. Each group is
-    // matched separately instead; the buffer is rescanned per group, which
-    // costs seconds and keeps the peak flat.
-    const PATTERN_GROUP: usize = 8192;
-
-    // One buffer per chunk, and a chunk small enough that its prefixes fit in
-    // `SAMPLE_BYTES` even at the widest signature. The chunk is a window of
-    // `.text`, so a prefix may still read past the chunk end; only the end of
-    // `.text` truncates one.
-    let per_chunk = (SAMPLE_BYTES / PREFIX).clamp(1, CHUNK);
-    let chunks: Vec<&[(u64, u64)]> = functions.chunks(per_chunk).collect();
-    let mut counts = vec![0u8; active.len()];
-    let group_count = active.len().div_ceil(PATTERN_GROUP);
-    for (group_index, group) in active.chunks(PATTERN_GROUP).enumerate() {
-        let names: Vec<String> = group.iter().map(|(index, _)| index.to_string()).collect();
-        // Rendered per group, not per candidate: the text of one group is
-        // bounded by `PATTERN_GROUP`, so a round over 400,000 candidates never
-        // holds more than a few megabytes of hex at once.
-        let rendered: Vec<String> = group.iter().map(|(_, pattern)| pattern.render()).collect();
-        let specs: Vec<(&str, &str)> = names
-            .iter()
-            .zip(rendered.iter())
-            .map(|(name, pattern)| (name.as_str(), pattern.as_str()))
-            .collect();
-        let set = PatternSet::new_borrowed(&specs)?;
-        let base = group_index * PATTERN_GROUP;
-        let last_group = group_index + 1 == group_count;
-        for wave in chunks.chunks(WAVE) {
-            if control.is_cancelled() {
-                return Err(CoreError::Cancelled);
-            }
-            let local: Vec<Vec<u8>> = wave
-                .par_iter()
-                .map(|chunk| {
-                    let mut buffer: Vec<u8> = Vec::with_capacity(per_chunk * PREFIX);
-                    for (address, _) in chunk.iter() {
-                        let offset = address.saturating_sub(map.text.address) as usize;
-                        let end = (offset + PREFIX).min(text.len());
-                        if offset < end {
-                            buffer.extend_from_slice(&text[offset..end]);
-                        }
-                        buffer.resize(buffer.len().next_multiple_of(STRIDE), 0);
-                    }
-                    let mut chunk_counts = vec![0u8; group.len()];
-                    set.count_matches_at(&buffer, STRIDE, &mut chunk_counts);
-                    chunk_counts
-                })
-                .collect();
-            for chunk_counts in local {
-                for (index, count) in chunk_counts.iter().enumerate() {
-                    // Added, not maxed: a signature that matches one start in
-                    // this chunk and one in the next is ambiguous, and taking
-                    // the larger of the two would call it unique.
-                    let slot = &mut counts[base + index];
-                    *slot = slot.saturating_add(*count).min(2);
+/// Maps each address that appears as a vtable slot to `Class::vfunc_N`.
+fn slot_anchor_names(classes: &[ClassSlots], wanted: &HashSet<u64>) -> HashMap<u64, String> {
+    let mut out: HashMap<u64, String> = HashMap::new();
+    for class in classes {
+        for group in &class.record.vtable_groups {
+            for slot in &group.slots {
+                if !wanted.contains(&slot.address) || out.contains_key(&slot.address) {
+                    continue;
                 }
-            }
-            if let Some(releaser) = releaser.filter(|_| last_group) {
-                if let (Some((first, _)), Some((last, _))) = (
-                    wave.first().and_then(|chunk| chunk.first()),
-                    wave.last().and_then(|chunk| chunk.last()),
-                ) {
-                    let start = first.saturating_sub(map.text.address) as usize;
-                    let end = last
-                        .saturating_sub(map.text.address)
-                        .saturating_add(PREFIX as u64) as usize;
-                    releaser.release(
-                        map.text.offset as usize + start,
-                        map.text.offset as usize + end,
-                    );
-                }
+                out.insert(
+                    slot.address,
+                    format!("vtable:{}::vfunc_{}", class.record.name, slot.slot),
+                );
             }
         }
     }
-    Ok(counts)
+    out
+}
+
+/// Finds the most specific locator for a function whose bytes are not unique.
+///
+/// Order of preference: the declaring vtable slot, a caller that no other
+/// member of the group has, a string only this function references, then a
+/// `caller+offset` pair. `None` means the function genuinely cannot be located
+/// by anything but its group.
+fn find_anchor(
+    address: u64,
+    slot_names: &HashMap<u64, String>,
+    xrefs: &crate::xref::XrefTable,
+    group_members: &HashSet<u64>,
+) -> Option<Box<str>> {
+    if let Some(name) = slot_names.get(&address) {
+        return Some(name.as_str().into());
+    }
+    let callers = xrefs.callers_of(address);
+    let distinct: Vec<u64> = callers
+        .iter()
+        .copied()
+        .filter(|caller| !group_members.contains(caller))
+        .collect();
+    if distinct.len() == 1 {
+        return Some(format!("caller:0x{:x}", distinct[0]).into());
+    }
+    if let Some(entry) = xrefs
+        .functions
+        .binary_search_by_key(&address, |function| function.address)
+        .ok()
+        .map(|index| &xrefs.functions[index])
+    {
+        for reference in &entry.data_refs {
+            let referrers = xrefs.referencing(*reference);
+            if referrers.len() == 1 && referrers[0] == address {
+                return Some(format!("data:0x{reference:x}").into());
+            }
+        }
+        if let Some(call) = entry.call_sites.first() {
+            return Some(format!("caller:0x{:x}+0x{:x}", call.target, call.site).into());
+        }
+    }
+    None
 }
 
 /// Peak resident set size of the process, in MiB, when the OS exposes it.
@@ -2237,171 +2228,6 @@ fn peak_resident_mb() -> Option<u64> {
     let line = status.lines().find(|line| line.starts_with("VmHWM:"))?;
     let kilobytes: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
     Some(kilobytes / 1024)
-}
-
-/// First eight bytes at every function start, sorted.
-///
-/// A signature that matches at a function start necessarily matches that
-/// start's first eight bytes, so a prefix that occurs once proves the whole
-/// signature unique without touching `.text`.
-struct StartPrefixes(Vec<u64>);
-
-impl StartPrefixes {
-    fn new(map: &SectionMap, image: &[u8], functions: &[(u64, u64)]) -> Self {
-        let text = map.bytes_of(TEXT_SECTION, image);
-        let mut prefixes = Vec::with_capacity(functions.len());
-        for (address, _) in functions {
-            let offset = address.saturating_sub(map.text.address) as usize;
-            if offset + 8 <= text.len() {
-                let mut word = [0u8; 8];
-                word.copy_from_slice(&text[offset..offset + 8]);
-                prefixes.push(u64::from_le_bytes(word));
-            }
-        }
-        prefixes.sort_unstable();
-        Self(prefixes)
-    }
-
-    /// How many starts begin with [word], capped at two.
-    fn count(&self, word: u64) -> u8 {
-        let lower = self.0.partition_point(|probe| *probe < word);
-        let upper = self.0.partition_point(|probe| *probe <= word);
-        (upper - lower).min(2) as u8
-    }
-}
-
-/// The first eight bytes of a hex signature when all of them are fixed.
-///
-/// @returns the bytes as a little-endian word, or `None` when the signature
-///   starts with a wildcard or is shorter than eight bytes.
-fn fixed_prefix_word(pattern: &Signature) -> Option<u64> {
-    if pattern.byte_len() < 8 {
-        return None;
-    }
-    let mut word = 0u64;
-    for index in 0..8 {
-        if pattern.is_wildcard(index) {
-            return None;
-        }
-        word |= u64::from(pattern.bytes[index]) << (index * 8);
-    }
-    Some(word)
-}
-
-/// Shortest fixed run a generated signature must contain.
-const MIN_SIGNATURE_RUN: usize = 10;
-
-/// A wildcarded signature held as bytes plus a wildcard bitmap.
-///
-/// The hex text is what the matcher compiles and what the export writes, but a
-/// real library keeps a few hundred thousand of these alive at once and the
-/// text is nearly three times larger than the bytes it describes. On a tablet
-/// that difference decides whether the signature pass finishes or the process
-/// is killed, so only the bytes stay in memory and [`Signature::render`]
-/// produces the text one row at a time.
-#[derive(Clone, Debug)]
-pub struct Signature {
-    bytes: Box<[u8]>,
-    /// One bit per byte, least-significant bit of each word first; a set bit
-    /// matches any byte.
-    wildcards: Box<[u64]>,
-}
-
-impl Signature {
-    /// Bytes the signature holds in memory.
-    #[must_use]
-    pub fn storage_bytes(&self) -> usize {
-        self.bytes.len() + self.wildcards.len() * 8
-    }
-
-    /// Number of bytes the signature matches.
-    #[must_use]
-    pub fn byte_len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    /// Whether a position is a wildcard.
-    #[must_use]
-    pub fn is_wildcard(&self, index: usize) -> bool {
-        self.wildcards
-            .get(index / 64)
-            .is_some_and(|word| word & (1u64 << (index % 64)) != 0)
-    }
-
-    /// Renders the hex text the matcher and the export use.
-    #[must_use]
-    pub fn render(&self) -> String {
-        let mut out = String::with_capacity(self.bytes.len() * 3);
-        for (index, byte) in self.bytes.iter().enumerate() {
-            if index > 0 {
-                out.push(' ');
-            }
-            if self.is_wildcard(index) {
-                out.push_str("??");
-            } else {
-                out.push_str(&format!("{byte:02X}"));
-            }
-        }
-        out
-    }
-}
-
-fn wildcard_signature(
-    map: &SectionMap,
-    image: &[u8],
-    file_offset: u64,
-    length: usize,
-) -> Option<Signature> {
-    let text_offset = (file_offset.saturating_sub(map.text.offset)) as usize;
-    let text = map.bytes_of(TEXT_SECTION, image);
-    let available = text.len().saturating_sub(text_offset);
-    if available < 4 {
-        return None;
-    }
-    let length = available.min(length).max(4);
-    let bytes = &text[text_offset..text_offset + length];
-    let mut wildcard = vec![false; length];
-    let mut wildcards = 0usize;
-    let mut index = 0usize;
-    while index + 4 <= bytes.len() {
-        let word = u32::from_le_bytes([
-            bytes[index],
-            bytes[index + 1],
-            bytes[index + 2],
-            bytes[index + 3],
-        ]);
-        if is_relocatable_operand(word) {
-            for byte in 1..4 {
-                wildcard[index + byte] = true;
-                wildcards += 1;
-            }
-        }
-        index += 4;
-    }
-    if wildcards == length {
-        return None;
-    }
-    let mut words = vec![0u64; length.div_ceil(64)];
-    for (offset, flagged) in wildcard.iter().enumerate() {
-        if *flagged {
-            words[offset / 64] |= 1u64 << (offset % 64);
-        }
-    }
-    Some(Signature {
-        bytes: bytes.into(),
-        wildcards: words.into(),
-    })
-}
-
-/// Whether an instruction carries a relocatable immediate in bytes 1..4.
-fn is_relocatable_operand(word: u32) -> bool {
-    // ADRP, ADR, B, BL, LDR literal, ADD/SUB immediate.
-    word & 0x9F00_0000 == 0x9000_0000
-        || word & 0x9F00_0000 == 0x1000_0000
-        || word & 0x7C00_0000 == 0x1400_0000
-        || word & 0xFF00_0000 == 0x5800_0000
-        || word & 0xFF80_0000 == 0x9100_0000
-        || word & 0xFF80_0000 == 0xD100_0000
 }
 
 /// Merges the FDE and named addresses, and flags overlapping functions.
@@ -2979,26 +2805,6 @@ fn is_probable_prologue(word: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    /// Parses the exported hex form back into a signature, so a test can name
-    /// the pattern it means instead of hand-building the byte arrays.
-    fn signature_of(text: &str) -> Signature {
-        let tokens: Vec<&str> = text.split_whitespace().collect();
-        let mut bytes = Vec::with_capacity(tokens.len());
-        let mut words = vec![0u64; tokens.len().div_ceil(64)];
-        for (index, token) in tokens.iter().enumerate() {
-            if *token == "??" {
-                words[index / 64] |= 1u64 << (index % 64);
-                bytes.push(0);
-            } else {
-                bytes.push(u8::from_str_radix(token, 16).expect("hex byte"));
-            }
-        }
-        Signature {
-            bytes: bytes.into(),
-            wildcards: words.into(),
-        }
-    }
-
     use super::*;
     use crate::sections::SectionInfo;
     use crate::verify::VerificationStatus;
@@ -3036,14 +2842,6 @@ mod tests {
         let word = 0x1400_0000u32 | 4;
         text.copy_from_slice(&word.to_le_bytes());
         assert_eq!(thunk_target(&text, 0, 0x1000), Some(0x1010));
-    }
-
-    #[test]
-    fn relocatable_operands_are_recognised() {
-        assert!(is_relocatable_operand(0x9000_0010));
-        assert!(is_relocatable_operand(0x1400_0010));
-        assert!(is_relocatable_operand(0x9400_0010));
-        assert!(!is_relocatable_operand(0xD503_201F));
     }
 
     #[test]
@@ -3138,66 +2936,7 @@ mod tests {
         }
     }
 
-    /// One function every [`STRIDE_BYTES`] bytes, each starting with a NOP; the
-    /// marked ones carry `de ad be ef` at offset 4.
-    ///
-    /// The spacing is deliberately not a multiple of the matcher stride: a
-    /// real function is rarely 64-byte aligned, and an aligned fixture would
-    /// make the same bytes match inside the neighbouring prefixes too.
-    fn text_with_markers(functions: usize, marked: &[usize]) -> (SectionMap, Vec<u8>) {
-        let size = (functions * STRIDE_BYTES) as u64;
-        let map = map_with(section(".text", 0x1000, 0, size, true), Vec::new());
-        let mut image = vec![0u8; size as usize];
-        for index in 0..functions {
-            let offset = index * STRIDE_BYTES;
-            image[offset..offset + 4].copy_from_slice(&[0x1f, 0x20, 0x03, 0xd5]);
-        }
-        for index in marked {
-            let offset = index * STRIDE_BYTES;
-            image[offset + 4..offset + 8].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-        }
-        (map, image)
-    }
-
     /// Distance between planted function starts.
-    const STRIDE_BYTES: usize = 68;
-
-    fn starts(count: usize) -> Vec<(u64, u64)> {
-        (0..count)
-            .map(|index| (0x1000 + (index * STRIDE_BYTES) as u64, STRIDE_BYTES as u64))
-            .collect()
-    }
-
-    #[test]
-    fn a_match_in_each_chunk_is_counted_twice() {
-        // The scan buffer holds one chunk of prefixes at a time so a wide
-        // signature cannot blow the phone's memory. Splitting must not turn an
-        // ambiguous signature into a unique one, or a client would resolve the
-        // wrong function.
-        let (map, image) = text_with_markers(600, &[3, 550]);
-        let functions = starts(600);
-        let pattern = signature_of("1F 20 03 D5 DE AD BE EF");
-        let active = vec![(0usize, &pattern)];
-        let counts =
-            count_at_function_starts(&map, &image, &functions, &active, &ScanControl::new(), None)
-                .expect("counts");
-        assert_eq!(
-            counts[0], 2,
-            "one match in each chunk must add up to ambiguous, not collapse to unique"
-        );
-    }
-
-    #[test]
-    fn a_lone_match_still_counts_once() {
-        let (map, image) = text_with_markers(600, &[550]);
-        let functions = starts(600);
-        let pattern = signature_of("1F 20 03 D5 DE AD BE EF");
-        let active = vec![(0usize, &pattern)];
-        let counts =
-            count_at_function_starts(&map, &image, &functions, &active, &ScanControl::new(), None)
-                .expect("counts");
-        assert_eq!(counts[0], 1);
-    }
 
     #[test]
     fn the_slot_cap_constant_covers_every_value_the_screen_offers() {
@@ -3374,60 +3113,6 @@ mod tests {
         let _ = map;
     }
 
-    /// The signature pass holds one pattern per named function; on a 26.60
-    /// library that is a few hundred thousand patterns at once, so the bytes
-    /// kept in memory decide whether the pass finishes on a 3 GB tablet.
-    #[test]
-    fn a_signature_is_held_in_about_a_third_of_its_hex_text() {
-        let map = map_with(section(".text", 0x1000, 0x1000, 0x100, true), Vec::new());
-        let mut image = vec![0u8; 0x2000];
-        image[0x1000..0x1004].copy_from_slice(&0xA9BF_7BFDu32.to_le_bytes());
-        image[0x1004..0x1008].copy_from_slice(&0x9400_0010u32.to_le_bytes());
-        let signature =
-            wildcard_signature(&map, &image, 0x1000, MAX_SIGNATURE_BYTES).expect("signature");
-
-        let text = signature.render();
-        assert!(
-            signature.storage_bytes() * 2 < text.len(),
-            "{} bytes held for {} bytes of text",
-            signature.storage_bytes(),
-            text.len()
-        );
-    }
-
-    #[test]
-    fn the_bytes_of_a_signature_round_trip_through_its_text() {
-        let map = map_with(section(".text", 0x1000, 0x1000, 0x100, true), Vec::new());
-        let mut image = vec![0u8; 0x2000];
-        image[0x1000..0x1004].copy_from_slice(&0xA9BF_7BFDu32.to_le_bytes());
-        image[0x1004..0x1008].copy_from_slice(&0x9400_0010u32.to_le_bytes());
-        let signature =
-            wildcard_signature(&map, &image, 0x1000, MAX_SIGNATURE_BYTES).expect("signature");
-
-        let text = signature.render();
-        assert_eq!(signature_of(&text).render(), text);
-        assert_eq!(
-            fixed_prefix_word(&signature),
-            fixed_prefix_word(&signature_of(&text))
-        );
-    }
-
-    #[test]
-    fn a_wildcarded_signature_keeps_opcode_bytes_and_masks_operands() {
-        let map = map_with(section(".text", 0x1000, 0x1000, 0x100, true), Vec::new());
-        let mut image = vec![0u8; 0x2000];
-        // stp x29, x30, [sp, #-16]! then a BL.
-        image[0x1000..0x1004].copy_from_slice(&0xA9BF_7BFDu32.to_le_bytes());
-        image[0x1004..0x1008].copy_from_slice(&0x9400_0010u32.to_le_bytes());
-
-        let signature =
-            wildcard_signature(&map, &image, 0x1000, MAX_SIGNATURE_BYTES).expect("signature");
-        let text = signature.render();
-
-        assert!(text.starts_with("FD 7B BF A9"), "{text}");
-        assert!(text.contains("??"), "{text}");
-    }
-
     /// `vtableOffset` is measured from the image base, which is not the file
     /// layout: `.data.rel.ro` starts 0x4000 after its file offset in the real
     /// 26.60 library. A class record must carry the real file offset too, or a
@@ -3599,6 +3284,12 @@ mod tests {
                     status: "verified".to_string(),
                     signature: None,
                     signature_unique: None,
+                    signature_hex: None,
+                    signature_mask: None,
+                    signature_stability: None,
+                    signature_anchor: None,
+                    identical_group: None,
+                    identical_group_size: None,
                 })
             })
             .collect();
@@ -3741,49 +3432,6 @@ mod tests {
             !names.contains_key(&0x4010),
             "a slot pointing into .rodata must not become a function"
         );
-    }
-
-    #[test]
-    fn fixed_prefix_word_requires_eight_literal_bytes() {
-        assert_eq!(
-            fixed_prefix_word(&signature_of("FD 7B BF A9 FD 03 00 91 FF 43")),
-            Some(0x9100_03fd_a9bf_7bfd)
-        );
-        // A wildcard in the first eight bytes makes the shortcut unusable.
-        assert_eq!(
-            fixed_prefix_word(&signature_of("FD 7B BF A9 ?? ?? ?? ??")),
-            None
-        );
-        assert_eq!(fixed_prefix_word(&signature_of("FD 7B BF A9")), None);
-    }
-
-    #[test]
-    fn a_unique_start_prefix_proves_a_signature_unique() {
-        let mut image = vec![0u8; 0x2000];
-        // Two functions in `.text`: 0x1000 and 0x1010, distinct prefixes.
-        image[0x1000..0x1008].copy_from_slice(&[0xFD, 0x7B, 0xBF, 0xA9, 1, 2, 3, 4]);
-        image[0x1010..0x1018].copy_from_slice(&[0xFD, 0x7B, 0xBF, 0xA9, 9, 9, 9, 9]);
-        let map = map_with(section(".text", 0x1000, 0x1000, 0x100, true), vec![]);
-        let functions = vec![(0x1000u64, 0x10u64), (0x1010, 0x10)];
-
-        let prefixes = StartPrefixes::new(&map, &image, &functions);
-
-        assert_eq!(
-            prefixes.count(fixed_prefix_word(&signature_of("FD 7B BF A9 01 02 03 04")).unwrap()),
-            1
-        );
-        assert_eq!(
-            prefixes.count(fixed_prefix_word(&signature_of("FD 7B BF A9 09 09 09 09")).unwrap()),
-            1
-        );
-        // The first four bytes alone are shared, so an eight-byte word built
-        // from them plus equal tails counts both starts.
-        assert_eq!(
-            prefixes.count(fixed_prefix_word(&signature_of("FD 7B BF A9 01 02 03 04")).unwrap()),
-            1
-        );
-        let shared = u64::from_le_bytes([0xFD, 0x7B, 0xBF, 0xA9, 0, 0, 0, 0]);
-        assert_eq!(prefixes.count(shared), 0);
     }
 
     #[test]
@@ -3973,6 +3621,12 @@ mod tests {
             suspect_reason: None,
             signature: None,
             signature_unique: None,
+            signature_hex: None,
+            signature_mask: None,
+            signature_stability: None,
+            signature_anchor: None,
+            identical_group: None,
+            identical_group_size: None,
         }
     }
 }

@@ -527,6 +527,12 @@ mod tests {
             target: None,
             signature: None,
             signature_unique: None,
+            signature_hex: None,
+            signature_mask: None,
+            signature_stability: None,
+            signature_anchor: None,
+            identical_group: None,
+            identical_group_size: None,
             suspect_reason: None,
         }
     }

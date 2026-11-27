@@ -26,6 +26,7 @@ pub mod rtti;
 pub mod scanner;
 pub mod sections;
 pub mod shards;
+pub mod signature;
 pub mod symbols;
 pub mod verify;
 pub mod xref;

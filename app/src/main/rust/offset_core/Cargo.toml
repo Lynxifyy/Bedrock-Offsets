@@ -9,6 +9,10 @@ license = "Apache-2.0"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+
 [dependencies]
 zip = { version = "9.5.0", default-features = false, features = ["deflate"] }
 sha2 = "0.11.1"
