@@ -218,3 +218,20 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   "Symbols: capped at …" via `internal::report` (made `pub(crate)`).
 - Crash reporting: `ui/log/CrashLog.kt` appends `CRASH …` lines to `live.log`; `MainViewModel`
   replays the last 40 on start. `CrashLogTest` covers it.
+
+### Cloud-phone testing (Mobilebox) — the only device proxy available
+- Setup: `~/.mobilebox.env` holds `MOBILESANDBOX_API_KEY`; source it, then talk to
+  `https://mobilebox.dev/v1/phones/<id>` with `Authorization: Bearer $KEY`. Phone
+  `ph_mqguy7bhtjiv` = Android 14, **2 GB RAM** (less than the owner's 3 GB tablet, so it is a
+  harder target). It parks when idle; the first call resumes it (~13 s).
+- Endpoints that work: `POST /apps` (raw APK bytes, `content-type: application/octet-stream` →
+  `{version_name, version_code}`), `POST /actions` with `{"actions":[…]}` (types: tap, long_press,
+  swipe, scroll, scroll_to, type, key, back, home, open_app, close_app, open_url, wait, wait_for,
+  receive_sms; a `tap` target needs exactly one of `x/y`, `ref`, `text`, `id`, `desc`),
+  `GET /observe` (accessibility tree with refs; rows expose `text` but **no `box`**),
+  `GET /screenshot` (PNG), `GET /files?path=…` (list; also returns file bytes).
+- Gotcha: in the DocumentsUI picker, `tap {text:"fixture2.apk"}` can hit the "Preview the file
+  …apk" button and raise "There was a problem parsing the package". Read `/screenshot`, convert
+  the 900×2000 image to device pixels (×1.2) and tap the coordinates instead.
+- Measured there (v1.1.0-pre.4): 800,000-function fixture → 6,386 classes, 496,600 signatures,
+  417,721 unique, 20.3 MB zip from 381 MB of JSON, no OOM; process peak 878 MB.
