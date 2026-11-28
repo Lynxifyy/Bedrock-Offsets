@@ -19,6 +19,13 @@ every list empty and `MainActivity` fills it from `VersionManager`/`MsftAccountS
 so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log for the full list.
 - **`ui.activities` files live under `launcher/ui/activities/`** (dir ≠ package for the whole
   `launcher/ui` tree — package decls are `org.chimeramc.client.ui.*`). Operate on FILES, not dirs.
+- **Never "fix" a Java file's package to match its directory.** The whole app has dir ≠ package
+  (`launcher/core/auth/storage/XalExporter.java` declares `org.chimeramc.client.core.auth.storage`;
+  `launcher/util/JsonIOUtils.java` declares `org.chimeramc.client.util`). Kotlin resolves Java
+  classes by the DECLARED package, so rewriting the decl to match the path makes
+  `:app:compileDebugKotlin` fail with `Unresolved reference '<last segment>'` on the Kotlin import
+  (and it looks like a whole-package failure, not a file failure). Copy the existing `package` line.
+  javac also needs explicit FILE lists (`-sourcepath` can't find dir≠package sources).
 - 7 placeholder Activities remain (`BaseActivity` + `MainActivity`/`SplashActivity`/`LibraryActivity`/
   `SettingsActivity`/`ModsFullscreenActivity`/`CrashActivity`); they draw nothing but are manifest
   targets. `MainActivity.setTextMinecraftVersion()` and `LibraryActivity.EXTRA_INITIAL_TAB`/`TAB_*`
@@ -158,11 +165,17 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   `scripts/check_ui_hygiene.py`, `scripts/gen_launcher_icons.py --check`,
   `scripts/verify_berryapi_abi.py`, `scripts/check_submodules.sh`,
   `scripts/validate_release_content.py`, `actionlint .github/workflows/android.yml`.
-- **Device-only work cannot be measured here**: no device/emulator, so FPS, launch time, memory and
-  any hook/scanner behaviour against a real `libminecraftpe.so` cannot be executed. Say so rather
-  than claiming a measurement. Most remaining "engine hook" features need a game-side anchor the
-  stripped `libminecraftpe.so` does not expose — `docs/agents/update-list-audit-*.md` records this
-  per module.
+- **A cloud phone is available (Mobilebox, Android 14 arm64, $0.01/min while running)**: the launcher
+  *can* be driven and screenshotted from this container — recipe, traps and what it verified live in
+  `docs/agents/runtime-verification.md`. `:app:assembleDebug` needs Rust (`rustup` +
+  `rustup target add aarch64-linux-android`) or it fails with "cargo was not found"; `open_app` does
+  not launch our app, tap `"CaramelClient"` in the drawer instead. Park the phone when done. A
+  Microsoft sign-in still needs the account owner's password + 2FA, so game-side XAL, the in-game
+  "Signing in…" text and in-game skin/FPS stay unverified: say so rather than claiming a measurement.
+- **Device-only work beyond the launcher's own screens cannot be measured here**: any hook/scanner
+  behaviour against a real `libminecraftpe.so` cannot be executed. Most remaining "engine hook"
+  features need a game-side anchor the stripped `libminecraftpe.so` does not expose —
+  `docs/agents/update-list-audit-*.md` records this per module.
 - `version.properties` (`version.name`) is what CI stamps when a shallow checkout has no tags; keep
   it ahead of the last tag or CI builds name a stale version.
 - **SweetLoader CI** (`.github/workflows/ci.yml`, 4 gates: host-tests, rust, native-build,
@@ -196,47 +209,73 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   newer than 28 — `String.isBlank` (33) is the usual slip, use `s.trim().isEmpty()`.
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
 
-## Bedrock-Offsets (`Bedrock-Offsets`) — Kotlin/Compose + Rust `offset_core`
+### Mobilebox cloud phone (2026-11-28)
+Key is in `$MOBILESANDBOX_API_KEY` (workspace `prj_33khrd52ucmr`, `android_cloud`, ~$12.94 left,
+$0.01/min). `claude` CLI is **not** installed here, so `claude mcp add …` is not the path — use REST:
+`POST /v1/phones?wait=ready`, `GET /v1/phones/{id}/screenshot` (raw PNG), `GET …/device`,
+`POST …/park` (stops billing). A phone is a real Android 14 / 1080x2400 arm64 device, but it cannot
+prove anything about a game it does not have: no 1.26.60 APK and no MSA sign-in, so the XAL export
+path stays device-UNVERIFIED.
 
-- Verify loop: `cargo test` + `cargo fmt --all --check` + `cargo clippy --all-targets -- -D warnings`
-  in `app/src/main/rust/offset_core`, then `./gradlew :app:testDebugUnitTest :app:ktlintCheck
-  :app:lintDebug`. **ktlint needs the network** (`com.pinterest.ktlint:ktlint-cli` is not cached), so
-  `--offline` fails on it. `ktlintFormat` fixes most rules; the leftovers are always
-  `function-signature` (keep a fitting parameter list on ONE line, expression body on the next line),
-  `max-line-length` 100, and `multiline-if-else`.
-- Native engine: `cargo install cargo-ndk --locked`, `rustup target add aarch64-linux-android`,
-  `sdkmanager "ndk;27.0.12077973"`, then `ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
-  python3 scripts/build_rust.py` (it runs `cargo ndk -t arm64-v8a build --release` and stages
-  `app/src/main/jniLibs/arm64-v8a/liboffset_core.so`, which is gitignored). `rustup component add
-  rustfmt clippy` is required before the fmt/clippy gates.
-- `scripts/generate_patterns.py` **preserves `stringAnchors` and `internalPatterns` from the existing
-  `app/src/main/assets/patterns.json`**, so anchors can be hand-added and the CI round-trip
-  (`generate` + `git diff --exit-code`) still passes. Keep the file generator-formatted.
-- Gson models are kept by package rules in `app/proguard-rules.pro` (`data.native.**`,
-  `data.export.**`, ...), so a new DTO nested in `EnginePayloads` or a new file in `data/export`
-  needs no extra keep rule.
-- Pro script exports live in `data/export/OffsetScripts.kt` (`ScriptFormat`: IdaPython,
-  GhidraScript, FridaTypeScript, CppHeader); they emit RVAs (`address - imageBase`), dedupe by name
-  and cap at `ENTRY_LIMIT`.
+### XAL export contract (the "Sign In although the launcher is signed in" fix, 2026-11-28)
+- `com.microsoft.xal.androidjava.XalStorageContract` (in the `minecraft` module, the copy of the
+  game's Java that runs in the launcher's process) now owns: `xal/` layout, `Xal.Accounts.json`,
+  `Xal.Current.json` (the export pointer), base64 id encoding, and which crypto prefs to use.
+  `Storage.getStoragePath` returns `files/` only when there is NO export and the
+  `launcherManagedMcLoginEnabled` toggle is off — the toggle alone used to decide, so a default
+  install read a store the exporter never wrote.
+- `XalExporter` (package `org.chimeramc.client.core.auth.storage`) builds its file set from
+  `XalExportBundle` (pure, JVM-tested) and writes: DeviceIdentity, Default, Msa, User with
+  envelopes Dtoken/Utoken + Xtoken for xboxlive, multiplayer.minecraft.net, playfab, realms,
+  `rp://api.minecraftservices.com/` (from `javaXstsToken`, minted by `JavaAuthManager` in
+  `MsftAuthManager.refreshStoredAccount` and merged into the Bedrock snapshot).
+- Export runs on every launch (`MinecraftRuntimePreparer.exportAccountForLaunch`) and after every
+  refresh (`MsftAccountStore.updateAuthMaterial` → `XalExporter.refreshExportedAccount`).
+- **Device-key encoding is a real trap**: `MinecraftAuth`'s `JsonUtil.encodeKeyPair` writes
+  standard Base64 (`+`, `/`, `=`); the game's `Ecdsa.restoreKeyAndId` decodes with
+  `Base64.decode(str, 11)` = `URL_SAFE|NO_PADDING|NO_WRAP` and throws. The export must re-encode
+  (`XalExportBundle.urlSafeBase64`). Any exporter rewrite that drops it silently breaks XAL
+  proof-of-possession signing and the game sits on "Signing in with your Microsoft account".
+- `javaXstsToken` (the `rp://api.minecraftservices.com/` party) needs a Java XSTS exchange that the
+  offline exporter cannot do: mint it in `saveAccountOrThrow` **and** in `refreshStoredAccount`, and
+  let `refreshAccountsForLaunch` refresh on `needsMinecraftServicesToken(...)` too, not only on the
+  twelve-hour rule.
+- `:app:testDebugUnitTest` = 3432 tests, 0 failures, 1 skipped (warm ~25 s).
 
-- **Maven Central rate-limits this container (HTTP 429)**, and Gradle only notices once the
-  configuration cache is invalidated (e.g. by editing `build.gradle.kts`) — then plugin *and* artifact
-  resolution both fail. Workaround without touching the repo: an init script
-  (`./gradlew ... -I /tmp/central-mirror.gradle`) that rewrites every `repo.maven.apache.org` /
-  `repo1.maven.org` repository URL to `https://maven-central.storage-download.googleapis.com/maven2/`
-  and, for `tasks.withType(Test)`, sets `robolectric.dependency.repo.url` to the same mirror —
-  Robolectric fetches its `android-all-instrumented` jar itself from a hardcoded Central URL and
-  otherwise fails with "Failed to fetch maven artifact". `--offline` is not a substitute: it fails at
-  plugin resolution (`com.android.application` not found) once the config cache is invalid.
-- **This container's `~/.cargo` can vanish between sessions** while `/workspace` and `~/.gradle`
-  survive; `cargo: command not found` then means reinstall
-  (`curl https://sh.rustup.rs | sh -s -- -y --profile minimal`, `rustup component add rustfmt clippy`,
-  `rustup target add aarch64-linux-android`), not a broken repo.
-- **Release flow**: bump `versionCode`/`versionName` in `app/build.gradle.kts`, add a
-  `## vX.Y.Z` block to `CHANGELOG.md`, `python3 scripts/verify_version.py --tag vX.Y.Z`, push `main`,
-  push an annotated `v*` tag. `.github/workflows/release.yml` builds the APK, runs
-  `verify_release.py`, and `gh release create`s it **without `--prerelease`** and with an
-  auto-generated body — so follow up with `gh release edit vX.Y.Z --prerelease --title ... --notes-file
-  ...`. Signing secrets (`SIGNING_KEYSTORE_BASE64`) are unset, so the asset is debug-signed and the
-  run logs `::warning::No SIGNING_KEYSTORE_BASE64`.
-- Verified counts on this snapshot: **365 Kotlin**, **292 Rust** (4 ignored), **134 Python** tests.
+### Compose launcher (2026-11 launcher round)
+- **`app/src/main/java/org/chimeramc/client/launcher/core/versions/` files declare
+  `package org.chimeramc.client.core.versions`** (no `launcher`). A new file there must use that
+  package or `VersionManager` cannot see it ("package ImportedPackageLayout does not exist").
+- `VersionManager.java` sits at its `FileSizeBudgetTest` baseline (1505) — it may only shrink, so new
+  import logic goes into a sibling class (`ImportedPackageLayout`, `ArchiveExtractor`).
+- **`assembleDebug` cannot run in this container**: `:app:buildRustEngine` fails with "cargo was not
+  found". `:app:testDebugUnitTest` + `compileDebugKotlin` are the verifiable gates here; an APK
+  needs the Rust toolchain (and `aarch64-linux-android`).
+- Unit tests get cwd = the module dir, so repo-relative paths need a "walk up until the file exists"
+  helper (see `RadiusScaleTest.resolve`); a bare `Paths.get("app/src/...")` fails.
+- Vector-drawable attributes are namespaced: parse with `setNamespaceAware(true)` +
+  `getAttributeNS("http://schemas.android.com/apk/res/android", "pathData")`.
+- `Api28CompatTest` flags `Stream.toList` on `EnumEntries`/lists — pass the `entries` list straight to
+  LazyRow's `items(...)`.
+- CurseForge Bedrock (`gameId=78022`) class ids: Addons 4984, Maps 6913, Skins 6925, Texture Packs
+  6929, Scripts 6940; `sortField=6` is total downloads.
+- Shell heredocs with long/odd content get **mangled in transit sometimes** (a python script's own
+  string literal was corrupted and failed its `assert`). For big Java/Kotlin edits write the block to
+  a temp file, `grep` it to confirm, then splice by line index in a short script. `file_editor`'s
+  `str_replace` needs byte-exact text — blank lines in these sources carry trailing spaces.
+
+### Bedrock-Offsets build + internal shard layout (2026-11-28)
+- `scripts/setup_toolchain.sh` hardcodes JDK dir `jdk-21.0.13+9`, but the Adoptium archive extracts
+  `jdk-21.0.13.1+2`; symlink or the script dies at `sdkmanager` with an invalid `JAVA_HOME`.
+- `cargo install cargo-ndk --locked` is **required** for `:app:testDebugUnitTest`:
+  `:app:buildRustEngine` runs `scripts/build_rust.py`, which shells out to `cargo ndk`. Without it the
+  build fails before any test. `buildRustEngine` succeeds here once cargo-ndk + NDK are present.
+- Category scans write shards **directly into `cache/internal`** as `<category>.json` plus `map.json`
+  (`shards.rs`), and `InternalSummary.path` is blank in that mode. Any keep logic keyed on `path`
+  therefore protects nothing; derive the directory from `shards[0].path.parent` and treat the whole
+  directory as the result set (`StorageManager.keepState` / `newestTable`).
+- `StorageManager.newestTable()` must consider `.json` shards and directories, not only `.ndjson`,
+  or a restart sweep deletes the previous scan's cache before `cachedResultFor` can use it.
+- Gates here: `cargo test` (208 unit + integration), `gradle :app:ktlintCheck`,
+  `gradle :app:testDebugUnitTest` (373 tests, all green). `cargo fmt --check` + `cargo clippy
+  --all-targets` are clean.

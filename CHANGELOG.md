@@ -1,3 +1,31 @@
+## v1.1.0
+
+### Bug Fixes
+
+- the results grid, the IDE workspace and the live log no longer crash when two rows share a category, name and address, or when two log entries arrive in the same millisecond. List keys now include the row index
+- starting a second export while one is running no longer runs two writers against the same partial file, repository record and service start ID. The new job waits for the old job's cleanup, suppresses its stale progress and completion writes, and observes cancellation while it copies
+- exporting a ZIP no longer deletes the category shard files. A second ZIP export, "include combined", the in-app internal search and a cached result on the next scan still have the data they need
+- the storage sweep now keeps the directory that holds the shards when a category scan records no single table path. The previous keep check only knew how to protect a file, so a restart or a space cleanup could delete the current result
+- the internal source header records the build ID of the library that was just scanned instead of the previous scan's ID
+- internal C++ offsets are browsable with an empty search box. Both result screens load the first page immediately instead of returning nothing until a query is typed
+
+### Engine
+
+- vtables in `.data.rel.ro.local` are discovered. LLD splits the section by linkage, so matching only the exact `.data.rel.ro` name silently dropped most internal classes
+- type names in `.rodata.str*` and other `.rodata*` subsections are accepted
+- `.eh_frame` parsing treats `DW_EH_PE_absptr` (`0x00`) as a real pointer-sized encoding and `DW_EH_PE_omit` (`0xff`) as the omit sentinel. Earlier code dropped every FDE whose CIE omitted the `R` encoding and failed on omitted personality records
+- named symbols are read from `.symtab`/`.strtab` when the library is not stripped, including `STB_LOCAL` functions, with `.dynsym` as the fallback
+
+### Build
+
+- v1.1.0 is signed with a persistent release key. Builds up to v1.1.0-pre.5 were signed with a per-run debug key, so moving from one of those requires a one-time uninstall. Later releases signed with the same release key install as an update
+- the release workflow refuses to publish when the signing secrets are missing or when the APK carries the Android debug certificate
+
+### Tests
+
+- 373 Kotlin unit tests, including duplicate-key rendering, shard retention, blank internal search paging and shard-directory storage retention
+- 208 Rust tests plus the integration suites, `cargo fmt --check`, `clippy`, `ktlintCheck` and the release verifier
+
 ## v1.1.0-pre.5
 
 ### Bug Fixes

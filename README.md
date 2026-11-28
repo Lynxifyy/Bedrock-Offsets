@@ -21,9 +21,10 @@ release (`bedrock-offset-extractor-v<version>.apk`); the version in this tree is
 the one in `app/build.gradle.kts`, and `CHANGELOG.md` lists what changed.
 
 Install it on the device with `adb install`, or open the file on the device and
-allow installation from that source. The APK is signed with the debug key until
-the repository has release-signing secrets, so an Android build that blocks
-debug-signed packages will refuse it; see [Releasing](#releases).
+allow installation from that source. Published APKs from v1.1.0 onward are
+signed with the project release key. Releases before that were signed with a
+different per-run debug key, so moving from one of them needs a one-time
+uninstall; see [Releasing](#releases).
 
 ## How it works
 
@@ -268,8 +269,20 @@ key so the APK is still installable.
 
 The release workflow reads the keystore from the `SIGNING_KEYSTORE_BASE64`
 secret, decodes it into the runner's temporary directory, and then runs
-`apksigner verify` to prove the result really is signed. Without that secret the
-build still publishes, with a warning in the run summary.
+`apksigner verify` to prove the result really is signed. It also refuses the
+Android debug certificate, so a build whose signing material is missing fails
+instead of publishing an APK that cannot update over the previous release.
+
+The release certificate for v1.1.0 onward has SHA-256 fingerprint:
+
+```
+BB:ED:38:B2:23:94:B3:0E:1C:21:20:C3:A2:64:EE:F0:F4:B2:BA:78:C8:B5:C3:2C:58:D0:2A:6E:DA:16:5D:5C
+```
+
+The private keystore and its password are not part of this repository. Configure
+`SIGNING_KEYSTORE_BASE64`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS` and
+`SIGNING_KEY_PASSWORD` in the repository's Actions secrets before tagging a
+release.
 
 ## Releases
 

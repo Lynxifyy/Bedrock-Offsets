@@ -76,19 +76,28 @@ jobs:
         id: signing
         env:
           KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
+          # A published APK that cannot update over the previous release is
+          # worse than no release, so a missing secret is a hard failure
+          # instead of a quiet fallback to the debug key.
+          missing=""
+          [ -n "$KEYSTORE_BASE64" ] || missing="$missing SIGNING_KEYSTORE_BASE64"
+          [ -n "$STORE_PASSWORD" ] || missing="$missing SIGNING_STORE_PASSWORD"
+          [ -n "$KEY_ALIAS" ] || missing="$missing SIGNING_KEY_ALIAS"
+          [ -n "$KEY_PASSWORD" ] || missing="$missing SIGNING_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing release signing secrets:$missing"
+            exit 1
+          fi
           # The secret holds the keystore base64-encoded. It is decoded into
           # the runner's temporary directory, which is not part of the
           # workspace and is discarded when the job ends.
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::warning::No SIGNING_KEYSTORE_BASE64 secret; the APK will be signed with the debug key."
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           keystore="$RUNNER_TEMP/release.jks"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
           echo "keystore=$keystore" >> "$GITHUB_OUTPUT"
-          echo "signed=true" >> "$GITHUB_OUTPUT"
           echo "Signing material staged at $keystore"
 
       - name: Check the tag matches the app version
@@ -103,15 +112,27 @@ jobs:
         run: ./gradlew assembleRelease --stacktrace --no-daemon
 
       - name: Verify the release APK
-        run: python3 scripts/verify_release.py
-
-      - name: Fail if the release was meant to be signed but is not
-        if: steps.signing.outputs.signed == 'true'
+        env:
+          # Certificate SHA-256 of the release key introduced in
+          # v1.1.0. Every later update must carry the same certificate or
+          # Android will refuse to install it over this one.
+          EXPECTED_CERT_SHA256: bbed38b22394b30e1c2120c3a264eef0f4b2ba78c8b5c32c58d02a6eda165d5c
         run: |
+          python3 scripts/verify_release.py
           apk=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
-          # apksigner exits non-zero on an unsigned APK, which is the failure
-          # mode this guard exists to catch.
-          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$apk"
+          certs=$("$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$apk")
+          echo "$certs"
+          # apksigner exits non-zero on an unsigned APK. The debug check and
+          # the fingerprint check catch a signed but non-shippable artefact.
+          if echo "$certs" | grep -q "CN=Android Debug"; then
+            echo "::error::The release APK is signed with the Android debug key."
+            exit 1
+          fi
+          actual=$(echo "$certs" | awk -F': ' '/SHA-256/{gsub(":","",$2); print tolower($2); exit}')
+          if [ "$actual" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::The release APK certificate ($actual) is not the expected release key ($EXPECTED_CERT_SHA256)."
+            exit 1
+          fi
 
       - name: Rename the APK for the release
         id: apk
