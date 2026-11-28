@@ -1,3 +1,17 @@
+## v1.1.1
+
+### Engine
+
+- internal C++ extraction now uses substantially less peak resident memory on 3 GB devices. Primary vtable slots are updated in place instead of being deep-cloned, class rows and slot metadata are released before the function write pass, and the cross-reference table is dropped as soon as signature generation has copied the filtered anchor data it needs
+- signature planning releases `.text` page windows while reading function heads and emitting signatures, translates text-relative windows to real file offsets, and frees the head, prefix and order scratch arrays before the signature output is built
+- devices reporting at or below 3 GiB of RAM now run the scan on one worker, avoiding parallel page-fault and buffer spikes at the signature peak
+- the signature map and output reserve fallibly, so an allocation failure reports an out-of-memory error instead of aborting the process
+
+### Tests
+
+- added coverage for in-place slot mutation, page-release file-offset translation, and the 3 GB worker threshold
+- 210 Rust unit tests plus the integration suites, `cargo fmt --check`, `clippy`, rustdoc and the release verifier
+
 ## v1.1.0
 
 ### Bug Fixes
