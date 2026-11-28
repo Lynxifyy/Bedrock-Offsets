@@ -34,7 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,15 +50,18 @@ import com.chimerateam.offsetextractor.data.export.OffsetCategory
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.export.OffsetRow
 import com.chimerateam.offsetextractor.data.export.OffsetRows
+import com.chimerateam.offsetextractor.data.native.InspectorState
 import com.chimerateam.offsetextractor.data.native.VerificationStatus
 import com.chimerateam.offsetextractor.data.native.VerificationSummary
 import com.chimerateam.offsetextractor.ui.components.HoneycombCell
 import com.chimerateam.offsetextractor.ui.components.StatTiles
 import com.chimerateam.offsetextractor.ui.components.middleEllipsis
+import com.chimerateam.offsetextractor.ui.log.LogEntry
 import com.chimerateam.offsetextractor.ui.state.ScanResultSummary
 import com.chimerateam.offsetextractor.ui.theme.MonoText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Test tag of the search field, so a UI test can drive it directly. */
@@ -125,29 +128,72 @@ fun ResultsScreen(
     internalBusy: Boolean = false,
     internalAvailable: Boolean = true,
     internalRetryable: Boolean = true,
-    onCopyName: (String) -> Unit = {}
+    onCopyName: (String) -> Unit = {},
+    wide: Boolean = false,
+    query: String = "",
+    onQueryChange: (String) -> Unit = {},
+    inspector: InspectorState = InspectorState(),
+    onSelectAddress: (Long) -> Unit = {},
+    entries: List<LogEntry> = emptyList()
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
+    if (wide) {
+        IdeWorkspace(
+            result = result,
+            query = query,
+            onQueryChange = onQueryChange,
+            inspector = inspector,
+            onSelectAddress = onSelectAddress,
+            entries = entries,
+            onCopyJson = onCopyJson,
+            onShareJson = onShareJson,
+            onSaveJson = onSaveJson,
+            onDownloadZip = onDownloadZip ?: {},
+            onStartNewScan = onStartNewScan,
+            onRetryInternal = onRetryInternal ?: {},
+            internalBusy = internalBusy,
+            internalAvailable = internalAvailable,
+            internalRetryable = internalRetryable,
+            modifier = if (fillHeight) modifier.fillMaxSize() else modifier.fillMaxWidth()
+        )
+        return
+    }
+    // The command bar owns the query, but the screen is also used on its own
+    // (previews and UI tests), so the field keeps a local copy that follows the
+    // external value whenever it changes.
+    var localQuery by remember { mutableStateOf(query) }
+    LaunchedEffect(query) {
+        if (query != localQuery) localQuery = query
+    }
+    val effectiveQuery = localQuery
     val rows = remember(result) { OffsetRows.from(result) }
     val fallbackIndex = remember(result.internal) {
         InternalIndex(result.internal)
     }
     val index = internalIndex ?: fallbackIndex
     var internalRows by remember { mutableStateOf<List<OffsetRow>>(emptyList()) }
+    var internalOffset by remember { mutableStateOf(0) }
+    var internalHasMore by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(query, index) {
-        if (query.isBlank() || !index.isAvailable()) {
-            internalRows = emptyList()
+    LaunchedEffect(effectiveQuery, index) {
+        internalRows = emptyList()
+        internalOffset = 0
+        internalHasMore = false
+        if (effectiveQuery.isBlank() || !index.isAvailable()) {
             return@LaunchedEffect
         }
         // A short debounce keeps typing responsive while still searching a
         // multi-megabyte table without blocking the main thread.
         delay(200)
-        internalRows = withContext(Dispatchers.IO) { index.search(query) }
+        val page = withContext(Dispatchers.IO) { index.searchPage(effectiveQuery, 0) }
+        internalRows = page.rows
+        internalOffset = page.rows.size
+        internalHasMore = page.hasMore
     }
 
-    val visible = remember(rows, internalRows, query) {
-        rows.filter { it.matches(query) } + internalRows
+    val visible = remember(rows, internalRows, effectiveQuery) {
+        rows.filter { it.matches(effectiveQuery) } + internalRows
     }
     val total = rows.size + internalRows.size
     val conflicts = remember(rows) { rows.count { it.status.isConflict } }
@@ -172,7 +218,7 @@ fun ResultsScreen(
                         message = if (total == 0) {
                             "This scan produced no offsets."
                         } else {
-                            "No offset matches \"$query\"."
+                            "No offset matches \"$effectiveQuery\"."
                         }
                     )
                 }
@@ -193,24 +239,36 @@ fun ResultsScreen(
         Spacer(Modifier.height(4.dp))
         Text(
             text = "${visible.size} of $total entries" +
-                if (query.isBlank()) "" else " matching \"$query\"",
+                if (effectiveQuery.isBlank()) "" else " matching \"$effectiveQuery\"",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        if (internalRows.size >=
-            com.chimerateam.offsetextractor.data.export.INTERNAL_SEARCH_LIMIT
-        ) {
-            Text(
-                text = "Showing the first ${internalRows.size} matches; " +
-                    "refine your search for more.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error
-            )
+        if (internalHasMore) {
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        loadingMore = true
+                        val page = withContext(Dispatchers.IO) {
+                            index.searchPage(effectiveQuery, internalOffset)
+                        }
+                        internalRows = internalRows + page.rows
+                        internalOffset += page.rows.size
+                        internalHasMore = page.hasMore
+                        loadingMore = false
+                    }
+                },
+                enabled = !loadingMore
+            ) {
+                Text(if (loadingMore) "Loading..." else "Load more matches")
+            }
         }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
+            value = localQuery,
+            onValueChange = {
+                localQuery = it
+                onQueryChange(it)
+            },
             modifier = Modifier.fillMaxWidth().testTag(SEARCH_FIELD_TAG),
             singleLine = true,
             label = { Text("Search offsets") }

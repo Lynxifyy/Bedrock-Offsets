@@ -217,11 +217,6 @@ pub fn lambda_body_names(
     slots_by_vtable: &std::collections::HashMap<u64, Vec<u64>>,
     xrefs: &XrefTable,
 ) -> Vec<NameEvidence> {
-    let by_address: BTreeMap<u64, &crate::xref::FunctionXrefs> = xrefs
-        .functions
-        .iter()
-        .map(|function| (function.address, function))
-        .collect();
     let mut evidence = Vec::new();
     for vtable in &vtables.all {
         if !is_local_entity(&vtable.mangled) {
@@ -236,17 +231,17 @@ pub fn lambda_body_names(
         else {
             continue;
         };
-        let Some(function) = by_address.get(&wrapper) else {
+        let Some(function) = xrefs.function_at(wrapper) else {
             continue;
         };
-        let mut candidates: Vec<u64> = function
-            .calls
+        let mut candidates: Vec<u64> = xrefs
+            .calls_of(function)
             .iter()
             .copied()
             .filter(|target| {
                 // An import or a PLT stub has no FDE entry, so only a call to a
                 // real function of this image can be the wrapped callable.
-                by_address.contains_key(target)
+                xrefs.function_at(*target).is_some()
             })
             .collect();
         candidates.sort_unstable();
@@ -279,7 +274,23 @@ fn wrapper_hex(address: u64) -> String {
 /// That function is the enclosing function or its inlined creator: the vtable
 /// address only appears where the lambda is instantiated. One reference is a
 /// fact; several references mean the lambda is shared and no name is claimed.
-pub fn vtable_xref_names(vtables: &VtableMap, xrefs: &XrefTable) -> Vec<NameEvidence> {
+///
+/// # Errors
+///
+/// Returns [`crate::error::CoreError::OutOfMemory`] when the filtered reverse
+/// index cannot grow.
+pub fn vtable_xref_names(
+    vtables: &VtableMap,
+    xrefs: &XrefTable,
+) -> crate::error::CoreResult<Vec<NameEvidence>> {
+    // Only the vtable addresses are queried, so the reverse index holds a few
+    // thousand edges instead of one per reference in the library.
+    let mut wanted: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    for vtable in &vtables.all {
+        wanted.insert(vtable.vtable_address);
+        wanted.insert(vtable.vtable_address.wrapping_add(16));
+    }
+    let referrers = xrefs.referrers_of(&wanted)?;
     let mut evidence = Vec::new();
     for vtable in &vtables.all {
         let Some(enclosing) = enclosing_function(&vtable.name) else {
@@ -287,11 +298,11 @@ pub fn vtable_xref_names(vtables: &VtableMap, xrefs: &XrefTable) -> Vec<NameEvid
         };
         // The vtable header sits before the first slot; the reference may point
         // at either, so both are tried.
-        let mut referencing: BTreeSet<u64> = xrefs
-            .referencing(vtable.vtable_address)
+        let mut referencing: BTreeSet<u64> = referrers
+            .sources(vtable.vtable_address)
             .into_iter()
             .collect();
-        referencing.extend(xrefs.referencing(vtable.vtable_address + 16));
+        referencing.extend(referrers.sources(vtable.vtable_address.wrapping_add(16)));
         if referencing.len() != 1 {
             continue;
         }
@@ -304,7 +315,7 @@ pub fn vtable_xref_names(vtables: &VtableMap, xrefs: &XrefTable) -> Vec<NameEvid
             confidence: Confidence::High,
         });
     }
-    evidence
+    Ok(evidence)
 }
 
 /// One ECS system recovered from a `StrictTickingSystemFunctionAdapter`.

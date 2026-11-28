@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.chimerateam.offsetextractor.data.export.ExportProgress
+import com.chimerateam.offsetextractor.data.native.InspectorState
 import com.chimerateam.offsetextractor.ui.components.ExportInterruptedCard
 import com.chimerateam.offsetextractor.ui.components.LiveLogPane
 import com.chimerateam.offsetextractor.ui.components.ResultsPanel
@@ -79,7 +80,12 @@ fun ScannerScreen(
     internalBusy: Boolean = false,
     exportProgress: ExportProgress? = null,
     onRetryExport: () -> Unit = {},
-    onDiscardExport: () -> Unit = {}
+    onDiscardExport: () -> Unit = {},
+    wide: Boolean = false,
+    query: String = "",
+    onQueryChange: (String) -> Unit = {},
+    inspector: InspectorState = InspectorState(),
+    onSelectAddress: (Long) -> Unit = {}
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val availableWidth = maxWidth
@@ -118,7 +124,12 @@ fun ScannerScreen(
                         internalBusy = internalBusy,
                         exportProgress = exportProgress,
                         onRetryExport = onRetryExport,
-                        onDiscardExport = onDiscardExport
+                        onDiscardExport = onDiscardExport,
+                        wide = wide,
+                        query = query,
+                        onQueryChange = onQueryChange,
+                        inspector = inspector,
+                        onSelectAddress = onSelectAddress
                     )
                 }
                 LiveLogPane(
@@ -158,7 +169,12 @@ fun ScannerScreen(
                     internalBusy = internalBusy,
                     exportProgress = exportProgress,
                     onRetryExport = onRetryExport,
-                    onDiscardExport = onDiscardExport
+                    onDiscardExport = onDiscardExport,
+                    wide = wide,
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    inspector = inspector,
+                    onSelectAddress = onSelectAddress
                 )
                 LiveLogPane(
                     entries = entries,
@@ -199,7 +215,12 @@ private fun ControlsPane(
     internalBusy: Boolean,
     exportProgress: ExportProgress?,
     onRetryExport: () -> Unit,
-    onDiscardExport: () -> Unit
+    onDiscardExport: () -> Unit,
+    wide: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    inspector: InspectorState,
+    onSelectAddress: (Long) -> Unit
 ) {
     if (exportProgress != null && exportProgress.state ==
         com.chimerateam.offsetextractor.data.export.ExportState.Interrupted
@@ -245,7 +266,12 @@ private fun ControlsPane(
             internalBusy = internalBusy,
             exportProgress = exportProgress,
             onRetryExport = onRetryExport,
-            onDiscardExport = onDiscardExport
+            onDiscardExport = onDiscardExport,
+            wide = wide,
+            query = query,
+            onQueryChange = onQueryChange,
+            inspector = inspector,
+            onSelectAddress = onSelectAddress
         )
     }
 }
@@ -267,7 +293,12 @@ private fun PhasePane(
     internalBusy: Boolean,
     exportProgress: ExportProgress?,
     onRetryExport: () -> Unit,
-    onDiscardExport: () -> Unit
+    onDiscardExport: () -> Unit,
+    wide: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    inspector: InspectorState,
+    onSelectAddress: (Long) -> Unit
 ) {
     when (phase) {
         ScannerPhase.Extracting, ScannerPhase.Scanning -> LoadingScreen(
@@ -287,7 +318,12 @@ private fun PhasePane(
             internalBusy = internalBusy,
             exportProgress = exportProgress,
             onRetryExport = onRetryExport,
-            onDiscardExport = onDiscardExport
+            onDiscardExport = onDiscardExport,
+            wide = wide,
+            query = query,
+            onQueryChange = onQueryChange,
+            inspector = inspector,
+            onSelectAddress = onSelectAddress
         )
 
         ScannerPhase.Error -> ErrorPane(
@@ -323,7 +359,12 @@ private fun SuccessPane(
     internalBusy: Boolean,
     exportProgress: ExportProgress?,
     onRetryExport: () -> Unit,
-    onDiscardExport: () -> Unit
+    onDiscardExport: () -> Unit,
+    wide: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    inspector: InspectorState,
+    onSelectAddress: (Long) -> Unit
 ) {
     val result = state.result ?: return
     // One scroll container: the summary is the first item of the list and the
@@ -341,7 +382,12 @@ private fun SuccessPane(
         onRetryInternal = onRetryInternal,
         internalBusy = internalBusy,
         internalAvailable = state.internalAvailable,
-        internalRetryable = state.internalRetryable
+        internalRetryable = state.internalRetryable,
+        wide = wide,
+        query = query,
+        onQueryChange = onQueryChange,
+        inspector = inspector,
+        onSelectAddress = onSelectAddress
     )
 }
 

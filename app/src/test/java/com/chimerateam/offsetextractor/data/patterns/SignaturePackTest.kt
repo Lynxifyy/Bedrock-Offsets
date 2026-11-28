@@ -105,6 +105,28 @@ class SignaturePackTest {
     }
 
     @Test
+    fun theBundledPackDeclaresStringAnchors() {
+        // Pass E returns immediately when this list is empty, so an empty pack
+        // silently disables every `.rodata` anchor.
+        val asset = java.io.File("src/main/assets/patterns.json")
+        val document = SignaturePack.parseDocument(asset.readText())
+
+        assertTrue(
+            "the bundled pack must declare at least one string anchor",
+            document.stringAnchors.isNotEmpty()
+        )
+        assertTrue(
+            "every anchor needs a name and a non-blank string",
+            document.stringAnchors.all { it.name.isNotBlank() && it.string.isNotBlank() }
+        )
+        assertEquals(
+            "anchor names must be unique",
+            document.stringAnchors.size,
+            document.stringAnchors.map { it.name }.toSet().size
+        )
+    }
+
+    @Test
     fun noTwoBundledSignaturesShareAPattern() {
         // A duplicate would make one entry unreachable: the engine reports a
         // match under the first name that compiled it.

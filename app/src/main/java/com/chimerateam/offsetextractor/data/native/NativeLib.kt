@@ -131,6 +131,50 @@ object NativeLib {
     }
 
     /**
+     * Releases the engine's shared mapping of the last opened library.
+     *
+     * The mapping must not outlive the file. Deleting or replacing an extracted
+     * `.so` while the engine still maps it faults with `SIGBUS` on the next
+     * access, and that signal cannot be caught in Rust. Call this before a
+     * library is deleted or the cache directory is cleared.
+     *
+     * @return `true` when a mapping was released.
+     */
+    fun clearMappedCache(): Boolean {
+        ensureLoaded()
+        return clearMappedCacheNative()
+    }
+
+    /**
+     * Disassembles up to 512 bytes of `.text` at [address].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param address virtual address of the first instruction.
+     * @param byteCount number of bytes to decode, clamped to 512.
+     * @return a JSON object with the decoded instructions and their references.
+     * @throws EngineFailure when the address is outside `.text`.
+     */
+    fun disassembleRange(path: String, sha256: String, address: Long, byteCount: Int): String {
+        ensureLoaded()
+        return disassembleRangeNative(path, sha256, address, byteCount)
+    }
+
+    /**
+     * Inspects one address: its function, callers, callees, strings and vtables.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param address virtual address to inspect.
+     * @return a JSON object describing everything the engine knows about it.
+     * @throws EngineFailure when the library cannot be parsed.
+     */
+    fun inspectAddress(path: String, sha256: String, address: Long): String {
+        ensureLoaded()
+        return inspectAddressNative(path, sha256, address)
+    }
+
+    /**
      * Resolves the RTTI vtables the library at [path] declares.
      *
      * @param path absolute path of the extracted library.
@@ -212,4 +256,15 @@ object NativeLib {
     private external fun readApkVersionNative(fd: Int): String
 
     private external fun cancelScanNative()
+
+    private external fun clearMappedCacheNative(): Boolean
+
+    private external fun disassembleRangeNative(
+        path: String,
+        sha256: String,
+        address: Long,
+        byteCount: Int
+    ): String
+
+    private external fun inspectAddressNative(path: String, sha256: String, address: Long): String
 }

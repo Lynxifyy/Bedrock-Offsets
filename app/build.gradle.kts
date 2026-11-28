@@ -53,8 +53,8 @@ android {
         applicationId = "com.chimerateam.offsetextractor"
         minSdk = 28
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.1.0-pre.4"
+        versionCode = 18
+        versionName = "1.1.0-pre.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         if (rustEnginePresent) {
             ndk {

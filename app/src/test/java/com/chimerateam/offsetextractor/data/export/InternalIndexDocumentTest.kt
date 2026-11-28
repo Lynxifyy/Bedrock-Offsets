@@ -142,3 +142,73 @@ class InternalIndexDocumentTest {
         bytes = file.length()
     )
 }
+
+/**
+ * Paging behaviour of the internal search.
+ *
+ * A hard 200-row cutoff used to make the rest of a broad query unreachable.
+ * These tests pin the offset arithmetic the "Load more" button relies on.
+ */
+class InternalIndexPagingTest {
+
+    private fun indexWith(count: Int): InternalIndex {
+        val dir = createTempDirectory("index-paging").toFile()
+        val functions = (0 until count).joinToString(",") { number ->
+            """{"address":"0x${(0x1000 + number * 4).toString(16)}",""" +
+                """"fileOffset":"0x0","size":4,"name":"Function$number",""" +
+                """"nameSource":"auto","aliases":[],"kind":"function",""" +
+                """"prologueKind":"none","status":"fde_only"}"""
+        }
+        val file = File(dir, "functions.json")
+        file.writeText(
+            """{"schemaVersion":1,"generatedBy":"BedrockOffsetExtractor",""" +
+                """"kind":"internal_cpp_category","category":"functions",""" +
+                """"label":"Functions","part":1,"version":"26.60",""" +
+                """"classes":{},"functions":[$functions],"symbols":[]}"""
+        )
+        return InternalIndex(
+            InternalSummary(
+                path = dir.absolutePath,
+                shards = listOf(
+                    ShardPart(
+                        id = "functions",
+                        label = "Functions",
+                        part = 1,
+                        path = file.absolutePath,
+                        bytes = file.length(),
+                        functions = count
+                    )
+                )
+            )
+        )
+    }
+
+    @Test
+    fun theFirstPageStopsAtThePageSizeAndReportsMore() {
+        val page = indexWith(5).searchPage("Function", offset = 0, pageSize = 2)
+
+        assertEquals(2, page.rows.size)
+        assertTrue(page.hasMore)
+        assertEquals("Function0", page.rows[0].name)
+        assertEquals("Function1", page.rows[1].name)
+    }
+
+    @Test
+    fun theOffsetSkipsRowsAlreadyShown() {
+        val page = indexWith(5).searchPage("Function", offset = 2, pageSize = 2)
+
+        assertEquals(2, page.rows.size)
+        assertTrue(page.hasMore)
+        assertEquals("Function2", page.rows[0].name)
+        assertEquals("Function3", page.rows[1].name)
+    }
+
+    @Test
+    fun theLastPageReportsNoMore() {
+        val page = indexWith(5).searchPage("Function", offset = 4, pageSize = 2)
+
+        assertEquals(1, page.rows.size)
+        assertFalse(page.hasMore)
+        assertEquals("Function4", page.rows[0].name)
+    }
+}

@@ -20,16 +20,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -38,14 +31,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -62,14 +54,19 @@ import com.chimerateam.offsetextractor.data.export.ExportJobRepository
 import com.chimerateam.offsetextractor.data.export.ExportKind
 import com.chimerateam.offsetextractor.data.export.ExportState
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
+import com.chimerateam.offsetextractor.data.export.OffsetScripts
+import com.chimerateam.offsetextractor.data.export.ScriptFormat
 import com.chimerateam.offsetextractor.data.saf.APK_MIME_TYPE
 import com.chimerateam.offsetextractor.export.ExportService
 import com.chimerateam.offsetextractor.ui.components.BatchProgressDialog
 import com.chimerateam.offsetextractor.ui.components.BatchSummaryDialog
 import com.chimerateam.offsetextractor.ui.components.ExportProgressToast
+import com.chimerateam.offsetextractor.ui.components.IdeCommandBar
+import com.chimerateam.offsetextractor.ui.components.IdeStatusBar
 import com.chimerateam.offsetextractor.ui.components.LowMemoryDialog
 import com.chimerateam.offsetextractor.ui.log.LogTimestamp
 import com.chimerateam.offsetextractor.ui.screens.ApksScreen
+import com.chimerateam.offsetextractor.ui.screens.DiffScreen
 import com.chimerateam.offsetextractor.ui.screens.ScannerScreen
 import com.chimerateam.offsetextractor.ui.screens.SettingsScreen
 import com.chimerateam.offsetextractor.ui.state.ScannerPhase
@@ -81,7 +78,10 @@ import com.chimerateam.offsetextractor.ui.theme.motionTween
 import com.chimerateam.offsetextractor.ui.viewmodel.MainViewModel
 import com.chimerateam.offsetextractor.util.formatBytes
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Root composable of the application.
@@ -118,6 +118,9 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
     val toastSpec = motionTween<Float>(MotionDuration.MEDIUM, reduceMotion = reduceMotion)
     val toastExitSpec = motionTween<Float>(MotionDuration.SHORT, reduceMotion = reduceMotion)
     val logEntries by viewModel.logEntries.collectAsStateWithLifecycle()
+    val scanHistory by viewModel.scanHistory.collectAsStateWithLifecycle()
+    val inspector by viewModel.inspector.collectAsStateWithLifecycle()
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     val exportProgress by ExportJobRepository.progress.collectAsStateWithLifecycle()
 
     val picker = rememberLauncherForActivityResult(
@@ -240,30 +243,91 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
         }
     }
 
-    // The exported document is built on demand and shared as a whole, so a
-    // large result set is never held twice.
-    val exportJson = {
-        state.result?.let { OffsetExporter.toJson(it) }.orEmpty()
-    }
-    val copyJson = {
-        val json = exportJson()
-        if (json.isNotEmpty()) {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Bedrock offsets", json))
-            viewModel.onExportActionTaken("Offsets copied to the clipboard.")
+    // The exported document is built on demand and shared as a whole. Building
+    // it is O(result) string work, so it runs on the I/O dispatcher: doing it on
+    // the UI thread froze the frame and could OOM the process on a large table.
+    val exportScope = rememberCoroutineScope()
+    val copyJson: () -> Unit = {
+        val result = state.result
+        if (result == null) {
+            viewModel.onExportActionTaken("There is nothing to export yet.")
+        } else {
+            exportScope.launch {
+                val json = withContext(Dispatchers.IO) { OffsetExporter.toJson(result) }
+                if (json.length > CLIPBOARD_JSON_LIMIT) {
+                    val file = withContext(Dispatchers.IO) {
+                        writeExportFile(context, result.buildId, json)
+                    }
+                    viewModel.onExportActionTaken(
+                        "The offsets are too large for the clipboard; saved to ${file.name}."
+                    )
+                } else {
+                    val clipboard =
+                        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Bedrock offsets", json))
+                    viewModel.onExportActionTaken("Offsets copied to the clipboard.")
+                }
+            }
         }
     }
-    val shareJson = {
-        val json = exportJson()
-        if (json.isNotEmpty()) {
-            val result = state.result
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/json"
-                putExtra(Intent.EXTRA_TEXT, json)
-                putExtra(Intent.EXTRA_SUBJECT, "Bedrock offsets ${result?.buildId.orEmpty()}")
+    val shareJson: () -> Unit = {
+        val result = state.result
+        if (result == null) {
+            viewModel.onExportActionTaken("There is nothing to export yet.")
+        } else {
+            exportScope.launch {
+                // Binder transactions are capped at about 1 MB. Putting the
+                // document in EXTRA_TEXT throws TransactionTooLargeException
+                // once the table grows, so the document goes to a file and the
+                // intent carries a content URI instead.
+                val file = withContext(Dispatchers.IO) {
+                    writeExportFile(context, result.buildId, OffsetExporter.toJson(result))
+                }
+                runCatching {
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        file
+                    )
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/json"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(
+                            Intent.EXTRA_SUBJECT,
+                            "Bedrock offsets ${result.buildId.orEmpty()}"
+                        )
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share offsets"))
+                    viewModel.onExportActionTaken("Offsets handed to the share sheet.")
+                }.onFailure {
+                    viewModel.onExportActionTaken("Could not share the offsets: ${it.message}")
+                }
             }
-            context.startActivity(Intent.createChooser(intent, "Share offsets"))
-            viewModel.onExportActionTaken("Offsets handed to the share sheet.")
+        }
+    }
+    val exportScript: (ScriptFormat) -> Unit = { format ->
+        val result = state.result
+        if (result == null) {
+            viewModel.onExportActionTaken("There is nothing to export yet.")
+        } else {
+            exportScope.launch {
+                val file = withContext(Dispatchers.IO) {
+                    writeExportFile(
+                        context = context,
+                        buildId = result.buildId,
+                        content = OffsetScripts.render(result, format),
+                        extension = format.extension
+                    )
+                }
+                if (shareFile(context, file, format.mimeType, "Share ${format.label}")) {
+                    viewModel.onExportActionTaken("${format.label} handed to the share sheet.")
+                } else {
+                    viewModel.onExportActionTaken(
+                        "Could not share the ${format.label}: ${file.name}"
+                    )
+                }
+            }
         }
     }
     val saveJson = {
@@ -331,76 +395,41 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
             val wide = maxWidth >= 840.dp
             Scaffold(
                 topBar = {
-                    TopAppBar(
-                        title = { Text("Bedrock Offset Extractor") },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            titleContentColor = MaterialTheme.colorScheme.onSurface,
-                            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
-                        actions = {
-                            IconButton(onClick = { viewModel.clearCache() }) {
-                                Icon(
-                                    imageVector = Icons.Filled.DeleteSweep,
-                                    contentDescription = "Clear cache"
-                                )
-                            }
-                            IconButton(onClick = { menuOpen = true }) {
-                                Icon(
-                                    imageVector = Icons.Filled.MoreVert,
-                                    contentDescription = "More options"
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = menuOpen,
-                                onDismissRequest = { menuOpen = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Copy offsets as JSON") },
-                                    enabled = state.result != null,
-                                    onClick = {
-                                        menuOpen = false
-                                        copyJson()
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Share offsets as JSON") },
-                                    enabled = state.result != null,
-                                    onClick = {
-                                        menuOpen = false
-                                        shareJson()
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Save offsets to a file") },
-                                    enabled = state.result != null,
-                                    onClick = {
-                                        menuOpen = false
-                                        saveJson()
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Scan several APKs") },
-                                    enabled = state.batch == null,
-                                    onClick = {
-                                        menuOpen = false
-                                        batchPicker.launch(arrayOf(APK_MIME_TYPE))
-                                    }
-                                )
-                            }
-                        }
+                    IdeCommandBar(
+                        buildId = state.result?.buildId ?: lastBuildId,
+                        query = searchQuery,
+                        onQueryChange = {
+                            searchQuery = it
+                            tab = AppTab.Scanner
+                        },
+                        resultReady = state.result != null,
+                        onOpenApk = { picker.launch(arrayOf(APK_MIME_TYPE)) },
+                        onOpenBatch = { batchPicker.launch(arrayOf(APK_MIME_TYPE)) },
+                        onNewScan = { viewModel.cancel() },
+                        onRetry = { viewModel.retry() },
+                        onDiff = { tab = AppTab.Diff },
+                        onCopyJson = copyJson,
+                        onShareJson = shareJson,
+                        onSaveJson = saveJson,
+                        onDownloadZip = downloadZip,
+                        onExportScript = exportScript,
+                        onClearCache = { viewModel.clearCache() },
+                        onSettings = { tab = AppTab.Settings }
                     )
                 },
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 bottomBar = {
-                    if (!wide) {
-                        NavigationBar {
-                            AppTab.entries.forEach { entry ->
-                                NavigationItem(
-                                    tab = entry,
-                                    selected = tab == entry,
-                                    onSelect = { tab = entry }
-                                )
+                    Column {
+                        IdeStatusBar(result = state.result)
+                        if (!wide) {
+                            NavigationBar {
+                                AppTab.entries.forEach { entry ->
+                                    NavigationItem(
+                                        tab = entry,
+                                        selected = tab == entry,
+                                        onSelect = { tab = entry }
+                                    )
+                                }
                             }
                         }
                     }
@@ -434,7 +463,17 @@ fun BedrockOffsetExtractorApp(viewModel: MainViewModel) {
                                     internalBusy = false,
                                     exportProgress = exportProgress,
                                     onRetryExport = { ExportService.retry(context) },
-                                    onDiscardExport = { ExportService.discard(context) }
+                                    onDiscardExport = { ExportService.discard(context) },
+                                    wide = wide,
+                                    query = searchQuery,
+                                    onQueryChange = { searchQuery = it },
+                                    inspector = inspector,
+                                    onSelectAddress = { viewModel.inspectAddress(it) }
+                                )
+
+                                AppTab.Diff -> DiffScreen(
+                                    history = scanHistory,
+                                    modifier = Modifier.fillMaxSize()
                                 )
 
                                 AppTab.Apks -> ApksScreen(
@@ -573,3 +612,49 @@ private fun RowScope.NavigationItem(tab: AppTab, selected: Boolean, onSelect: ()
 
 /** Distance the progress pill keeps from the bottom edge. */
 private val TOAST_BOTTOM_INSET = 96.dp
+
+/**
+ * Clipboard payload above which the document is written to a file instead.
+ *
+ * Android's clipboard round-trips through the system service and large
+ * payloads either fail or are dropped by the receiver; 256 KiB is well below
+ * the point where that happens and far above a typical offset table.
+ */
+private const val CLIPBOARD_JSON_LIMIT = 256 * 1024
+
+/**
+ * Writes an export document into `cacheDir/exports` and returns the file.
+ *
+ * The directory is the one declared in `file_paths.xml`, so the file can be
+ * shared through the app's `FileProvider` without exposing the whole cache.
+ */
+private fun writeExportFile(
+    context: Context,
+    buildId: String,
+    content: String,
+    extension: String = "json"
+): File {
+    val directory = File(context.cacheDir, "exports").apply { mkdirs() }
+    val safeBuild = buildId.ifBlank { "scan" }
+        .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }
+        .joinToString("")
+    val file = File(directory, "bedrock-offsets-$safeBuild.$extension")
+    file.writeText(content)
+    return file
+}
+
+/** Hands [file] to the share sheet as a readable content URI. */
+private fun shareFile(context: Context, file: File, mimeType: String, title: String): Boolean =
+    runCatching {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, title))
+    }.isSuccess

@@ -65,6 +65,42 @@ private data class ApkVersionPayload(
     val versionName: String?
 )
 
+/** Wire model for the disassembly payload; field names match the Rust output. */
+private data class DisassemblyPayload(
+    val address: String?,
+    val instructions: List<DisassemblyInstructionPayload>?
+)
+
+/** Wire model for one disassembled instruction. */
+private data class DisassemblyInstructionPayload(
+    val address: String?,
+    val bytes: String?,
+    val mnemonic: String?,
+    val operands: String?,
+    val annotation: String?
+)
+
+/** Wire model for the address-inspection payload. */
+private data class InspectionPayload(
+    val address: String?,
+    val functionStart: String?,
+    val functionSize: Long?,
+    val firstCall: String?,
+    val callers: List<String>?,
+    val callees: List<String>?,
+    val dataRefs: List<String>?,
+    val strings: List<String>?,
+    val vtables: List<InspectedVtablePayload>?
+)
+
+/** Wire model for one vtable that holds the inspected address. */
+private data class InspectedVtablePayload(
+    @SerializedName("class") val className: String?,
+    val vtable: String?,
+    val slots: List<Int>?,
+    val baseClasses: List<String>?
+)
+
 /**
  * Translates the engine's JSON payloads and error kinds into Kotlin types.
  *
@@ -288,6 +324,79 @@ object EnginePayloads {
      * @return the JSON object the Rust side deserialises.
      */
     fun encodeInternalOptions(options: InternalOptions): String = gson.toJson(options)
+
+    /**
+     * Parses the payload returned by the disassembly entry point.
+     *
+     * @param json raw payload from the engine.
+     * @return the decoded range.
+     * @throws EngineException when the payload is missing or malformed.
+     */
+    fun parseDisassembly(json: String?): Disassembly {
+        val payload = decode(json, DisassemblyPayload::class.java, "disassembly")
+        val address = parseHex(payload.address)
+            ?: throw EngineException(
+                kind = EngineErrorKind.Unknown,
+                message = "the engine returned a disassembly without an address"
+            )
+        val instructions = payload.instructions.orEmpty().mapNotNull { entry ->
+            val at = parseHex(entry.address) ?: return@mapNotNull null
+            DisassembledInstruction(
+                address = at,
+                bytes = entry.bytes.orEmpty(),
+                mnemonic = entry.mnemonic.orEmpty(),
+                operands = entry.operands.orEmpty(),
+                annotation = entry.annotation
+            )
+        }
+        return Disassembly(address = address, instructions = instructions)
+    }
+
+    /**
+     * Parses the payload returned by the address-inspection entry point.
+     *
+     * @param json raw payload from the engine.
+     * @return everything the engine knows about the address.
+     * @throws EngineException when the payload is missing or malformed.
+     */
+    fun parseInspection(json: String?): AddressInspection {
+        val payload = decode(json, InspectionPayload::class.java, "inspection")
+        val address = parseHex(payload.address)
+            ?: throw EngineException(
+                kind = EngineErrorKind.Unknown,
+                message = "the engine returned an inspection without an address"
+            )
+        return AddressInspection(
+            address = address,
+            functionStart = parseHex(payload.functionStart),
+            functionSize = payload.functionSize ?: 0L,
+            firstCall = payload.firstCall,
+            callers = payload.callers.orEmpty().mapNotNull(::parseHex),
+            callees = payload.callees.orEmpty().mapNotNull(::parseHex),
+            dataRefs = payload.dataRefs.orEmpty().mapNotNull(::parseHex),
+            strings = payload.strings.orEmpty(),
+            vtables = payload.vtables.orEmpty().mapNotNull { vtable ->
+                val address = parseHex(vtable.vtable) ?: return@mapNotNull null
+                InspectedVtable(
+                    className = vtable.className.orEmpty(),
+                    vtable = address,
+                    slots = vtable.slots.orEmpty(),
+                    baseClasses = vtable.baseClasses.orEmpty()
+                )
+            }
+        )
+    }
+
+    /**
+     * Parses a `0x`-prefixed hexadecimal address.
+     *
+     * @param value wire value, which may be `null`.
+     * @return the value, or `null` when it is absent or not hexadecimal.
+     */
+    private fun parseHex(value: String?): Long? {
+        if (value.isNullOrBlank()) return null
+        return value.trim().removePrefix("0x").removePrefix("0X").toLongOrNull(16)
+    }
 
     /**
      * Parses the payload returned by the APK-version entry point.

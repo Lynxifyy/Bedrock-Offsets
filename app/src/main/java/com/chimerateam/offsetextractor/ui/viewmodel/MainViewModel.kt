@@ -19,6 +19,7 @@ import com.chimerateam.offsetextractor.data.export.ExportStarter
 import com.chimerateam.offsetextractor.data.export.InternalTable
 import com.chimerateam.offsetextractor.data.export.OffsetExporter
 import com.chimerateam.offsetextractor.data.export.OffsetZipBuilder
+import com.chimerateam.offsetextractor.data.native.InspectorState
 import com.chimerateam.offsetextractor.data.native.InternalAnalysis
 import com.chimerateam.offsetextractor.data.native.InternalOptions
 import com.chimerateam.offsetextractor.data.native.InternalPatternSpec
@@ -129,6 +130,30 @@ class MainViewModel(
 
     /** Current scanner snapshot. */
     val uiState: StateFlow<ScannerUiState> = _uiState.asStateFlow()
+
+    private val _inspector = MutableStateFlow(InspectorState())
+
+    /**
+     * State of the right-hand inspector pane.
+     *
+     * Loading is explicit: the engine answers the two queries on a background
+     * thread, and the pane must not keep showing the previous address while a
+     * new one is being inspected.
+     */
+    val inspector: StateFlow<InspectorState> = _inspector.asStateFlow()
+
+    private val history = ArrayDeque<ScanResultSummary>()
+
+    private val _scanHistory = MutableStateFlow<List<ScanResultSummary>>(emptyList())
+
+    /**
+     * Completed scans made in this session, newest first.
+     *
+     * The diff screen compares two of them, so scanning one APK and then the
+     * other is enough to get a build-to-build comparison without a second file
+     * picker or a cache round-trip.
+     */
+    val scanHistory: StateFlow<List<ScanResultSummary>> = _scanHistory.asStateFlow()
 
     private val _logEntries = MutableStateFlow<List<LogEntry>>(emptyList())
 
@@ -1058,6 +1083,64 @@ class MainViewModel(
     }
 
     /**
+     * Loads the inspector pane for [address].
+     *
+     * The query is explicit and user-driven, so it may walk the whole library;
+     * the result is cached only in [inspector] and never in the scan cache.
+     *
+     * @param address virtual address of the selected row.
+     */
+    fun inspectAddress(address: Long) {
+        val extracted = lastExtracted
+        if (extracted == null) {
+            _inspector.value = InspectorState(
+                address = address,
+                error = "The extracted library is no longer available."
+            )
+            return
+        }
+        _inspector.value = InspectorState(loading = true, address = address)
+        viewModelScope.launch(supervisor + ioDispatcher) {
+            runCatching {
+                val inspection = engine.inspectAddress(extracted, address)
+                val disassembly = engine.disassemble(
+                    extracted,
+                    address,
+                    DISASSEMBLY_PREVIEW_BYTES
+                )
+                inspection to disassembly
+            }.onSuccess { (inspection, disassembly) ->
+                _inspector.value = InspectorState(
+                    address = address,
+                    inspection = inspection,
+                    disassembly = disassembly
+                )
+            }.onFailure { error ->
+                _inspector.value = InspectorState(
+                    address = address,
+                    error = error.message ?: "The engine could not inspect that address."
+                )
+            }
+        }
+    }
+
+    /** Clears the inspector pane, for example when a new scan starts. */
+    fun clearInspector() {
+        _inspector.value = InspectorState()
+    }
+
+    /**
+     * Drops the engine's shared mapping of the extracted library.
+     *
+     * Called before the file is deleted or the cache is cleared. A mapping that
+     * outlives the file faults with `SIGBUS` on the next access, which cannot be
+     * caught, so this is a safety step rather than an optimisation.
+     */
+    private fun releaseMappedCache() {
+        runCatching { engine.clearMappedCache() }
+    }
+
+    /**
      * Deletes every cached library and document.
      *
      * The cache is only a convenience: a failure to clear it is logged and the
@@ -1078,6 +1161,7 @@ class MainViewModel(
             return
         }
         viewModelScope.launch(supervisor + ioDispatcher) {
+            releaseMappedCache()
             val cleared = if (storage != null) {
                 storage.freeUpSpace(keepTablePath = null)
                 store.clear()
@@ -1138,6 +1222,7 @@ class MainViewModel(
      */
     private fun rememberScan(buildId: String, summary: ScanResultSummary?) {
         if (summary == null) return
+        recordHistory(summary)
         // Part 1 is stored even when Part 2 failed. Refusing to store it threw
         // away 68 verified signatures and 6386 vtables because one later pass
         // hit an error, and left the user with nothing to retry from.
@@ -1153,6 +1238,22 @@ class MainViewModel(
         viewModelScope.launch(supervisor + ioDispatcher) {
             preferences?.setLastBuildId(buildId)
         }
+    }
+
+    /**
+     * Adds [summary] to the session history.
+     *
+     * A re-scan of the same build replaces its earlier entry rather than
+     * appearing twice, which would make the diff picker list the same build on
+     * both sides.
+     */
+    private fun recordHistory(summary: ScanResultSummary) {
+        history.removeAll { it.buildId == summary.buildId && it.sha256 == summary.sha256 }
+        history.addFirst(summary)
+        while (history.size > SCAN_HISTORY_LIMIT) {
+            history.removeLast()
+        }
+        _scanHistory.value = history.toList()
     }
 
     /** Records that the user dismissed the picker without choosing a file. */
@@ -1227,6 +1328,9 @@ class MainViewModel(
         if (keep) return
         lastExtracted = null
         extracted ?: return
+        // The engine keeps the last library mapped across JNI calls; the file
+        // must not disappear from under that mapping.
+        releaseMappedCache()
         val freed = storage?.delete(File(extracted.path)) ?: runCatching {
             val file = File(extracted.path)
             if (file.isFile) {
@@ -1341,6 +1445,7 @@ class MainViewModel(
                         errorHint = null
                     )
                 }
+                _uiState.value.result?.let(::recordHistory)
                 releaseLibrary(current, keep = false)
                 return true
             }
@@ -1993,3 +2098,14 @@ class MainViewModel(
         )
     }
 }
+
+/**
+ * Bytes decoded for the inspector's disassembly preview.
+ *
+ * 256 bytes is 64 instructions: enough for a full prologue and a few branches
+ * without turning a row tap into a visible wait.
+ */
+private const val DISASSEMBLY_PREVIEW_BYTES = 256
+
+/** Completed scans kept for the diff screen. */
+private const val SCAN_HISTORY_LIMIT = 5

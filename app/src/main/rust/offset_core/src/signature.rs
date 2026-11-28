@@ -36,8 +36,23 @@
 //! * Sorting is deterministic: equal heads are ordered by address, so the same
 //!   library always produces the same output.
 
-use crate::error::CoreResult;
+use crate::error::{CoreError, CoreResult};
 use crate::scanner::{ProgressSink, ScanControl};
+
+/// Allocates a filled vector, reporting a failed allocation instead of
+/// aborting the process.
+///
+/// `vec![value; len]` calls the infallible allocator, whose failure is
+/// `handle_alloc_error`: a `SIGABRT` that `catch_unwind` cannot intercept. The
+/// plan arrays are sized by the function count, so on a library with 800k
+/// functions a low-memory device can reach that path.
+fn try_filled<T: Clone>(len: usize, value: T, what: &str) -> CoreResult<Vec<T>> {
+    let mut out: Vec<T> = Vec::new();
+    out.try_reserve(len)
+        .map_err(|error| CoreError::OutOfMemory(format!("{what}: {error}")))?;
+    out.resize(len, value);
+    Ok(out)
+}
 
 /// Instruction words kept in the head array that drives the sort.
 ///
@@ -511,8 +526,9 @@ pub fn plan(
 
     // Head: the first `HEAD_WORDS` normalised words of every function, plus the
     // real body length so a short function is not compared as if it were long.
-    let mut heads: Vec<[u32; HEAD_WORDS]> = vec![[0u32; HEAD_WORDS]; functions.len()];
-    let mut body_words: Vec<u16> = vec![0u16; functions.len()];
+    let mut heads: Vec<[u32; HEAD_WORDS]> =
+        try_filled(functions.len(), [0u32; HEAD_WORDS], "signature heads")?;
+    let mut body_words: Vec<u16> = try_filled(functions.len(), 0u16, "signature body words")?;
     for (index, (address, size)) in functions.iter().enumerate() {
         let offset = address.saturating_sub(text_base) as usize;
         let available = text.len().saturating_sub(offset) / 4;
@@ -541,7 +557,11 @@ pub fn plan(
 
     // Sort by head. Equal heads keep address order, which is already the order
     // of the slice, so the sort is deterministic without a tiebreak comparison.
-    let mut order: Vec<u32> = (0..functions.len() as u32).collect();
+    let mut order: Vec<u32> = Vec::new();
+    order
+        .try_reserve(functions.len())
+        .map_err(|error| CoreError::OutOfMemory(format!("signature order: {error}")))?;
+    order.extend(0..functions.len() as u32);
     order.sort_unstable_by(|left, right| {
         let (left, right) = (*left as usize, *right as usize);
         let left_head = &heads[left][..usize::from(body_words[left]).min(HEAD_WORDS)];
@@ -556,7 +576,7 @@ pub fn plan(
     let count = order.len();
     // Serial on purpose: this is a linear scan over a few megabytes of heads, so
     // a thread pool adds start-up and per-worker buffers for no wall time.
-    let mut lcp = vec![0u16; count.saturating_sub(1)];
+    let mut lcp: Vec<u16> = try_filled(count.saturating_sub(1), 0u16, "signature lcp")?;
     for (slot, value) in lcp.iter_mut().enumerate() {
         let left = order[slot] as usize;
         let right = order[slot + 1] as usize;
@@ -572,7 +592,7 @@ pub fn plan(
     // same eight words. Refine those runs from the text; the runs are small
     // (thunk families and template instantiations), so this is a fraction of
     // the work the rounds used to do.
-    let mut entries = vec![PlanEntry::default(); count];
+    let mut entries: Vec<PlanEntry> = try_filled(count, PlanEntry::default(), "signature plan")?;
     let mut group_id = 0u32;
     let mut run_start = 0usize;
     while run_start < count {
@@ -600,7 +620,7 @@ pub fn plan(
                 &mut entries[run_start..run_end],
                 &mut group_id,
                 &mut stats,
-            );
+            )?;
         }
         run_start = run_end;
     }
@@ -629,7 +649,7 @@ pub fn plan(
 
     // Where each function sits in the sorted order, so emitting a target is a
     // lookup instead of a scan.
-    let mut slot_of = vec![0u32; count];
+    let mut slot_of: Vec<u32> = try_filled(count, 0u32, "signature slots")?;
     for (slot, index) in order.iter().enumerate() {
         slot_of[*index as usize] = u32::try_from(slot).unwrap_or(u32::MAX);
     }
@@ -698,31 +718,35 @@ fn refine_run(
     entries: &mut [PlanEntry],
     group_id: &mut u32,
     stats: &mut PlanStats,
-) {
+) -> CoreResult<()> {
     let Run {
         members,
         body_words,
     } = run;
-    let sequences: Vec<Vec<u32>> = members
-        .iter()
-        .map(|index| {
-            let address = functions[*index as usize].0;
-            let offset = address.saturating_sub(text_base) as usize;
-            let words = usize::from(body_words[*index as usize]);
+    let mut sequences: Vec<Vec<u32>> = Vec::new();
+    sequences
+        .try_reserve(members.len())
+        .map_err(|error| CoreError::OutOfMemory(format!("signature run: {error}")))?;
+    for index in members {
+        let address = functions[*index as usize].0;
+        let offset = address.saturating_sub(text_base) as usize;
+        let words = usize::from(body_words[*index as usize]);
+        sequences.push(
             read_words(text, offset, words)
                 .iter()
                 .copied()
                 .map(normalise)
-                .collect()
-        })
-        .collect();
+                .collect(),
+        );
+    }
 
     // Order the run by its full sequence so identical bodies become adjacent.
     // Positions are relative to the run, not to the whole table.
     let mut local: Vec<usize> = (0..members.len()).collect();
     local.sort_unstable_by(|left, right| sequences[*left].cmp(&sequences[*right]));
 
-    let mut local_lcp = vec![0u32; local.len().saturating_sub(1)];
+    let mut local_lcp: Vec<u32> =
+        try_filled(local.len().saturating_sub(1), 0u32, "signature run lcp")?;
     for slot in 0..local_lcp.len() {
         let left = &sequences[local[slot]];
         let right = &sequences[local[slot + 1]];
@@ -771,6 +795,7 @@ fn refine_run(
         }
         slot = end;
     }
+    Ok(())
 }
 
 /// Words two functions must share before a run of them needs refining.

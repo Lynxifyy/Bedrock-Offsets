@@ -33,7 +33,12 @@ use crate::sections::SectionMap;
 pub const MAX_REGISTERED_NATIVES: usize = 100_000;
 
 /// How far back to look for the class descriptor of a table.
-pub const CLASS_SEARCH_WINDOW_BYTES: u64 = 4096;
+///
+/// `RegisterNatives` calls are often preceded by a long prologue, a `FindClass`
+/// result spill and unrelated constant materialisation. A 4 KiB window missed
+/// the descriptor on large generated classes, so the window is 16 KiB; the scan
+/// is bounded and only runs once per relocation candidate.
+pub const CLASS_SEARCH_WINDOW_BYTES: u64 = 16_384;
 
 /// Longest method name accepted, in bytes.
 const MAX_NAME_BYTES: usize = 256;

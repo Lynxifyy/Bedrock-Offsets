@@ -280,3 +280,85 @@ class EnginePayloadsWireTest {
         assertEquals("""[{"name":"client","pattern":"48 8B ?? ??"}]""", encoded)
     }
 }
+
+/**
+ * Wire shape of the inspector payloads.
+ *
+ * The engine writes camelCase here because these are app-facing DTOs, not the
+ * serde `snake_case` records. A field rename on either side must fail these.
+ */
+class InspectorPayloadWireTest {
+
+    @Test
+    fun theDisassemblyPayloadIsReadAsTheEngineWritesIt() {
+        val json = """
+            {
+              "address": "0x10000",
+              "byteCount": 8,
+              "instructions": [
+                {"address": "0x10000", "bytes": "fd 7b bf a9",
+                 "mnemonic": "stp", "operands": "x29, x30, [sp, #-0x10]!"},
+                {"address": "0x10004", "bytes": "08 00 00 90",
+                 "mnemonic": "adrp", "operands": "x8, 0x10000",
+                 "annotation": "ref 0x10040"}
+              ]
+            }
+        """.trimIndent()
+
+        val disassembly = EnginePayloads.parseDisassembly(json)
+
+        assertEquals(0x10000L, disassembly.address)
+        assertEquals(2, disassembly.instructions.size)
+        assertEquals("stp", disassembly.instructions[0].mnemonic)
+        assertNull(disassembly.instructions[0].annotation)
+        assertEquals("ref 0x10040", disassembly.instructions[1].annotation)
+    }
+
+    @Test
+    fun theInspectionPayloadIsReadAsTheEngineWritesIt() {
+        val json = """
+            {
+              "address": "0x10000",
+              "functionStart": "0x10000",
+              "functionSize": 64,
+              "firstCall": "0x20000@0x10010",
+              "callers": ["0x30000"],
+              "callees": ["0x20000"],
+              "dataRefs": ["0x40000"],
+              "strings": ["FixtureComponentTable"],
+              "vtables": [
+                {"class": "FixtureActor", "vtable": "0x50000",
+                 "slots": [0, 3], "baseClasses": ["FixtureBase"]}
+              ]
+            }
+        """.trimIndent()
+
+        val inspection = EnginePayloads.parseInspection(json)
+
+        assertEquals(0x10000L, inspection.address)
+        assertEquals(0x10000L, inspection.functionStart)
+        assertEquals(64L, inspection.functionSize)
+        assertEquals("0x20000@0x10010", inspection.firstCall)
+        assertEquals(listOf(0x30000L), inspection.callers)
+        assertEquals(listOf(0x20000L), inspection.callees)
+        assertEquals(listOf(0x40000L), inspection.dataRefs)
+        assertEquals(listOf("FixtureComponentTable"), inspection.strings)
+        assertEquals(1, inspection.vtables.size)
+        assertEquals("FixtureActor", inspection.vtables[0].className)
+        assertEquals(listOf(0, 3), inspection.vtables[0].slots)
+        assertEquals(listOf("FixtureBase"), inspection.vtables[0].baseClasses)
+    }
+
+    @Test
+    fun anInspectionWithoutAFunctionKeepsTheNullStart() {
+        val json = """{"address":"0x10","callers":[],"callees":[],"dataRefs":[],""" +
+            """"strings":[],"vtables":[]}"""
+
+        val inspection = EnginePayloads.parseInspection(json)
+
+        assertEquals(0x10L, inspection.address)
+        assertNull(inspection.functionStart)
+        assertEquals(0L, inspection.functionSize)
+        assertTrue(inspection.vtables.isEmpty())
+    }
+}

@@ -1,3 +1,28 @@
+## v1.1.0-pre.5
+
+### Bug Fixes
+
+- a scan no longer keeps the whole analysis in memory at once: the relocation index is released after Pass A, the cross-reference table is two flat edge arenas instead of 792,000 per-function vectors plus two global maps, and every large allocation reports an out-of-memory error instead of aborting the process
+- the cross-reference arenas and the signature map are released as the writer walks the table, so the write pass no longer stacks on top of every earlier pass
+- deleting or replacing a library can no longer kill the app with SIGBUS: the shared mmap cache is cleared before the file is unlinked, from `releaseLibrary()` and `clearCache()`
+- Copy and Share stopped building the JSON document on the UI thread. Share writes a file and hands over a content URI, so a large table cannot hit the 1 MB Binder limit, and Copy falls back to a file past 256 KB
+- offsets that only appear as `ADRP X8, page; ADD X0, X8, #off` are found now: the xref scanner accepts `rd != rn`, drops a page base when its register is overwritten, and decodes `ADR` plus 32-bit, byte and halfword loads
+- leaf functions, outlined blocks and assembly stubs without FDEs are recovered: the gap-fill pass and the direct `BL`/`B` target scan run even when `.eh_frame` parsed, and the prologue test recognises callee-saved `STP` and leaf entries
+- string anchors are no longer empty. The pack carries verified `.rodata` anchors, the `ADRP`/`LDR` pair window went from 16 to 64 bytes with register-overwrite tracking, and the `RegisterNatives` class search widened from 4 KB to 16 KB
+
+### Features
+
+- the UI is a reverse-engineering workspace: a compact command bar (File, Scan, Diff, Export, quick search, build pill), a status bar (architecture, image base, RSS, worker threads, coverage) and a three-pane docked layout from 840 dp with a category tree, a dense monospace sortable grid and a tabbed inspector
+- ARM64 disassembly preview in the inspector: up to 512 bytes decoded with capstone, with `BL` targets and `ADRP`+`ADD` references annotated
+- on-demand address inspection: callers, callees, referenced strings, vtable slots and base classes for any selected row
+- APK-to-APK diffing against the previous scan, sorted into matched, shifted, new, removed and broken signature
+- script exports for IDA Python, Ghidra, Frida TypeScript and a C++ header, all emitting RVAs relative to the image base
+
+### Tests
+
+- 365 Kotlin unit tests, including paging arithmetic, diff categories, script rendering and cache release before unlink
+- 207 Rust tests across the engine suites, plus formatting, clippy, rustdoc, ktlint, Android lint and the release verifier
+
 ## v1.1.0-pre.4
 
 ### Features

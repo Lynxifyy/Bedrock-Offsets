@@ -1,5 +1,7 @@
 package com.chimerateam.offsetextractor.data.saf
 
+import com.chimerateam.offsetextractor.data.native.AddressInspection
+import com.chimerateam.offsetextractor.data.native.Disassembly
 import com.chimerateam.offsetextractor.data.native.InternalAnalysis
 import com.chimerateam.offsetextractor.data.native.InternalOptions
 import com.chimerateam.offsetextractor.data.native.NativeLibraryMetadata
@@ -92,6 +94,16 @@ interface OffsetEngine {
     fun cancelScan()
 
     /**
+     * Releases the engine's shared `mmap` of the last opened library.
+     *
+     * The mapping must be dropped before the extracted file is deleted or
+     * replaced: a live mapping of a truncated file faults with `SIGBUS`, which
+     * no Rust `catch_unwind` can turn into an error. The default is a no-op so
+     * a test double does not have to model the mapping cache.
+     */
+    fun clearMappedCache() {}
+
+    /**
      * Resolves the RTTI vtables the library declares.
      *
      * A library that carries no C++ RTTI, which is the case for the Rust engine
@@ -131,6 +143,31 @@ interface OffsetEngine {
      * @return the version string, or `null` when the manifest does not carry one.
      */
     suspend fun readApkVersion(rawFd: Int): String?
+
+    /**
+     * Disassembles a `.text` range for the inspector.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @param address virtual address of the first instruction.
+     * @param byteCount number of bytes to decode, clamped by the engine.
+     * @return the decoded instructions, or `null` when the engine cannot
+     *   disassemble.
+     */
+    suspend fun disassemble(
+        library: ExtractedNativeLibrary,
+        address: Long,
+        byteCount: Int = 256
+    ): Disassembly? = null
+
+    /**
+     * Inspects one address: its function, callers, callees, strings and vtables.
+     *
+     * @param library the library produced by [extractNativeLibrary].
+     * @param address virtual address to inspect.
+     * @return the inspection, or `null` when the engine cannot inspect.
+     */
+    suspend fun inspectAddress(library: ExtractedNativeLibrary, address: Long): AddressInspection? =
+        null
 }
 
 /**

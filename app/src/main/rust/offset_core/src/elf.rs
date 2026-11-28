@@ -50,6 +50,15 @@ pub struct MappedLibrary {
     size: u64,
 }
 
+/// The process-wide mapping cache: the key it was opened with plus the mapping.
+type SharedCache = Mutex<Option<(String, Arc<MappedLibrary>)>>;
+
+/// Returns the shared mapping cache, creating it on first use.
+fn shared_cache() -> &'static SharedCache {
+    static CACHE: OnceLock<SharedCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
 impl MappedLibrary {
     /// Maps the library at `path`, or returns the mapping already open for it.
     ///
@@ -62,11 +71,8 @@ impl MappedLibrary {
     ///
     /// Propagates the same failures as [`MappedLibrary::open`].
     pub fn open_shared(path: &Path, sha256: String) -> CoreResult<Arc<Self>> {
-        type Cache = Mutex<Option<(String, Arc<MappedLibrary>)>>;
-        static CACHE: OnceLock<Cache> = OnceLock::new();
         let key = format!("{}|{sha256}", path.display());
-        let cache = CACHE.get_or_init(|| Mutex::new(None));
-        let mut guard = cache
+        let mut guard = shared_cache()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some((cached_key, library)) = guard.as_ref() {
@@ -77,6 +83,24 @@ impl MappedLibrary {
         let library = Arc::new(Self::open(path, sha256)?);
         *guard = Some((key, Arc::clone(&library)));
         Ok(library)
+    }
+
+    /// Drops the shared mapping held for the most recently opened library.
+    ///
+    /// The cache exists so the four JNI passes do not each map the library.
+    /// It must not outlive the file: a mapping kept after the extracted `.so`
+    /// is deleted or replaced faults with `SIGBUS` on the next access, and that
+    /// signal bypasses the `catch_unwind` guard around every entry point. The
+    /// app calls this before it deletes a library or clears the cache.
+    ///
+    /// # Returns
+    ///
+    /// `true` when a mapping was dropped, `false` when the cache was empty.
+    pub fn clear_shared_cache() -> bool {
+        let mut guard = shared_cache()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.take().is_some()
     }
 
     /// Maps the library at `path` without reading it into memory.
@@ -522,5 +546,37 @@ mod tests {
         assert!(describe_machine(EM_ARM).contains("32-bit ARM"));
         assert!(describe_machine(EM_AARCH64).contains("AArch64"));
         assert_eq!(describe_machine(0x1234), "4660");
+    }
+
+    #[test]
+    fn clearing_the_shared_cache_releases_the_mapping() {
+        let path = std::env::temp_dir().join(format!(
+            "offset-core-elf-cache-{}-{}.so",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let mut bytes = vec![0u8; 128];
+        bytes[..4].copy_from_slice(&ELF_MAGIC);
+        std::fs::write(&path, &bytes).expect("write fixture");
+
+        let first = MappedLibrary::open_shared(&path, "sha".to_string()).expect("open");
+        let second = MappedLibrary::open_shared(&path, "sha".to_string()).expect("reuse");
+        assert!(Arc::ptr_eq(&first, &second), "the cache must be reused");
+        drop(first);
+        drop(second);
+
+        assert!(MappedLibrary::clear_shared_cache());
+        assert!(
+            !MappedLibrary::clear_shared_cache(),
+            "a second clear has nothing to release"
+        );
+        // The file can now be replaced without a live mapping faulting.
+        std::fs::write(&path, &bytes).expect("replace fixture");
+        MappedLibrary::open_shared(&path, "sha".to_string()).expect("reopen");
+        MappedLibrary::clear_shared_cache();
+        let _ = std::fs::remove_file(&path);
     }
 }

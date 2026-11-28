@@ -139,16 +139,6 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   `node_id`. Then `PUT /pulls/{n}/merge-async {"merge_method":"squash","sha":"<40-char head>"}` (a
   short sha is rejected) and poll `.../merge-async/{uuid}`. `gh` CLI works.
 
-### v2 engine (branch merged to main, 1.1.0-pre.2)
-- `rank()` in `src/internal.rs` is an explicit evidence table: symbol > ABI-encoded > lambda/xref/system
-  > vtable placeholder > signature > string. Appending an `if` to the old chain silently ranked new
-  sources at the placeholder level — the lambda name could never win its own slot.
-- Host stand-in for the phone: `BEDROCK_LIB=<so> BEDROCK_OUT=<dir> cargo test --release --test
-  real_library_stats -- --ignored --nocapture`. `libc++_shared.so` from the NDK is a good 1.5k-function
-  corpus for signatures/demangling.
-- Mobilebox file pull with a space in the name: `curl -G .../v1/phones/{id}/files --data-urlencode
-  "path=NAME (1).zip"`; the `?path=` form 404s.
-
 ### Verify
 - `JAVA_HOME=/workspace/tools/jdk-21.0.13.1+2 ANDROID_HOME=/workspace/android-sdk ./gradlew
   :app:testDebugUnitTest` (**3397 tests, 0 failures, 1 skipped** on the BETA6 snapshot; targeted via
@@ -206,32 +196,25 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
   newer than 28 — `String.isBlank` (33) is the usual slip, use `s.trim().isEmpty()`.
 - Baseline format note: the baseline files live under **`scripts/hygiene/`**, not `scripts/`.
 
-### Signatures & memory (v1.1.0-pre.3)
-- Signature patterns are **bytes + wildcard bitmap**, hex rendered per row only. `Signature::byte_len()`
-  (not `len()`), `MAX_SIGNATURE_BYTES=48` start, `MAX_SIGNATURE_EXTENDED_BYTES=512`,
-  `SIGNATURE_MEMORY_BUDGET=192 MB`. The matcher scans one bounded `.text` window at a time and
-  borrows patterns; growing all patterns to 512 B at once is what the LMK killed.
-- Host `real_library_stats` on a 700k-function/500k-named library: peak 709 MB worst case, 556 MB
-  realistic (was 929 MB). 2 GB cloud phone: completes, 500k unique signatures, 261.5 MB table,
-  logcat `exits: []`, live log 761 MB (round 1) / 790 MB (round 2).
-- `MAX_NAMED_SYMBOLS = 500_000` in `symbols.rs` is a real data cap; it now logs
-  "Symbols: capped at …" via `internal::report` (made `pub(crate)`).
-- Crash reporting: `ui/log/CrashLog.kt` appends `CRASH …` lines to `live.log`; `MainViewModel`
-  replays the last 40 on start. `CrashLogTest` covers it.
+## Bedrock-Offsets (`Bedrock-Offsets`) — Kotlin/Compose + Rust `offset_core`
 
-### Cloud-phone testing (Mobilebox) — the only device proxy available
-- Setup: `~/.mobilebox.env` holds `MOBILESANDBOX_API_KEY`; source it, then talk to
-  `https://mobilebox.dev/v1/phones/<id>` with `Authorization: Bearer $KEY`. Phone
-  `ph_mqguy7bhtjiv` = Android 14, **2 GB RAM** (less than the owner's 3 GB tablet, so it is a
-  harder target). It parks when idle; the first call resumes it (~13 s).
-- Endpoints that work: `POST /apps` (raw APK bytes, `content-type: application/octet-stream` →
-  `{version_name, version_code}`), `POST /actions` with `{"actions":[…]}` (types: tap, long_press,
-  swipe, scroll, scroll_to, type, key, back, home, open_app, close_app, open_url, wait, wait_for,
-  receive_sms; a `tap` target needs exactly one of `x/y`, `ref`, `text`, `id`, `desc`),
-  `GET /observe` (accessibility tree with refs; rows expose `text` but **no `box`**),
-  `GET /screenshot` (PNG), `GET /files?path=…` (list; also returns file bytes).
-- Gotcha: in the DocumentsUI picker, `tap {text:"fixture2.apk"}` can hit the "Preview the file
-  …apk" button and raise "There was a problem parsing the package". Read `/screenshot`, convert
-  the 900×2000 image to device pixels (×1.2) and tap the coordinates instead.
-- Measured there (v1.1.0-pre.4): 800,000-function fixture → 6,386 classes, 496,600 signatures,
-  417,721 unique, 20.3 MB zip from 381 MB of JSON, no OOM; process peak 878 MB.
+- Verify loop: `cargo test` + `cargo fmt --all --check` + `cargo clippy --all-targets -- -D warnings`
+  in `app/src/main/rust/offset_core`, then `./gradlew :app:testDebugUnitTest :app:ktlintCheck
+  :app:lintDebug`. **ktlint needs the network** (`com.pinterest.ktlint:ktlint-cli` is not cached), so
+  `--offline` fails on it. `ktlintFormat` fixes most rules; the leftovers are always
+  `function-signature` (keep a fitting parameter list on ONE line, expression body on the next line),
+  `max-line-length` 100, and `multiline-if-else`.
+- Native engine: `cargo install cargo-ndk --locked`, `rustup target add aarch64-linux-android`,
+  `sdkmanager "ndk;27.0.12077973"`, then `ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
+  python3 scripts/build_rust.py` (it runs `cargo ndk -t arm64-v8a build --release` and stages
+  `app/src/main/jniLibs/arm64-v8a/liboffset_core.so`, which is gitignored). `rustup component add
+  rustfmt clippy` is required before the fmt/clippy gates.
+- `scripts/generate_patterns.py` **preserves `stringAnchors` and `internalPatterns` from the existing
+  `app/src/main/assets/patterns.json`**, so anchors can be hand-added and the CI round-trip
+  (`generate` + `git diff --exit-code`) still passes. Keep the file generator-formatted.
+- Gson models are kept by package rules in `app/proguard-rules.pro` (`data.native.**`,
+  `data.export.**`, ...), so a new DTO nested in `EnginePayloads` or a new file in `data/export`
+  needs no extra keep rule.
+- Pro script exports live in `data/export/OffsetScripts.kt` (`ScriptFormat`: IdaPython,
+  GhidraScript, FridaTypeScript, CppHeader); they emit RVAs (`address - imageBase`), dedupe by name
+  and cap at `ENTRY_LIMIT`.

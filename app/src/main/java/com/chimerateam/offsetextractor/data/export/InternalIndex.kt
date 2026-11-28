@@ -8,15 +8,17 @@ import com.google.gson.stream.JsonReader
 import java.io.File
 import java.io.IOException
 
-/** Maximum rows a single search returns before the UI asks for a narrower one. */
+/** Rows returned by one page of an internal search. */
 const val INTERNAL_SEARCH_LIMIT = 200
 
 /**
  * File-backed index over the internal C++ table.
  *
  * The table can hold hundreds of thousands of functions, so the UI never loads
- * it. A search streams every document once and stops at
- * [INTERNAL_SEARCH_LIMIT], which keeps both memory and latency flat.
+ * it. A search streams every document once and stops after the requested page,
+ * which keeps both memory and latency flat. Paging uses an offset rather than a
+ * hard cutoff: a query that matches 10,000 rows can be walked 200 at a time
+ * instead of being silently truncated.
  *
  * Two shapes exist and both are searched. A scan without category rules writes
  * one NDJSON file of `{"type":...}` records; the normal scan classifies as it
@@ -53,18 +55,22 @@ class InternalIndex(private val sources: List<File>) {
      * @param limit maximum rows to return.
      * @return matching rows, in file order.
      */
-    fun search(query: String, limit: Int = INTERNAL_SEARCH_LIMIT): List<OffsetRow> {
+    fun search(
+        query: String,
+        limit: Int = INTERNAL_SEARCH_LIMIT,
+        offset: Int = 0
+    ): List<OffsetRow> {
         val needle = query.trim()
         if (needle.isEmpty()) return emptyList()
-        val rows = mutableListOf<OffsetRow>()
+        val sink = RowSink(offset.coerceAtLeast(0), limit.coerceAtLeast(0))
         for (file in sources) {
-            if (rows.size >= limit) break
+            if (sink.isFull()) break
             if (!file.isFile) continue
             try {
                 if (isCategoryDocument(file)) {
-                    searchDocument(file, needle, limit, rows)
+                    searchDocument(file, needle, sink)
                 } else {
-                    searchNdjson(file, needle, limit, rows)
+                    searchNdjson(file, needle, sink)
                 }
             } catch (error: IOException) {
                 // A document the engine is still writing, or one evicted under
@@ -72,65 +78,86 @@ class InternalIndex(private val sources: List<File>) {
                 android.util.Log.w("InternalIndex", "skipping ${file.name}: ${error.message}")
             }
         }
-        return rows
+        return sink.rows
     }
 
-    private fun searchNdjson(file: File, needle: String, limit: Int, rows: MutableList<OffsetRow>) {
+    /**
+     * Returns one page of matches and whether another page exists.
+     *
+     * @param query search text.
+     * @param offset number of matches to skip.
+     * @param pageSize maximum rows in this page.
+     * @return the page and the `hasMore` flag the UI uses for "Load more".
+     */
+    fun searchPage(
+        query: String,
+        offset: Int = 0,
+        pageSize: Int = INTERNAL_SEARCH_LIMIT
+    ): InternalSearchPage {
+        if (pageSize <= 0) return InternalSearchPage(emptyList(), hasMore = false)
+        // One extra row proves another page exists without a second pass.
+        val rows = search(query, pageSize + 1, offset)
+        return InternalSearchPage(rows.take(pageSize), hasMore = rows.size > pageSize)
+    }
+
+    private fun searchNdjson(file: File, needle: String, sink: RowSink) {
         file.bufferedReader().useLines { lines ->
             for (line in lines) {
-                if (rows.size >= limit) break
+                if (sink.isFull()) break
                 val root = parse(line) ?: continue
                 when (root.get("type")?.asString) {
                     "function" -> functionRow(
                         root.getAsJsonObject("function"),
                         needle
-                    )?.let(rows::add)
+                    )?.let(sink::add)
                     "class" -> classRows(
                         root.getAsJsonObject("class"),
                         needle,
-                        limit - rows.size,
-                        rows
+                        sink
                     )
                 }
             }
         }
     }
 
-    private fun searchDocument(
-        file: File,
-        needle: String,
-        limit: Int,
-        rows: MutableList<OffsetRow>
-    ) {
+    private fun searchDocument(file: File, needle: String, sink: RowSink) {
         file.reader().use { reader ->
             JsonReader(reader).use { json ->
                 json.beginObject()
-                while (json.hasNext() && rows.size < limit) {
+                // A full page aborts the read: draining a 40 MB document after
+                // the last wanted row would throw away the latency win. The
+                // labelled break leaves the reader mid-array, which is safe
+                // because the stream is closed by `use`.
+                scan@ while (json.hasNext() && !sink.isFull()) {
                     when (json.nextName()) {
-                        "functions" -> json.beginArray().also {
-                            while (json.hasNext() && rows.size < limit) {
+                        "functions" -> {
+                            json.beginArray()
+                            while (json.hasNext() && !sink.isFull()) {
                                 val element = JsonParser.parseReader(json) as? JsonObject
-                                if (element != null) functionRow(element, needle)?.let(rows::add)
+                                if (element != null) functionRow(element, needle)?.let(sink::add)
                             }
+                            if (sink.isFull()) break@scan
                             json.endArray()
                         }
                         "symbols" -> {
                             json.beginArray()
-                            while (json.hasNext() && rows.size < limit) {
+                            while (json.hasNext() && !sink.isFull()) {
                                 val element = JsonParser.parseReader(json) as? JsonObject
-                                if (element != null) symbolRow(element, needle)?.let(rows::add)
+                                if (element != null) symbolRow(element, needle)?.let(sink::add)
                             }
+                            if (sink.isFull()) break@scan
                             json.endArray()
                         }
                         "classes" -> {
                             json.beginObject()
-                            while (json.hasNext() && rows.size < limit) {
+                            while (json.hasNext() && !sink.isFull()) {
                                 json.nextName()
                                 val element = JsonParser.parseReader(json) as? JsonObject
                                 if (element != null) {
-                                    classRows(element, needle, limit - rows.size, rows)
+                                    classRows(element, needle, sink)
                                 }
                             }
+                            if (sink.isFull()) break@scan
                             json.endObject()
                         }
                         else -> json.skipValue()
@@ -181,13 +208,8 @@ class InternalIndex(private val sources: List<File>) {
         )
     }
 
-    private fun classRows(
-        info: JsonObject,
-        needle: String,
-        remaining: Int,
-        rows: MutableList<OffsetRow>
-    ) {
-        if (remaining <= 0) return
+    private fun classRows(info: JsonObject, needle: String, sink: RowSink) {
+        if (sink.remaining <= 0) return
         val className = info.get("name")?.asString ?: return
         val selector = Regex("""^(.+)\[(\d+)]$""").matchEntire(needle)
         if (selector != null) {
@@ -197,7 +219,7 @@ class InternalIndex(private val sources: List<File>) {
             val slots = info.get("slots")?.takeIf { it.isJsonArray }?.asJsonArray ?: return
             val slot = slots.firstOrNull { it.asJsonObject.get("slot")?.asInt == wantedSlot }
                 ?.asJsonObject ?: return
-            rows.add(
+            sink.add(
                 OffsetRow(
                     category = OffsetCategory.VirtualSlot,
                     name = slot.get("name")?.asString ?: className,
@@ -210,7 +232,7 @@ class InternalIndex(private val sources: List<File>) {
         }
         if (!className.contains(needle, ignoreCase = true)) return
         val slotCount = info.get("slotCount")?.asInt ?: 0
-        rows.add(
+        sink.add(
             OffsetRow(
                 category = OffsetCategory.VirtualSlot,
                 name = className,
@@ -220,9 +242,9 @@ class InternalIndex(private val sources: List<File>) {
         )
         val slots = info.get("slots")?.takeIf { it.isJsonArray }?.asJsonArray ?: return
         for (element in slots) {
-            if (rows.size >= INTERNAL_SEARCH_LIMIT || rows.size >= remaining) break
+            if (sink.isFull()) break
             val slot = element.asJsonObject
-            rows.add(
+            sink.add(
                 OffsetRow(
                     category = OffsetCategory.VirtualSlot,
                     name = slot.get("name")?.asString ?: className,
@@ -261,6 +283,31 @@ class InternalIndex(private val sources: List<File>) {
         else -> VerificationStatus.Unverified
     }
 
+    /**
+     * Applies the page offset and limit to every matched row.
+     *
+     * The search functions do not know whether a row belongs to the requested
+     * page, so the sink skips the first `offset` matches and stops once the page
+     * is full.
+     */
+    private class RowSink(offset: Int, private val limit: Int) {
+        private var skipped = 0
+        private val skip = offset
+        val rows: MutableList<OffsetRow> = mutableListOf()
+
+        val remaining: Int get() = limit - rows.size
+
+        fun isFull(): Boolean = rows.size >= limit
+
+        fun add(row: OffsetRow) {
+            if (skipped < skip) {
+                skipped += 1
+                return
+            }
+            if (rows.size < limit) rows.add(row)
+        }
+    }
+
     private companion object {
         /** Documents the engine wrote for [summary], in a stable order. */
         fun filesOf(summary: InternalSummary?): List<File> {
@@ -273,3 +320,14 @@ class InternalIndex(private val sources: List<File>) {
         }
     }
 }
+
+/**
+ * One page of internal search results.
+ *
+ * @property rows the rows in this page.
+ * @property hasMore whether another page exists after this one.
+ */
+data class InternalSearchPage(
+    val rows: List<OffsetRow>,
+    val hasMore: Boolean
+)

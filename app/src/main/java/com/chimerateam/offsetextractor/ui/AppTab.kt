@@ -1,6 +1,7 @@
 package com.chimerateam.offsetextractor.ui
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Settings
@@ -15,5 +16,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 enum class AppTab(val label: String, val icon: ImageVector) {
     Scanner("Scanner", Icons.Filled.Radar),
     Apks("APKs", Icons.Filled.Download),
+    Diff("Diff", Icons.Filled.CompareArrows),
     Settings("Settings", Icons.Filled.Settings)
 }

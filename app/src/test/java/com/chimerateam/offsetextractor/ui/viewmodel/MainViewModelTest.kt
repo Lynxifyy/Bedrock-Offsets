@@ -576,6 +576,23 @@ class MainViewModelTest {
     }
 
     @Test
+    fun clearingTheCacheReleasesTheMappedLibraryFirst() = runTest(dispatcher) {
+        val cache = newCache()
+        val engine = FakeEngine()
+        val viewModel = newViewModel(engine = engine, cache = cache)
+        viewModel.onApkSelected(uri)
+        advanceUntilIdle()
+
+        viewModel.clearCache()
+        advanceUntilIdle()
+
+        assertTrue(
+            "the engine must drop its mmap before the file is deleted",
+            engine.mappedCacheClears > 0
+        )
+    }
+
+    @Test
     fun theReportedCacheSizeGrowsAfterAScan() = runTest(dispatcher) {
         val cache = newCache()
         val viewModel = newViewModel(cache = cache)
@@ -1350,8 +1367,16 @@ private class FakeEngine(
     var cancelCalls = 0
         private set
 
+    /** Times the shared mapping cache was released. */
+    var mappedCacheClears = 0
+        private set
+
     override fun cancelScan() {
         cancelCalls++
+    }
+
+    override fun clearMappedCache() {
+        mappedCacheClears++
     }
 
     var mapCalls = 0

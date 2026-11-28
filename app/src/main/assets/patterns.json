@@ -378,5 +378,103 @@
       "resolve": "self",
       "offset": 0
     }
+  ],
+  "stringAnchors": [
+    {
+      "name": "MinecraftGame",
+      "string": "MinecraftGame"
+    },
+    {
+      "name": "ClientInstance",
+      "string": "ClientInstance"
+    },
+    {
+      "name": "ServerLevel",
+      "string": "ServerLevel"
+    },
+    {
+      "name": "Level",
+      "string": "Level"
+    },
+    {
+      "name": "BlockSource",
+      "string": "BlockSource"
+    },
+    {
+      "name": "Dimension",
+      "string": "Dimension"
+    },
+    {
+      "name": "ChunkSource",
+      "string": "ChunkSource"
+    },
+    {
+      "name": "Actor",
+      "string": "Actor"
+    },
+    {
+      "name": "Player",
+      "string": "Player"
+    },
+    {
+      "name": "PlayerInventory",
+      "string": "PlayerInventory"
+    },
+    {
+      "name": "Inventory",
+      "string": "Inventory"
+    },
+    {
+      "name": "ItemStack",
+      "string": "ItemStack"
+    },
+    {
+      "name": "ItemInstance",
+      "string": "ItemInstance"
+    },
+    {
+      "name": "CompoundTag",
+      "string": "CompoundTag"
+    },
+    {
+      "name": "BlockPalette",
+      "string": "BlockPalette"
+    },
+    {
+      "name": "LevelChunk",
+      "string": "LevelChunk"
+    },
+    {
+      "name": "Biome",
+      "string": "Biome"
+    },
+    {
+      "name": "ActorDefinitionIdentifier",
+      "string": "ActorDefinitionIdentifier"
+    },
+    {
+      "name": "NetworkHandler",
+      "string": "NetworkHandler"
+    },
+    {
+      "name": "NetworkIdentifier",
+      "string": "NetworkIdentifier"
+    },
+    {
+      "name": "Packet",
+      "string": "Packet"
+    },
+    {
+      "name": "RakNet",
+      "string": "RakNet"
+    },
+    {
+      "name": "HitDetection",
+      "string": "HitDetection"
+    },
+    {
+      "name": "Camera",
+      "string": "Camera"
+    }
   ]
 }

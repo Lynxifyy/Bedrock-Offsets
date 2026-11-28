@@ -4,8 +4,12 @@
 //! failures into a thrown Java exception or a sentinel value, so a malformed
 //! APK can never abort the process.
 
+use capstone::arch::arm64::ArchMode;
+use capstone::arch::BuildsCapstone;
+use capstone::arch::BuildsCapstoneEndian;
+use capstone::{Capstone, Endian};
 use jni::objects::{JObject, JString};
-use jni::sys::{jint, jstring};
+use jni::sys::{jboolean, jint, jlong, jstring};
 use jni::JNIEnv;
 use serde::Serialize;
 use std::io::{BufWriter, Write};
@@ -509,6 +513,25 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
     cancel_active_scan();
 }
 
+/// Releases the shared mapping of the last opened library.
+///
+/// The app calls this before deleting an extracted `.so` or clearing the
+/// library cache. A mapping kept after the file is unlinked still serves its
+/// pages, but a truncation or replacement faults with `SIGBUS`, which no
+/// `catch_unwind` can turn into an error.
+///
+/// # Returns
+///
+/// `true` when a mapping was released.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_clearMappedCacheNative(
+    _env: JNIEnv,
+    _this: JObject,
+) -> jboolean {
+    install();
+    u8::from(crate::elf::MappedLibrary::clear_shared_cache())
+}
+
 /// The payload the scan entry point serialises.
 #[derive(Debug, Serialize)]
 struct ScanPayload {
@@ -860,6 +883,414 @@ fn throw_engine_failure(env: &mut JNIEnv, kind: &str, detail: &str) {
         // is the only safe move: returning normally with an exception pending
         // is undefined behaviour.
         let _ = env.exception_clear();
+    }
+}
+
+/// Maximum number of bytes one disassembly request may decode.
+pub const MAX_DISASSEMBLY_BYTES: u64 = 512;
+
+/// One decoded instruction, with the reference it builds when it has one.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisassembledInstruction {
+    address: String,
+    bytes: String,
+    mnemonic: String,
+    operands: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    annotation: Option<String>,
+}
+
+/// The payload the disassembly entry point serialises.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisassemblyPayload {
+    address: String,
+    byte_count: u64,
+    instructions: Vec<DisassembledInstruction>,
+}
+
+/// One vtable that holds the inspected address.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InspectVtable {
+    class: String,
+    vtable: String,
+    slots: Vec<u32>,
+    base_classes: Vec<String>,
+}
+
+/// The payload the address-inspection entry point serialises.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InspectPayload {
+    address: String,
+    function_start: Option<String>,
+    function_size: u64,
+    first_call: Option<String>,
+    callers: Vec<String>,
+    callees: Vec<String>,
+    data_refs: Vec<String>,
+    strings: Vec<String>,
+    vtables: Vec<InspectVtable>,
+}
+
+/// Disassembles up to [`MAX_DISASSEMBLY_BYTES`] of `.text` at `address`.
+///
+/// `BL` targets and the addresses built by `ADRP`/`ADR`+`ADD`/`LDR` are
+/// annotated so the inspector can show what each instruction reaches without a
+/// second query.
+///
+/// # Errors
+///
+/// Returns [`CoreError::InvalidElf`] when the address is outside `.text` or the
+/// range cannot be decoded.
+pub fn disassemble_range_json(
+    path: &str,
+    sha256: &str,
+    address: u64,
+    byte_count: u64,
+) -> CoreResult<String> {
+    let library = MappedLibrary::open_shared(Path::new(path), sha256.to_string())?;
+    let image = library.bytes();
+    let map = build_section_map(image)?;
+    if !crate::internal::is_executable(&map, address) {
+        return Err(CoreError::InvalidElf(format!(
+            "0x{address:x} is not inside .text"
+        )));
+    }
+    let byte_count = byte_count.clamp(4, MAX_DISASSEMBLY_BYTES) & !3;
+    let file_offset = crate::internal::file_offset_of(&map, address)
+        .ok_or_else(|| CoreError::InvalidElf(format!("0x{address:x} has no file offset")))?
+        as usize;
+    let code = image
+        .get(file_offset..file_offset + byte_count as usize)
+        .ok_or_else(|| CoreError::InvalidElf("the disassembly range runs past .text".into()))?;
+
+    let capstone = Capstone::new()
+        .arm64()
+        .mode(ArchMode::Arm)
+        .endian(Endian::Little)
+        .detail(false)
+        .build()
+        .map_err(|error| {
+            CoreError::InvalidElf(format!("cannot initialise the disassembler: {error}"))
+        })?;
+    let decoded = capstone
+        .disasm_all(code, address)
+        .map_err(|error| CoreError::InvalidElf(format!("cannot decode 0x{address:x}: {error}")))?;
+
+    let end = address.saturating_add(byte_count);
+    let mut page: [Option<u64>; 32] = [None; 32];
+    let mut instructions: Vec<DisassembledInstruction> = Vec::with_capacity(decoded.len());
+    for instruction in decoded.iter() {
+        let offset = (instruction.address() - address) as usize;
+        let Some(bytes) = code.get(offset..offset + 4) else {
+            break;
+        };
+        let word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let annotation = annotate_instruction(word, instruction.address(), address, end, &mut page);
+        instructions.push(DisassembledInstruction {
+            address: format!("0x{:x}", instruction.address()),
+            bytes: bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+            mnemonic: instruction.mnemonic().unwrap_or("").to_string(),
+            operands: instruction.op_str().unwrap_or("").to_string(),
+            annotation,
+        });
+    }
+    let payload = DisassemblyPayload {
+        address: format!("0x{address:x}"),
+        byte_count,
+        instructions,
+    };
+    Ok(serde_json::to_string(&payload).unwrap_or_default())
+}
+
+/// Builds a human-readable annotation for one instruction.
+fn annotate_instruction(
+    word: u32,
+    pc: u64,
+    range_start: u64,
+    range_end: u64,
+    page: &mut [Option<u64>; 32],
+) -> Option<String> {
+    let rd = (word & 31) as usize;
+    let rn = ((word >> 5) & 31) as usize;
+    if word & 0xFC00_0000 == 0x9400_0000 {
+        let target = crate::xref::branch_target(pc, word & 0x03FF_FFFF, 26);
+        return Some(format!("call 0x{target:x}"));
+    }
+    if word & 0xFC00_0000 == 0x1400_0000 {
+        let target = crate::xref::branch_target(pc, word & 0x03FF_FFFF, 26);
+        if target < range_start || target >= range_end {
+            return Some(format!("tail 0x{target:x}"));
+        }
+        return None;
+    }
+    if word & 0x9F00_0000 == 0x9000_0000 {
+        page[rd] = Some(adrp_page(pc, word));
+        return None;
+    }
+    if word & 0x9F00_0000 == 0x1000_0000 {
+        let immlo = ((word >> 29) & 0x3) as i64;
+        let immhi = ((word >> 5) & 0x7_FFFF) as i64;
+        let target = (pc as i64).wrapping_add(sign_extend((immhi << 2) | immlo, 21)) as u64;
+        page[rd] = Some(target);
+        return Some(format!("ref 0x{target:x}"));
+    }
+    if word & 0x7F80_0000 == 0x1100_0000 {
+        if let Some(base) = page[rn] {
+            let target = base.wrapping_add(((word >> 10) & 0xFFF) as u64);
+            page[rd] = Some(target);
+            return Some(format!("ref 0x{target:x}"));
+        }
+        page[rd] = None;
+        return None;
+    }
+    if word & 0x3B00_0000 == 0x3900_0000 {
+        let scale = 1u64 << ((word >> 30) & 0x3);
+        let target = page[rn].map(|base| base.wrapping_add(((word >> 10) & 0xFFF) as u64 * scale));
+        if (word >> 22) & 0x3 != 0 {
+            page[rd] = None;
+        }
+        return target.map(|target| format!("ref 0x{target:x}"));
+    }
+    if word & 0x7FE0_FFE0 == 0x2A00_03E0 {
+        let rm = ((word >> 16) & 31) as usize;
+        page[rd] = page[rm];
+        return None;
+    }
+    if crate::xref::writes_gpr(word) {
+        page[rd] = None;
+    }
+    None
+}
+
+/// Computes the page an `ADRP` names.
+fn adrp_page(pc: u64, word: u32) -> u64 {
+    let immlo = ((word >> 29) & 0x3) as i64;
+    let immhi = ((word >> 5) & 0x7_FFFF) as i64;
+    let delta = sign_extend(((immhi << 2) | immlo) << 12, 33);
+    ((pc & !0xFFF) as i64).wrapping_add(delta) as u64
+}
+
+fn sign_extend(value: i64, bits: u32) -> i64 {
+    let shift = 64 - bits;
+    (value << shift) >> shift
+}
+
+/// Inspects one address: its function, callers, callees, data references,
+/// strings and the vtables that hold it.
+///
+/// This is a user-initiated query, so it may walk the whole library; nothing in
+/// the normal scan path calls it.
+///
+/// # Errors
+///
+/// Propagates mapping, section and RTTI failures.
+pub fn inspect_address_json(path: &str, sha256: &str, address: u64) -> CoreResult<String> {
+    let library = MappedLibrary::open_shared(Path::new(path), sha256.to_string())?;
+    let image = library.bytes();
+    let map = build_section_map(image)?;
+    let control = crate::scanner::ScanControl::new();
+    let (functions, _, _) = crate::internal::collect_functions(&map, image, &control)?;
+
+    let index = functions.partition_point(|(start, _)| *start <= address);
+    let function = index.checked_sub(1).and_then(|index| {
+        let (start, size) = functions[index];
+        (address < start.saturating_add(size)).then_some((start, size))
+    });
+
+    let (callees, data_refs, first_call) = if let Some((start, size)) = function {
+        let table = crate::xref::scan_one(&map, image, start, size)?;
+        let entry = &table.functions[0];
+        (
+            table.calls_of(entry).to_vec(),
+            table.data_refs_of(entry).to_vec(),
+            entry.first_call_site,
+        )
+    } else {
+        (Vec::new(), Vec::new(), None)
+    };
+
+    let callers = crate::xref::callers_of(&map, image, &functions, address, &control)?;
+    let strings: Vec<String> = data_refs
+        .iter()
+        .filter_map(|reference| read_c_string(&map, image, *reference))
+        .take(64)
+        .collect();
+    let vtables = inspect_vtables(&map, image, address)?;
+
+    let payload = InspectPayload {
+        address: format!("0x{address:x}"),
+        function_start: function.map(|(start, _)| format!("0x{start:x}")),
+        function_size: function.map(|(_, size)| size).unwrap_or(0),
+        first_call: first_call.map(|call| format!("0x{:x}@0x{:x}", call.target, call.site)),
+        callers: callers.iter().map(|value| format!("0x{value:x}")).collect(),
+        callees: callees
+            .iter()
+            .take(256)
+            .map(|value| format!("0x{value:x}"))
+            .collect(),
+        data_refs: data_refs
+            .iter()
+            .take(256)
+            .map(|value| format!("0x{value:x}"))
+            .collect(),
+        strings,
+        vtables,
+    };
+    Ok(serde_json::to_string(&payload).unwrap_or_default())
+}
+
+/// Finds the vtables whose slot array contains `address`.
+fn inspect_vtables(
+    map: &crate::sections::SectionMap,
+    image: &[u8],
+    address: u64,
+) -> CoreResult<Vec<InspectVtable>> {
+    const MAX_SLOTS: u32 = 512;
+    const VTABLE_PREFIX_BYTES: u64 = 16;
+    let relocation = crate::rtti::RelocationIndex::build(image)?;
+    let vtables = crate::rtti::resolve_vtables(image)?;
+    let bases = crate::internal::resolve_bases(map, image, &relocation, &vtables);
+
+    let mut out: Vec<InspectVtable> = Vec::new();
+    for vtable in &vtables.all {
+        let direct = vtable.vtable_address == address;
+        let mut slots: Vec<u32> = Vec::new();
+        let first = vtable.vtable_address.saturating_add(VTABLE_PREFIX_BYTES);
+        for slot in 0..MAX_SLOTS {
+            let slot_address = first.saturating_add(u64::from(slot) * 8);
+            let relocated = relocation.target_of(slot_address);
+            let target = relocated.or_else(|| read_u64_at(map, image, slot_address));
+            match target {
+                None => break,
+                Some(0) if relocated.is_none() => break,
+                Some(0) => continue,
+                Some(value) => {
+                    if value == address {
+                        slots.push(slot);
+                    }
+                }
+            }
+        }
+        if direct || !slots.is_empty() {
+            let base_classes = bases
+                .get(&vtable.mangled)
+                .map(|list| list.iter().map(|base| base.name.clone()).collect())
+                .unwrap_or_default();
+            out.push(InspectVtable {
+                class: vtable.name.clone(),
+                vtable: format!("0x{:x}", vtable.vtable_address),
+                slots,
+                base_classes,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Reads an 8-byte little-endian word at a virtual address.
+fn read_u64_at(map: &crate::sections::SectionMap, image: &[u8], address: u64) -> Option<u64> {
+    let offset = crate::internal::file_offset_of(map, address)? as usize;
+    let bytes = image.get(offset..offset + 8)?;
+    Some(u64::from_le_bytes(bytes.try_into().ok()?))
+}
+
+/// Reads a printable NUL-terminated string at a virtual address.
+fn read_c_string(map: &crate::sections::SectionMap, image: &[u8], address: u64) -> Option<String> {
+    const MIN_LENGTH: usize = 4;
+    const MAX_LENGTH: usize = 128;
+    let offset = crate::internal::file_offset_of(map, address)? as usize;
+    let bytes = image.get(offset..)?;
+    let end = bytes.iter().take(MAX_LENGTH).position(|byte| *byte == 0)?;
+    if end < MIN_LENGTH {
+        return None;
+    }
+    let text = &bytes[..end];
+    if !text
+        .iter()
+        .all(|byte| (0x20..=0x7e).contains(byte) || *byte == b'\t')
+    {
+        return None;
+    }
+    String::from_utf8(text.to_vec()).ok()
+}
+
+/// Disassembles a `.text` range for the inspector.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_disassembleRangeNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    path: JString,
+    sha256: JString,
+    address: jlong,
+    byte_count: jint,
+) -> jstring {
+    install();
+    let library_path = match read_jstring(&mut env, &path, "library path") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let library_hash = match read_jstring(&mut env, &sha256, "library hash") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let outcome = catch_panics("disassembling a range", move || {
+        disassemble_range_json(
+            &library_path,
+            &library_hash,
+            address as u64,
+            byte_count.max(0) as u64,
+        )
+    });
+    json_result(&mut env, outcome)
+}
+
+/// Inspects one address for the inspector pane.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_inspectAddressNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    path: JString,
+    sha256: JString,
+    address: jlong,
+) -> jstring {
+    install();
+    let library_path = match read_jstring(&mut env, &path, "library path") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let library_hash = match read_jstring(&mut env, &sha256, "library hash") {
+        Some(value) => value,
+        None => return std::ptr::null_mut(),
+    };
+    let outcome = catch_panics("inspecting an address", move || {
+        inspect_address_json(&library_path, &library_hash, address as u64)
+    });
+    json_result(&mut env, outcome)
+}
+
+/// Converts a fallible JSON result into a Java string or a thrown exception.
+fn json_result(env: &mut JNIEnv, outcome: Result<CoreResult<String>, String>) -> jstring {
+    match outcome {
+        Ok(Ok(json)) => match env.new_string(json) {
+            Ok(string) => string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Ok(Err(core_error)) => {
+            throw_core_error(env, &core_error);
+            std::ptr::null_mut()
+        }
+        Err(panic_message) => {
+            throw_engine_failure(env, "panic", &panic_message);
+            std::ptr::null_mut()
+        }
     }
 }
 

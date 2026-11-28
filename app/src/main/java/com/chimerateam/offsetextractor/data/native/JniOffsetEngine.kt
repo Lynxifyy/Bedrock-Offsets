@@ -164,6 +164,31 @@ class JniOffsetEngine(
         return EnginePayloads.parseApkVersion(json)
     }
 
+    override fun clearMappedCache() {
+        runCatching { nativeLibrary.clearMappedCache() }
+    }
+
+    override suspend fun disassemble(
+        library: ExtractedNativeLibrary,
+        address: Long,
+        byteCount: Int
+    ): Disassembly {
+        val json = call("disassembling the function") {
+            nativeLibrary.disassembleRange(library.path, library.sha256, address, byteCount)
+        }
+        return EnginePayloads.parseDisassembly(json)
+    }
+
+    override suspend fun inspectAddress(
+        library: ExtractedNativeLibrary,
+        address: Long
+    ): AddressInspection {
+        val json = call("inspecting the address") {
+            nativeLibrary.inspectAddress(library.path, library.sha256, address)
+        }
+        return EnginePayloads.parseInspection(json)
+    }
+
     private inline fun call(what: String, block: () -> String): String = try {
         block()
     } catch (failure: EngineFailure) {
@@ -278,6 +303,36 @@ interface NativeLibrary {
      * @return a JSON payload with `versionName`.
      */
     fun readApkVersion(fd: Int): String
+
+    /**
+     * Releases the engine's shared mapping of the last opened library.
+     *
+     * @return `true` when a mapping was released.
+     */
+    fun clearMappedCache(): Boolean = false
+
+    /**
+     * Disassembles a `.text` range.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param address virtual address of the first instruction.
+     * @param byteCount number of bytes to decode.
+     * @return a JSON payload with the decoded instructions.
+     */
+    fun disassembleRange(path: String, sha256: String, address: Long, byteCount: Int): String =
+        throw UnsupportedOperationException("the native library cannot disassemble")
+
+    /**
+     * Inspects one address.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param address virtual address to inspect.
+     * @return a JSON payload describing the address.
+     */
+    fun inspectAddress(path: String, sha256: String, address: Long): String =
+        throw UnsupportedOperationException("the native library cannot inspect addresses")
 }
 
 /** Production bindings, backed by [NativeLib]. */
@@ -316,4 +371,16 @@ object JniNativeLibrary : NativeLibrary {
     ): String = NativeLib.analyzeInternal(path, sha256, optionsJson, outputDir, callback)
 
     override fun readApkVersion(fd: Int): String = NativeLib.readApkVersion(fd)
+
+    override fun clearMappedCache(): Boolean = NativeLib.clearMappedCache()
+
+    override fun disassembleRange(
+        path: String,
+        sha256: String,
+        address: Long,
+        byteCount: Int
+    ): String = NativeLib.disassembleRange(path, sha256, address, byteCount)
+
+    override fun inspectAddress(path: String, sha256: String, address: Long): String =
+        NativeLib.inspectAddress(path, sha256, address)
 }

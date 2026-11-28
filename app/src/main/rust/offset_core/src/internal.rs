@@ -596,6 +596,11 @@ pub fn analyze_with_writer(
     let bases = resolve_bases(map, image, &relocation, vtables);
     apply_inheritance(&mut classes, &bases);
     unify_slot_names_by_address(&mut classes);
+    // The relocation index is a million-entry sorted table; nothing after Pass A
+    // reads it, so releasing it here halves the resident cost of the whole
+    // analysis instead of letting it overlap with the function and signature
+    // passes.
+    drop(relocation);
 
     check_cancelled(control)?;
     report(sink, 30, "Pass B: reading .eh_frame");
@@ -625,10 +630,10 @@ pub fn analyze_with_writer(
     // lives in the function that constructs its vtable, and the adapter's tick
     // function is the caller of its call operator.
     report(sink, 55, "Pass C: cross-references and evidence names");
-    let xrefs = crate::xref::scan(map, image, &functions);
+    let xrefs = crate::xref::scan(map, image, &functions, control)?;
     let slots_by_vtable = slots_by_vtable_address(&classes);
     let lambda_evidence = crate::naming::lambda_slot_names(vtables, &slots_by_vtable);
-    let xref_evidence = crate::naming::vtable_xref_names(vtables, &xrefs);
+    let xref_evidence = crate::naming::vtable_xref_names(vtables, &xrefs)?;
     let systems = crate::naming::ecs_systems(vtables, &slots_by_vtable);
     let body_evidence = crate::naming::lambda_body_names(vtables, &slots_by_vtable, &xrefs);
     let system_evidence = crate::naming::ecs_system_names(&systems);
@@ -687,7 +692,7 @@ pub fn analyze_with_writer(
         releaser.release(0, usize::MAX);
     }
     report(sink, 80, "Signatures: generating");
-    let (signatures, truncated_signatures, _signature_stats) = if options.generate_signatures {
+    let (mut signatures, truncated_signatures, _signature_stats) = if options.generate_signatures {
         generate_signatures(
             map,
             image,
@@ -714,6 +719,10 @@ pub fn analyze_with_writer(
         // the write pass faults them back in one function at a time.
         releaser.release(0, usize::MAX);
     }
+    // Nothing after the signature pass reads the cross-reference table. Its
+    // edge arenas are the largest single allocation of the run, so releasing
+    // them here keeps them out of the write pass peak.
+    drop(xrefs);
     report(sink, 90, "Writing the internal table");
     let (addresses, suspect) = merge_addresses(&functions, &names);
     // Every FDE names a function, so every FDE start must appear in the table.
@@ -943,11 +952,13 @@ pub fn analyze_with_writer(
             stats.ambiguous += 1;
         }
 
+        // `remove` hands the entry back as the row is written, so the map
+        // shrinks with the loop instead of staying resident to the end.
         let (signature_unique, extras) = signatures
-            .get(address)
+            .remove(address)
             .map(|(signature, unique)| {
-                let extras = SignatureExtras::of(signature);
-                (Some(*unique), extras)
+                let extras = SignatureExtras::of(&signature);
+                (Some(unique), extras)
             })
             .unwrap_or((None, SignatureExtras::default()));
 
@@ -1275,7 +1286,7 @@ fn collect_class_slots(
     }
     Ok((classes, truncated))
 }
-fn resolve_bases(
+pub(crate) fn resolve_bases(
     map: &SectionMap,
     image: &[u8],
     relocation: &RelocationIndex,
@@ -1972,6 +1983,12 @@ fn apply_string_anchors(
 }
 
 /// Finds every `ADRP`+`ADD`/`LDR` pair that materialises one of `occurrences`.
+///
+/// The window is 64 bytes rather than 16: a compiler routinely puts a `MOV`,
+/// a load of the second half of a 128-bit value or a register save between the
+/// page load and the `ADD` that completes the address. The register file is
+/// tracked so a pair whose base register was overwritten is not mistaken for a
+/// reference.
 fn find_string_xrefs(
     map: &SectionMap,
     image: &[u8],
@@ -1980,6 +1997,8 @@ fn find_string_xrefs(
     releaser: Option<&dyn PageReleaser>,
 ) {
     const RELEASE_EVERY: usize = 4 * 1024 * 1024;
+    /// Largest instruction distance between the `ADRP`/`ADR` and its user.
+    const MAX_PAIR_DISTANCE: u64 = 64;
     let text = map.bytes_of(TEXT_SECTION, image);
     let mut adrp: [Option<(u64, u64)>; 32] = [None; 32];
     for (index, chunk) in text.as_chunks::<4>().0.iter().enumerate() {
@@ -1991,34 +2010,56 @@ fn find_string_xrefs(
             }
         }
         let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        let destination = (word & 31) as usize;
         if word & 0x9F00_0000 == 0x9000_0000 {
-            let destination = (word & 31) as usize;
             adrp[destination] = Some((pc, adrp_page(pc, word)));
+        } else if word & 0x9F00_0000 == 0x1000_0000 {
+            // ADR materialises a full address with no page base.
+            let immlo = ((word >> 29) & 0x3) as i64;
+            let immhi = ((word >> 5) & 0x7_FFFF) as i64;
+            let target = (pc as i64).wrapping_add(sign_extend((immhi << 2) | immlo, 21)) as u64;
+            if occurrences.contains(&target) {
+                out.insert(pc);
+            }
+            adrp[destination] = Some((pc, target));
         } else if word & 0xFF80_0000 == 0x9100_0000 {
             let source = ((word >> 5) & 31) as usize;
-            let destination = (word & 31) as usize;
             if let Some((adrp_pc, page)) = adrp[source] {
-                if pc.saturating_sub(adrp_pc) <= 16 {
+                if pc.saturating_sub(adrp_pc) <= MAX_PAIR_DISTANCE {
                     let immediate = ((word >> 10) & 0xFFF) as u64;
                     let shift = ((word >> 22) & 0x3) as u64;
                     let target = page.wrapping_add(immediate << (12 * shift));
                     if occurrences.contains(&target) {
                         out.insert(pc);
                     }
-                    adrp[destination] = Some((pc, page));
+                    adrp[destination] = Some((pc, target));
+                } else {
+                    adrp[destination] = None;
                 }
+            } else {
+                adrp[destination] = None;
             }
-        } else if word & 0xFFC0_0000 == 0xF940_0000 {
+        } else if word & 0x3B00_0000 == 0x3900_0000 {
             let source = ((word >> 5) & 31) as usize;
+            let size_field = (word >> 30) & 0x3;
+            let scale = 1u64 << size_field;
             if let Some((adrp_pc, page)) = adrp[source] {
-                if pc.saturating_sub(adrp_pc) <= 16 {
+                if pc.saturating_sub(adrp_pc) <= MAX_PAIR_DISTANCE {
                     let immediate = ((word >> 10) & 0xFFF) as u64;
-                    let target = page.wrapping_add(immediate * 8);
+                    let target = page.wrapping_add(immediate * scale);
                     if occurrences.contains(&target) {
                         out.insert(pc);
                     }
                 }
             }
+            if (word >> 22) & 0x3 != 0 {
+                adrp[destination] = None;
+            }
+        } else if word & 0x7FE0_FFE0 == 0x2A00_03E0 {
+            let source = ((word >> 16) & 31) as usize;
+            adrp[destination] = adrp[source];
+        } else if crate::xref::writes_gpr(word) {
+            adrp[destination] = None;
         }
     }
 }
@@ -2125,13 +2166,40 @@ fn generate_signatures(
         slot_anchor_names(classes, &needs_anchor)
     };
 
+    // The reverse indexes are filtered to the duplicate group members and the
+    // data they reference, so they stay small even on a library with millions
+    // of edges.
+    let (anchor_callers, anchor_referrers) = if needs_anchor.is_empty() {
+        (
+            crate::xref::ReverseIndex::default(),
+            crate::xref::ReverseIndex::default(),
+        )
+    } else {
+        let callers = xrefs.callers_of(&needs_anchor)?;
+        let mut referenced: HashSet<u64> = HashSet::new();
+        for address in &needs_anchor {
+            if let Some(function) = xrefs.function_at(*address) {
+                referenced.extend(xrefs.data_refs_of(function).iter().copied());
+            }
+        }
+        (callers, xrefs.referrers_of(&referenced)?)
+    };
+
     let mut signatures: SignatureMap = HashMap::with_capacity(planned.len());
     for (address, mut signature) in planned {
         if signature.identical_group().is_some() {
             // A group member has no byte pattern of its own, so the last resort
             // is its ordinal inside the group: resolve the shared pattern, then
             // take the Nth hit in address order.
-            let anchor = find_anchor(address, &slot_names, xrefs, &needs_anchor).or_else(|| {
+            let anchor = find_anchor(
+                address,
+                &slot_names,
+                xrefs,
+                &needs_anchor,
+                &anchor_callers,
+                &anchor_referrers,
+            )
+            .or_else(|| {
                 signature.identical_group().map(|group| {
                     format!(
                         "group:{group}/{}#{}",
@@ -2190,32 +2258,28 @@ fn find_anchor(
     slot_names: &HashMap<u64, String>,
     xrefs: &crate::xref::XrefTable,
     group_members: &HashSet<u64>,
+    callers: &crate::xref::ReverseIndex,
+    referrers: &crate::xref::ReverseIndex,
 ) -> Option<Box<str>> {
     if let Some(name) = slot_names.get(&address) {
         return Some(name.as_str().into());
     }
-    let callers = xrefs.callers_of(address);
     let distinct: Vec<u64> = callers
-        .iter()
-        .copied()
+        .sources(address)
+        .into_iter()
         .filter(|caller| !group_members.contains(caller))
         .collect();
     if distinct.len() == 1 {
         return Some(format!("caller:0x{:x}", distinct[0]).into());
     }
-    if let Some(entry) = xrefs
-        .functions
-        .binary_search_by_key(&address, |function| function.address)
-        .ok()
-        .map(|index| &xrefs.functions[index])
-    {
-        for reference in &entry.data_refs {
-            let referrers = xrefs.referencing(*reference);
+    if let Some(entry) = xrefs.function_at(address) {
+        for reference in xrefs.data_refs_of(entry) {
+            let referrers = referrers.sources(*reference);
             if referrers.len() == 1 && referrers[0] == address {
                 return Some(format!("data:0x{reference:x}").into());
             }
         }
-        if let Some(call) = entry.call_sites.first() {
+        if let Some(call) = entry.first_call_site {
             return Some(format!("caller:0x{:x}+0x{:x}", call.target, call.site).into());
         }
     }
@@ -2735,7 +2799,7 @@ type FunctionRanges = Vec<(u64, u64)>;
 type CollectedFunctions = (FunctionRanges, &'static str, usize);
 
 /// Falls back to a prologue walk when `.eh_frame` is absent.
-fn collect_functions(
+pub(crate) fn collect_functions(
     map: &SectionMap,
     image: &[u8],
     control: &ScanControl,
@@ -2750,12 +2814,130 @@ fn collect_functions(
             functions.sort_unstable_by_key(|(start, _)| *start);
             functions.dedup_by_key(|(start, _)| *start);
             if !functions.is_empty() {
-                return Ok((functions, "eh_frame", fde_functions));
+                // `.eh_frame` is not complete: leaf functions, outlined blocks
+                // and hand-written assembly stubs often have no FDE. Walk the
+                // gaps between FDEs and every direct call target so those
+                // functions are not invisible to the table.
+                let filled = fill_function_gaps(map, image, &functions, control)?;
+                return Ok((filled, "eh_frame", fde_functions));
             }
         }
     }
     let functions = scan_prologues(map, image, control)?;
     Ok((functions, "prologue_scan", 0))
+}
+
+/// Adds function starts that `.eh_frame` does not describe.
+///
+/// Two sources are used: a verified prologue inside a gap between FDE ranges,
+/// and the target of a direct `BL`, which is a function start by definition.
+/// Only addresses outside every FDE range are considered, so the FDE sizes that
+/// the rest of the pipeline relies on are never rewritten.
+fn fill_function_gaps(
+    map: &SectionMap,
+    image: &[u8],
+    fde: &[(u64, u64)],
+    control: &ScanControl,
+) -> CoreResult<Vec<(u64, u64)>> {
+    let text = map.bytes_of(TEXT_SECTION, image);
+    if text.len() < 4 {
+        return Ok(fde.to_vec());
+    }
+    let text_base = map.text.address;
+    let text_end = text_base.saturating_add(text.len() as u64);
+
+    // Merge the FDE ranges so a coverage query is a binary search.
+    let mut ranges: Vec<(u64, u64)> = fde
+        .iter()
+        .map(|(start, size)| (*start, start.saturating_add(*size).min(text_end)))
+        .filter(|(start, end)| end > start)
+        .collect();
+    ranges.sort_unstable();
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 {
+                last.1 = last.1.max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    let covered = |address: u64| -> bool {
+        match merged.binary_search_by_key(&address, |(start, _)| *start) {
+            Ok(_) => true,
+            Err(index) => index > 0 && address < merged[index - 1].1,
+        }
+    };
+
+    let verifier = PrologueVerifier::new()?;
+    let limit = fde.len().saturating_mul(4).saturating_add(65_536);
+    let mut candidates: Vec<u64> = Vec::new();
+    for (index, chunk) in text.as_chunks::<4>().0.iter().enumerate() {
+        if index % (1024 * 1024) == 0 && control.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        let address = text_base + (index as u64) * 4;
+        let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+
+        if word & 0xFC00_0000 == 0x9400_0000 {
+            // `bl` target: a function start even without an FDE, provided it
+            // lands in `.text`, outside every FDE range, and decodes as one.
+            let target = crate::xref::branch_target(address, word & 0x03FF_FFFF, 26);
+            if target >= text_base && target < text_end && !covered(target) {
+                let target_offset = (target - text_base) as usize;
+                if verifier.verify(text, target_offset).accepted {
+                    candidates.push(target);
+                    if candidates.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+        if covered(address) {
+            continue;
+        }
+        if is_probable_prologue(word) && verifier.verify(text, index * 4).accepted {
+            candidates.push(address);
+            if candidates.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return Ok(fde.to_vec());
+    }
+
+    let mut merged_functions: Vec<(u64, u64)> = fde.to_vec();
+    merged_functions.extend(candidates.into_iter().map(|address| (address, 0)));
+    merged_functions.sort_unstable_by_key(|(start, _)| *start);
+    // A start that an FDE already described keeps its FDE size.
+    let mut deduped: Vec<(u64, u64)> = Vec::with_capacity(merged_functions.len());
+    for (start, size) in merged_functions {
+        if let Some(last) = deduped.last_mut() {
+            if last.0 == start {
+                if last.1 == 0 {
+                    last.1 = size;
+                }
+                continue;
+            }
+        }
+        deduped.push((start, size));
+    }
+    // A gap-filled start runs to the next start; the last one to the end of
+    // `.text`.
+    let total = deduped.len();
+    for index in 0..total {
+        if deduped[index].1 == 0 {
+            let next = deduped
+                .get(index + 1)
+                .map(|(start, _)| *start)
+                .unwrap_or(text_end);
+            deduped[index].1 = next.saturating_sub(deduped[index].0);
+        }
+    }
+    Ok(deduped)
 }
 
 /// Walks `.text` for recognisable prologues when no unwind table is present.
@@ -2794,13 +2976,25 @@ fn scan_prologues(
 }
 
 /// A cheap pre-filter for the prologue walk.
+///
+/// It only has to be a superset of what the verifier accepts: a false positive
+/// costs one Capstone decode, a false negative loses a function entirely.
 fn is_probable_prologue(word: u32) -> bool {
-    word == 0xD503_237F
-        || word == 0xD503_233F
-        || word & 0xFFC0_7FFF == 0xA980_7BFD
+    // PACIASP / PACIBSP / BTI C
+    word == 0xD503_233F
+        || word == 0xD503_237F
+        || word == 0xD503_245F
+        // stp <two regs>, [sp, #-imm]! — includes the canonical x29/x30 frame
+        // push and a callee-saved x19..x28 save.
+        || word & 0xFFC0_0000 == 0xA980_0000
+        // stp x29, x30, [sp, #imm] — a frame push with a positive offset.
+        || word & 0xFFC0_0000 == 0xA900_0000
+        // sub sp, sp, #imm
         || word & 0xFFC0_03FF == 0xD100_03FF
-        || word & 0xFFFF_FC1F == 0xD503_241F
+        // mov x29, sp
         || word == 0x9100_03FD
+        // str x29, [sp, #-imm]! — a leaf that saves only the frame pointer.
+        || word & 0xFFE0_0FFF == 0xF800_0C1D
 }
 
 #[cfg(test)]
