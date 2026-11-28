@@ -24,14 +24,7 @@ pub fn configure_threads() -> usize {
         let cores = std::thread::available_parallelism()
             .map(|count| count.get())
             .unwrap_or(1);
-        let threads = match total_memory_bytes() {
-            // Under three gigabytes: two workers keep the peak down and still
-            // use the second core for the pattern scan.
-            Some(bytes) if bytes < 3 * GIB => cores.min(2),
-            // A four-gigabyte device can afford four.
-            _ => cores.min(4),
-        }
-        .max(1);
+        let threads = worker_threads(cores, total_memory_bytes());
         // A pool that cannot be built (one already exists) is not an error: the
         // engine then runs on whatever pool is there.
         let _ = rayon::ThreadPoolBuilder::new()
@@ -40,6 +33,20 @@ pub fn configure_threads() -> usize {
             .build_global();
         threads
     })
+}
+
+/// Worker count for the reported core and memory figures.
+///
+/// A 3 GB phone reports about 2.7–3.0 GiB in `/proc/meminfo`. Even one extra
+/// worker doubles the page-fault window and the per-worker result buffers at
+/// the exact moment the signature plan is at its peak, so those devices run
+/// serially. Larger devices keep the existing four-worker cap.
+fn worker_threads(cores: usize, memory: Option<u64>) -> usize {
+    match memory {
+        Some(bytes) if bytes <= 3 * GIB => 1,
+        _ => cores.min(4),
+    }
+    .max(1)
 }
 
 /// One gibibyte, the unit `/proc/meminfo` is read in.
@@ -74,6 +81,13 @@ mod tests {
         assert!((1..=4).contains(&threads), "{threads} threads");
         // A second call must not build a second pool or change the answer.
         assert_eq!(configure_threads(), threads);
+    }
+
+    #[test]
+    fn three_gigabyte_devices_run_one_worker() {
+        assert_eq!(worker_threads(8, Some(3 * GIB)), 1);
+        assert_eq!(worker_threads(8, Some(3 * GIB + 1)), 4);
+        assert_eq!(worker_threads(1, Some(8 * GIB)), 1);
     }
 
     #[test]

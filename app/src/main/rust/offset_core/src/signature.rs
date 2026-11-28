@@ -37,7 +37,7 @@
 //!   library always produces the same output.
 
 use crate::error::{CoreError, CoreResult};
-use crate::scanner::{ProgressSink, ScanControl};
+use crate::scanner::{PageReleaser, ProgressSink, ScanControl};
 
 /// Allocates a filled vector, reporting a failed allocation instead of
 /// aborting the process.
@@ -498,6 +498,33 @@ pub struct PlanStats {
     pub text_passes: usize,
 }
 
+/// Page-release hints for the mapped `.text` section.
+///
+/// `text_file_offset` is the offset of `text[0]` inside the mapped file. The
+/// planner works in text-relative offsets, while [`PageReleaser`] works in file
+/// offsets, so every window is translated before it is handed over.
+#[derive(Clone, Copy, Default)]
+pub struct PlanPages<'a> {
+    /// The mapping's page releaser, when the image is file-backed.
+    pub releaser: Option<&'a dyn PageReleaser>,
+    /// File offset of `text[0]` in the mapping.
+    pub text_file_offset: usize,
+}
+
+impl PlanPages<'_> {
+    fn release(&self, start: usize, end: usize) {
+        if let Some(releaser) = self.releaser {
+            releaser.release(
+                self.text_file_offset.saturating_add(start),
+                self.text_file_offset.saturating_add(end),
+            );
+        }
+    }
+}
+
+/// How far ahead of the read cursor a page window is kept resident.
+const RELEASE_WINDOW: usize = 4 * 1024 * 1024;
+
 /// Plans signatures for every address in `targets`.
 ///
 /// `functions` must be sorted by address; `text_base` is the address of
@@ -506,6 +533,7 @@ pub struct PlanStats {
 /// # Errors
 ///
 /// Returns [`crate::error::CoreError::Cancelled`] when `control` is cancelled.
+#[allow(clippy::too_many_arguments)]
 pub fn plan(
     text: &[u8],
     text_base: u64,
@@ -513,6 +541,7 @@ pub fn plan(
     targets: &[u64],
     control: &ScanControl,
     sink: Option<&dyn ProgressSink>,
+    pages: PlanPages<'_>,
 ) -> CoreResult<(Vec<(u64, Signature)>, PlanStats)> {
     let started = std::time::Instant::now();
     let mut stats = PlanStats {
@@ -529,8 +558,14 @@ pub fn plan(
     let mut heads: Vec<[u32; HEAD_WORDS]> =
         try_filled(functions.len(), [0u32; HEAD_WORDS], "signature heads")?;
     let mut body_words: Vec<u16> = try_filled(functions.len(), 0u16, "signature body words")?;
+    let mut released_to = 0usize;
     for (index, (address, size)) in functions.iter().enumerate() {
         let offset = address.saturating_sub(text_base) as usize;
+        if offset > released_to.saturating_add(RELEASE_WINDOW) {
+            let end = offset.saturating_sub(RELEASE_WINDOW / 2).min(text.len());
+            pages.release(released_to, end);
+            released_to = end;
+        }
         let available = text.len().saturating_sub(offset) / 4;
         let declared = if *size == 0 {
             available
@@ -546,6 +581,10 @@ pub fn plan(
             *slot = normalise(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
         }
     }
+    // The heads hold everything the sort and the prefix pass need. Drop the
+    // mapped text now; refine_run re-reads only the colliding runs and emit
+    // re-reads only each target's prefix.
+    pages.release(0, text.len());
     if control.is_cancelled() {
         return Err(crate::error::CoreError::Cancelled);
     }
@@ -624,6 +663,8 @@ pub fn plan(
         }
         run_start = run_end;
     }
+    drop(heads);
+    pages.release(0, text.len());
     if control.is_cancelled() {
         return Err(crate::error::CoreError::Cancelled);
     }
@@ -646,6 +687,7 @@ pub fn plan(
             };
         }
     }
+    drop(lcp);
 
     // Where each function sits in the sorted order, so emitting a target is a
     // lookup instead of a scan.
@@ -653,9 +695,13 @@ pub fn plan(
     for (slot, index) in order.iter().enumerate() {
         slot_of[*index as usize] = u32::try_from(slot).unwrap_or(u32::MAX);
     }
+    drop(order);
 
-    // Emit.
-    let mut out = Vec::with_capacity(targets.len());
+    // Emit. Targets are sorted, so pages behind the cursor are never read again.
+    let mut released_to = 0usize;
+    let mut out: Vec<(u64, Signature)> = Vec::new();
+    out.try_reserve(targets.len())
+        .map_err(|error| CoreError::OutOfMemory(format!("signature output: {error}")))?;
     for address in targets {
         let Ok(index) = functions.binary_search_by_key(address, |(start, _)| *start) else {
             continue;
@@ -666,6 +712,11 @@ pub fn plan(
             .clamp(MIN_SIGNATURE_WORDS, MAX_SIGNATURE_WORDS)
             .min(body.max(1));
         let offset = address.saturating_sub(text_base) as usize;
+        if offset > released_to.saturating_add(RELEASE_WINDOW) {
+            let end = offset.saturating_sub(RELEASE_WINDOW / 2).min(text.len());
+            pages.release(released_to, end);
+            released_to = end;
+        }
         let mut signature = Signature::from_words(&read_words(text, offset, words));
         signature.set_group(entry.identical_group, entry.group_size.max(1));
         signature.ordinal = entry.ordinal;
@@ -686,6 +737,7 @@ pub fn plan(
         }
         out.push((*address, signature));
     }
+    pages.release(0, text.len());
     stats.millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     report(
         sink,
@@ -897,6 +949,49 @@ mod tests {
         Signature::from_words(words)
     }
 
+    struct RecordingReleaser {
+        spans: std::cell::RefCell<Vec<(usize, usize)>>,
+    }
+
+    impl PageReleaser for RecordingReleaser {
+        fn release(&self, start: usize, end: usize) {
+            self.spans.borrow_mut().push((start, end));
+        }
+    }
+
+    #[test]
+    fn page_release_windows_are_translated_to_file_offsets() {
+        // A section that does not start at file offset zero is the case a
+        // text-relative window would silently release from the ELF header.
+        let text = vec![0u8; 5 * 1024 * 1024];
+        let functions = [
+            (0x1000u64, 4u64),
+            (0x1000 + 4 * 1024 * 1024 + 512 * 1024, 4),
+        ];
+        let releaser = RecordingReleaser {
+            spans: std::cell::RefCell::new(Vec::new()),
+        };
+        let pages = PlanPages {
+            releaser: Some(&releaser),
+            text_file_offset: 0x200,
+        };
+        let control = ScanControl::default();
+        plan(&text, 0x1000, &functions, &[0x1000], &control, None, pages).expect("plan");
+
+        let spans = releaser.spans.borrow();
+        assert!(!spans.is_empty(), "the planner must offer pages back");
+        assert!(
+            spans.iter().all(|(start, end)| {
+                *start >= 0x200 && *end <= 0x200 + text.len() && start <= end
+            }),
+            "release windows must stay inside the text file range: {spans:?}"
+        );
+        assert!(
+            spans.iter().any(|(start, _)| *start == 0x200),
+            "the whole-text release must start at the section file offset"
+        );
+    }
+
     #[test]
     fn a_branch_target_is_masked_but_the_opcode_and_link_bit_survive() {
         let bl_here = 0x9400_0010u32;
@@ -1014,8 +1109,16 @@ mod tests {
         text.extend_from_slice(&0x8B05_0000u32.to_le_bytes());
         let functions = [(0x1000u64, 16u64), (0x1010, 16)];
         let control = ScanControl::default();
-        let (planned, stats) =
-            plan(&text, 0x1000, &functions, &[0x1000, 0x1010], &control, None).expect("plan");
+        let (planned, stats) = plan(
+            &text,
+            0x1000,
+            &functions,
+            &[0x1000, 0x1010],
+            &control,
+            None,
+            PlanPages::default(),
+        )
+        .expect("plan");
         assert_eq!(planned.len(), 2);
         assert_eq!(stats.identical_groups, 0, "the fifth word differs");
         assert_eq!(stats.unique, 2);
@@ -1035,8 +1138,16 @@ mod tests {
         let functions: Vec<(u64, u64)> = (0..4096u64).map(|i| (0x1000 + i * 16, 16)).collect();
         let targets: Vec<u64> = functions.iter().map(|(start, _)| *start).collect();
         let control = ScanControl::default();
-        let (planned, stats) =
-            plan(&text, 0x1000, &functions, &targets, &control, None).expect("plan");
+        let (planned, stats) = plan(
+            &text,
+            0x1000,
+            &functions,
+            &targets,
+            &control,
+            None,
+            PlanPages::default(),
+        )
+        .expect("plan");
         assert_eq!(stats.text_passes, 1, "one plan pass, one uniqueness pass");
         assert_eq!(planned.len(), 4096);
         assert_eq!(stats.identical_groups, 1);
@@ -1063,6 +1174,7 @@ mod tests {
             &[0x1000, 0x1010, 0x1020],
             &control,
             None,
+            PlanPages::default(),
         )
         .expect("plan");
         assert_eq!(planned.len(), 3);
@@ -1097,8 +1209,16 @@ mod tests {
         }
         let functions = [(0x1000u64, 20u64), (0x1014, 20)];
         let control = ScanControl::default();
-        let (planned, _) =
-            plan(&text, 0x1000, &functions, &[0x1000, 0x1014], &control, None).expect("plan");
+        let (planned, _) = plan(
+            &text,
+            0x1000,
+            &functions,
+            &[0x1000, 0x1014],
+            &control,
+            None,
+            PlanPages::default(),
+        )
+        .expect("plan");
         // Three shared words means four are needed.
         assert_eq!(planned[0].1.word_len(), 4);
         assert_eq!(planned[1].1.word_len(), 4);
@@ -1143,6 +1263,7 @@ mod tests {
             &[0x1000, 0x1020, 0x1040],
             &control,
             None,
+            PlanPages::default(),
         )
         .expect("plan a");
         let (planned_b, _) = plan(
@@ -1152,6 +1273,7 @@ mod tests {
             &[0x8000, 0x8020, 0x8040],
             &control,
             None,
+            PlanPages::default(),
         )
         .expect("plan b");
         for ((_, left), (_, right)) in planned_a.iter().zip(planned_b.iter()) {

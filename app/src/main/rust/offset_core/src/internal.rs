@@ -31,7 +31,7 @@ use crate::rtti::{read_u64, RelocationIndex, TypeInfoKind, VtableMap};
 use crate::scanner::{scan_section_releasing_pages, PageReleaser, ProgressSink, ScanControl};
 use crate::sections::{SectionMap, RODATA_SECTION, TEXT_SECTION};
 use crate::shards::{NdjsonWriter, RecordWriter};
-use crate::signature::Signature;
+use crate::signature::{PlanPages, Signature};
 use crate::symbols::{find_symbol_address, DataSymbol, NamedSymbol};
 
 /// Hard sanity limit on the slots read for one class.
@@ -699,13 +699,14 @@ pub fn analyze_with_writer(
             &names,
             &functions,
             &classes,
-            &xrefs,
+            xrefs,
             options.max_signatures,
             control,
             sink,
             releaser,
         )?
     } else {
+        drop(xrefs);
         (
             HashMap::new(),
             false,
@@ -719,10 +720,6 @@ pub fn analyze_with_writer(
         // the write pass faults them back in one function at a time.
         releaser.release(0, usize::MAX);
     }
-    // Nothing after the signature pass reads the cross-reference table. Its
-    // edge arenas are the largest single allocation of the run, so releasing
-    // them here keeps them out of the write pass peak.
-    drop(xrefs);
     report(sink, 90, "Writing the internal table");
     let (addresses, suspect) = merge_addresses(&functions, &names);
     // Every FDE names a function, so every FDE start must appear in the table.
@@ -767,6 +764,13 @@ pub fn analyze_with_writer(
 
     let mut slots_with_size_zero = 0usize;
     for class in &mut classes {
+        if class.record.vtable_groups.is_empty() {
+            continue;
+        }
+        // `record.slots` and `vtable_groups[0].slots` share every Arc. Dropping
+        // the second reference before mutation makes `Arc::make_mut` update in
+        // place; otherwise it clones every primary SlotRecord at the peak.
+        class.record.slots = Vec::new();
         for group in &mut class.record.vtable_groups {
             for slot in &mut group.slots {
                 let slot = Arc::make_mut(slot);
@@ -798,6 +802,10 @@ pub fn analyze_with_writer(
             class.record.slots = primary.slots.clone();
         }
     }
+    // The metadata map is keyed by slot address and carries two strings per
+    // entry. Nothing after the class pass reads it, so drop it before the
+    // class and function writes rather than at function exit.
+    drop(slot_meta);
 
     let signatures_unique = signatures.values().filter(|(_, unique)| *unique).count();
     let vtable_slots = classes
@@ -853,9 +861,13 @@ pub fn analyze_with_writer(
 
     writer.meta(&stats)?;
 
-    for class in &classes {
+    // Hand each class row to the writer and drop its strings, slots and
+    // groups immediately. Keeping the whole Vec alive through the function
+    // loop is hundreds of megabytes of dead weight on a real library.
+    for class in classes.drain(..) {
         writer.class(&class.record)?;
     }
+    drop(classes);
 
     // Data symbols come last: the category documents open their sections in
     // this order so each one is written in a single streaming pass.
@@ -1458,6 +1470,12 @@ fn apply_inheritance(classes: &mut [ClassSlots], bases: &HashMap<String, Vec<Bas
     for (index, class) in classes.iter_mut().enumerate() {
         class.record.bases = base_names[index].clone();
         class.record.base_classes = base_records[index].clone();
+        if class.record.vtable_groups.is_empty() {
+            continue;
+        }
+        // See the signature pass: clear the shared primary reference before
+        // mutating so `Arc::make_mut` does not clone every slot record.
+        class.record.slots = Vec::new();
         if let Some(primary) = class.record.vtable_groups.first_mut() {
             for (slot_index, slot) in primary.slots.iter_mut().enumerate() {
                 let slot = Arc::make_mut(slot);
@@ -1586,6 +1604,12 @@ fn unify_slot_names_by_address(classes: &mut [ClassSlots]) {
         return;
     }
     for class in classes.iter_mut() {
+        if class.record.vtable_groups.is_empty() {
+            continue;
+        }
+        // The primary group and `record.slots` share Arcs; drop the extra
+        // reference before `make_mut` or every renamed slot is cloned.
+        class.record.slots = Vec::new();
         for group in class.record.vtable_groups.iter_mut() {
             for slot in group.slots.iter_mut() {
                 let Some(name) = best.get(&slot.address) else {
@@ -2114,7 +2138,7 @@ fn generate_signatures(
     names: &HashMap<u64, NamedEntry>,
     functions: &[(u64, u64)],
     classes: &[ClassSlots],
-    xrefs: &crate::xref::XrefTable,
+    xrefs: crate::xref::XrefTable,
     max_signatures: usize,
     control: &ScanControl,
     sink: Option<&dyn ProgressSink>,
@@ -2149,8 +2173,25 @@ fn generate_signatures(
     let truncated = addresses.len() > limit;
     addresses.truncate(limit);
 
-    let (planned, stats) =
-        crate::signature::plan(text, map.text.address, functions, &addresses, control, sink)?;
+    let text_file_offset = map.find(TEXT_SECTION).unwrap_or(&map.text).offset as usize;
+    let (planned, stats) = crate::signature::plan(
+        text,
+        map.text.address,
+        functions,
+        &addresses,
+        control,
+        sink,
+        PlanPages {
+            releaser,
+            text_file_offset,
+        },
+    )?;
+
+    // The planner is the last stage that reads `.text`. Drop its pages before
+    // the anchor hints and the signature map are allocated.
+    if let Some(releaser) = releaser {
+        releaser.release(0, usize::MAX);
+    }
 
     // The anchor map is built only for the addresses that actually need one, so
     // a library with no identical bodies pays nothing for it.
@@ -2168,7 +2209,10 @@ fn generate_signatures(
 
     // The reverse indexes are filtered to the duplicate group members and the
     // data they reference, so they stay small even on a library with millions
-    // of edges.
+    // of edges. The per-anchor data refs and first call are copied at the same
+    // time so the full `XrefTable` can be dropped before the signature map.
+    let mut anchor_data_refs: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut anchor_calls: HashMap<u64, crate::xref::Call> = HashMap::new();
     let (anchor_callers, anchor_referrers) = if needs_anchor.is_empty() {
         (
             crate::xref::ReverseIndex::default(),
@@ -2179,13 +2223,26 @@ fn generate_signatures(
         let mut referenced: HashSet<u64> = HashSet::new();
         for address in &needs_anchor {
             if let Some(function) = xrefs.function_at(*address) {
-                referenced.extend(xrefs.data_refs_of(function).iter().copied());
+                let refs = xrefs.data_refs_of(function);
+                if !refs.is_empty() {
+                    anchor_data_refs.insert(*address, refs.to_vec());
+                }
+                if let Some(call) = function.first_call_site {
+                    anchor_calls.insert(*address, call);
+                }
+                referenced.extend(refs.iter().copied());
             }
         }
         (callers, xrefs.referrers_of(&referenced)?)
     };
+    // The cross-reference table is the largest single allocation of the run.
+    // Everything needed from it is now in the filtered indexes above.
+    drop(xrefs);
 
-    let mut signatures: SignatureMap = HashMap::with_capacity(planned.len());
+    let mut signatures: SignatureMap = HashMap::new();
+    signatures
+        .try_reserve(planned.len())
+        .map_err(|error| CoreError::OutOfMemory(format!("signature map: {error}")))?;
     for (address, mut signature) in planned {
         if signature.identical_group().is_some() {
             // A group member has no byte pattern of its own, so the last resort
@@ -2194,7 +2251,8 @@ fn generate_signatures(
             let anchor = find_anchor(
                 address,
                 &slot_names,
-                xrefs,
+                &anchor_data_refs,
+                &anchor_calls,
                 &needs_anchor,
                 &anchor_callers,
                 &anchor_referrers,
@@ -2222,9 +2280,6 @@ fn generate_signatures(
             stats.text_passes, stats.functions, stats.unique, stats.identical_functions
         ),
     );
-    if let Some(releaser) = releaser {
-        releaser.release(0, usize::MAX);
-    }
     Ok((signatures, truncated, stats))
 }
 
@@ -2256,7 +2311,8 @@ fn slot_anchor_names(classes: &[ClassSlots], wanted: &HashSet<u64>) -> HashMap<u
 fn find_anchor(
     address: u64,
     slot_names: &HashMap<u64, String>,
-    xrefs: &crate::xref::XrefTable,
+    data_refs: &HashMap<u64, Vec<u64>>,
+    first_calls: &HashMap<u64, crate::xref::Call>,
     group_members: &HashSet<u64>,
     callers: &crate::xref::ReverseIndex,
     referrers: &crate::xref::ReverseIndex,
@@ -2272,16 +2328,16 @@ fn find_anchor(
     if distinct.len() == 1 {
         return Some(format!("caller:0x{:x}", distinct[0]).into());
     }
-    if let Some(entry) = xrefs.function_at(address) {
-        for reference in xrefs.data_refs_of(entry) {
+    if let Some(references) = data_refs.get(&address) {
+        for reference in references {
             let referrers = referrers.sources(*reference);
             if referrers.len() == 1 && referrers[0] == address {
                 return Some(format!("data:0x{reference:x}").into());
             }
         }
-        if let Some(call) = entry.first_call_site {
-            return Some(format!("caller:0x{:x}+0x{:x}", call.target, call.site).into());
-        }
+    }
+    if let Some(call) = first_calls.get(&address) {
+        return Some(format!("caller:0x{:x}+0x{:x}", call.target, call.site).into());
     }
     None
 }
@@ -3559,7 +3615,13 @@ mod tests {
             name: "Actor::getHealth".to_string(),
             ..(*classes[0].record.vtable_groups[0].slots[0]).clone()
         });
+        let slot_before = Arc::as_ptr(&classes[1].record.vtable_groups[0].slots[0]);
         unify_slot_names_by_address(&mut classes);
+        assert_eq!(
+            slot_before,
+            Arc::as_ptr(&classes[1].record.vtable_groups[0].slots[0]),
+            "clearing the shared primary ref must let make_mut update in place"
+        );
         assert_eq!(
             classes[1].record.vtable_groups[0].slots[0].name,
             "Actor::getHealth"
@@ -3591,8 +3653,14 @@ mod tests {
             }],
         );
 
+        let slot_before = Arc::as_ptr(&classes[1].record.vtable_groups[0].slots[0]);
         apply_inheritance(&mut classes, &bases);
 
+        assert_eq!(
+            slot_before,
+            Arc::as_ptr(&classes[1].record.vtable_groups[0].slots[0]),
+            "inheritance must update the primary slot in place"
+        );
         let derived = &classes[1].record;
         assert!(derived.slots[0].inherited);
         assert!(!derived.slots[0].overrides);

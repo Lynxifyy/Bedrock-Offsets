@@ -298,3 +298,20 @@ path stays device-UNVERIFIED.
   `untagged` until published; publishing creates the tag.
 - GitHub rejected pushes with `GH007` until the author email was changed to
   `297587416+Lynxifyy@users.noreply.github.com`; the existing commits used a private address.
+
+### Internal C++ peak-RSS pass (2026-11-28)
+- `ClassRecord.slots` shares every `Arc<SlotRecord>` with `vtable_groups[0].slots`. Clear
+  `record.slots` before any `Arc::make_mut` pass, then restore the primary clone afterwards;
+  otherwise every primary slot is deep-cloned. This applies to `apply_inheritance`,
+  `unify_slot_names_by_address`, and the final signature/status pass.
+- `signature::plan` now takes `PlanPages { releaser, text_file_offset }`. The planner works in
+  text-relative offsets while `PageReleaser` expects **file offsets**, so a window must add the
+  section's `sh_offset`; passing text-relative offsets silently releases ELF-header pages.
+- `generate_signatures` takes `XrefTable` by value, copies only per-anchor data refs/first calls,
+  then drops the full table before allocating the signature map. `classes` is drained before the
+  function write loop and `slot_meta` is dropped after the class pass.
+- Gates after this pass: `cargo test --all-targets` = 210 unit tests (1 ignored) plus all
+  integration targets, `cargo clippy --all-targets -- -D warnings`, `cargo doc` with
+  `RUSTDOCFLAGS=-D warnings`, and `scripts/build_rust.py` (4,137,504-byte
+  `liboffset_core.so`). `:app:testDebugUnitTest` cannot run in this container because there is no
+  JDK / `JAVA_HOME`.
