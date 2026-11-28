@@ -218,3 +218,25 @@ so empty screens draw empty states (honesty rule). See the 2026-11-14 daily log 
 - Pro script exports live in `data/export/OffsetScripts.kt` (`ScriptFormat`: IdaPython,
   GhidraScript, FridaTypeScript, CppHeader); they emit RVAs (`address - imageBase`), dedupe by name
   and cap at `ENTRY_LIMIT`.
+
+- **Maven Central rate-limits this container (HTTP 429)**, and Gradle only notices once the
+  configuration cache is invalidated (e.g. by editing `build.gradle.kts`) — then plugin *and* artifact
+  resolution both fail. Workaround without touching the repo: an init script
+  (`./gradlew ... -I /tmp/central-mirror.gradle`) that rewrites every `repo.maven.apache.org` /
+  `repo1.maven.org` repository URL to `https://maven-central.storage-download.googleapis.com/maven2/`
+  and, for `tasks.withType(Test)`, sets `robolectric.dependency.repo.url` to the same mirror —
+  Robolectric fetches its `android-all-instrumented` jar itself from a hardcoded Central URL and
+  otherwise fails with "Failed to fetch maven artifact". `--offline` is not a substitute: it fails at
+  plugin resolution (`com.android.application` not found) once the config cache is invalid.
+- **This container's `~/.cargo` can vanish between sessions** while `/workspace` and `~/.gradle`
+  survive; `cargo: command not found` then means reinstall
+  (`curl https://sh.rustup.rs | sh -s -- -y --profile minimal`, `rustup component add rustfmt clippy`,
+  `rustup target add aarch64-linux-android`), not a broken repo.
+- **Release flow**: bump `versionCode`/`versionName` in `app/build.gradle.kts`, add a
+  `## vX.Y.Z` block to `CHANGELOG.md`, `python3 scripts/verify_version.py --tag vX.Y.Z`, push `main`,
+  push an annotated `v*` tag. `.github/workflows/release.yml` builds the APK, runs
+  `verify_release.py`, and `gh release create`s it **without `--prerelease`** and with an
+  auto-generated body — so follow up with `gh release edit vX.Y.Z --prerelease --title ... --notes-file
+  ...`. Signing secrets (`SIGNING_KEYSTORE_BASE64`) are unset, so the asset is debug-signed and the
+  run logs `::warning::No SIGNING_KEYSTORE_BASE64`.
+- Verified counts on this snapshot: **365 Kotlin**, **292 Rust** (4 ignored), **134 Python** tests.
