@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
@@ -180,12 +180,16 @@ fun ResultsScreen(
         internalRows = emptyList()
         internalOffset = 0
         internalHasMore = false
-        if (effectiveQuery.isBlank() || !index.isAvailable()) {
+        if (!index.isAvailable()) {
             return@LaunchedEffect
         }
-        // A short debounce keeps typing responsive while still searching a
-        // multi-megabyte table without blocking the main thread.
-        delay(200)
+        // A blank query loads the first page so the internal C++ offsets are
+        // browsable without typing. A short debounce keeps typing responsive
+        // while still searching a multi-megabyte table without blocking the
+        // main thread.
+        if (effectiveQuery.isNotBlank()) {
+            delay(200)
+        }
         val page = withContext(Dispatchers.IO) { index.searchPage(effectiveQuery, 0) }
         internalRows = page.rows
         internalOffset = page.rows.size
@@ -223,10 +227,12 @@ fun ResultsScreen(
                     )
                 }
             }
-            items(
+            // Duplicate (category, name, address) rows are possible, so the
+            // index is part of the key to guarantee uniqueness.
+            itemsIndexed(
                 visible,
-                key = { "${it.category}:${it.name}:${it.addressHex}" }
-            ) { row ->
+                key = { index, row -> "$index:${row.category}:${row.name}:${row.addressHex}" }
+            ) { _, row ->
                 OffsetRowItem(row = row, onCopyName = onCopyName)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }

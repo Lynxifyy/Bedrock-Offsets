@@ -184,6 +184,16 @@ class InternalIndexPagingTest {
     }
 
     @Test
+    fun aBlankQueryReturnsTheFirstPageInsteadOfNothing() {
+        val page = indexWith(5).searchPage("", offset = 0, pageSize = 2)
+
+        assertEquals(2, page.rows.size)
+        assertTrue(page.hasMore)
+        assertEquals("Function0", page.rows[0].name)
+        assertEquals("Function1", page.rows[1].name)
+    }
+
+    @Test
     fun theFirstPageStopsAtThePageSizeAndReportsMore() {
         val page = indexWith(5).searchPage("Function", offset = 0, pageSize = 2)
 

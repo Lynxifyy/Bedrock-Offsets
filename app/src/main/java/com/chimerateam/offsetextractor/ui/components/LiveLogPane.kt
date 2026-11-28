@@ -16,7 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -178,10 +178,15 @@ fun LiveLogPane(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    items(
+                    // Two entries can share a timestamp and a message, and a
+                    // hashCode collision is always possible; the index makes
+                    // every key unique so Compose cannot crash on a duplicate.
+                    itemsIndexed(
                         entries,
-                        key = { it.timestampMillis.toString() + it.message.hashCode() }
-                    ) { entry ->
+                        key = { index, entry ->
+                            "$index:${entry.timestampMillis}:${entry.message.hashCode()}"
+                        }
+                    ) { _, entry ->
                         LogLine(entry)
                     }
                 }

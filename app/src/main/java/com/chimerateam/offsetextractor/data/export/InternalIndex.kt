@@ -48,8 +48,8 @@ class InternalIndex(private val sources: List<File>) {
      * Returns the rows matching [query].
      *
      * Matches names, aliases, mangled names, addresses, and `Class[slot]`
-     * selectors. Returns an empty list for a blank query so the list stays
-     * short until the user asks for something.
+     * selectors. A blank query matches every row, which is what makes the
+     * internal C++ offsets browsable before the user types anything.
      *
      * @param query search text.
      * @param limit maximum rows to return.
@@ -61,7 +61,6 @@ class InternalIndex(private val sources: List<File>) {
         offset: Int = 0
     ): List<OffsetRow> {
         val needle = query.trim()
-        if (needle.isEmpty()) return emptyList()
         val sink = RowSink(offset.coerceAtLeast(0), limit.coerceAtLeast(0))
         for (file in sources) {
             if (sink.isFull()) break
