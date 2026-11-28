@@ -339,9 +339,16 @@ class MainViewModel(
      * points at it: deleting it would turn a cache hit into an export that can
      * never be built.
      */
-    private fun keepTablePath(): String? =
-        _uiState.value.result?.internal?.path?.takeIf { it.isNotBlank() }
-            ?: storage?.newestTable()?.absolutePath
+    private fun keepTablePath(): String? {
+        val internal = _uiState.value.result?.internal
+        val singleTable = internal?.path?.takeIf { it.isNotBlank() }
+        if (singleTable != null) return singleTable
+        // A category scan records no `path`; the shards are the table and the
+        // directory that holds them is what a sweep must keep.
+        val shardDirectory = internal?.shards?.firstOrNull()?.path
+            ?.let { File(it).parentFile?.absolutePath }
+        return shardDirectory ?: storage?.newestTable()?.absolutePath
+    }
 
     /** Recomputes the storage list and the cache size. */
     private fun refreshStorageUsage() {
@@ -1474,7 +1481,7 @@ class MainViewModel(
                 VtableResolution(resumed.vtables, resumed.vtableError)
             }
             current = ensureExtractedFile(source, current)
-            val internal = analyzeInternal(current)
+            val internal = analyzeInternal(current, symbols.identity.buildId)
 
             val summary = ScanResultSummary(
                 displayName = source.metadata.displayName,
@@ -1638,7 +1645,10 @@ class MainViewModel(
      * A failure is reported and remembered, but it never discards the JNI scan
      * that already finished.
      */
-    private suspend fun analyzeInternal(extracted: ExtractedNativeLibrary): InternalAnalysis? {
+    private suspend fun analyzeInternal(
+        extracted: ExtractedNativeLibrary,
+        buildId: String
+    ): InternalAnalysis? {
         lastInternalError = null
         val options = InternalOptions(
             includeAllFunctions = includeAllFunctions.value,
@@ -1660,7 +1670,9 @@ class MainViewModel(
                 apkName = _uiState.value.selectedApk?.displayName.orEmpty(),
                 sha256 = extracted.sha256,
                 architecture = "arm64-v8a",
-                buildId = _lastBuildId.value
+                // The freshly computed identity, not the previous scan's id:
+                // it is only stored in `_lastBuildId` after this pass returns.
+                buildId = buildId
             )
         )
         val output = cache?.internalDir ?: File(cacheDir, "internal")
@@ -1800,7 +1812,7 @@ class MainViewModel(
         }
         viewModelScope.launch(supervisor + ioDispatcher) {
             _uiState.update { it.copy(progressTask = "Extracting internal offsets", progress = 0) }
-            val analysis = analyzeInternal(extracted)
+            val analysis = analyzeInternal(extracted, result.buildId)
             val current = _uiState.value.result ?: return@launch
             val updated = current.copy(
                 internal = analysis?.summary ?: current.internal,

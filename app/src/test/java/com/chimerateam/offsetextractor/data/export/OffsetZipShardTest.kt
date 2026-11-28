@@ -16,8 +16,8 @@ import org.junit.Test
  * Verifies the export path for the category documents the engine writes.
  *
  * The archive must copy those documents byte for byte, count them correctly in
- * the manifest, delete each one once it is inside the archive, and never hold a
- * row on the Java heap.
+ * the manifest, leave them on disk for the in-app search and later exports, and
+ * never hold a row on the Java heap.
  */
 class OffsetZipShardTest {
 
@@ -104,7 +104,7 @@ class OffsetZipShardTest {
     }
 
     @Test
-    fun everyShardBecomesOneEntryAndIsDeletedAfterwards() {
+    fun everyShardBecomesOneEntryAndSurvivesTheExport() {
         val dir = createTempDirectory("shards-").toFile()
         val shards = listOf(
             shard(dir, "block_placement", functions = 3, classes = 2),
@@ -128,8 +128,8 @@ class OffsetZipShardTest {
         }
         shards.forEach { shard ->
             assertTrue(
-                "the shard must be deleted once it is in the archive",
-                !File(shard.path).exists()
+                "the shard must survive the export for the in-app search",
+                File(shard.path).isFile
             )
         }
     }

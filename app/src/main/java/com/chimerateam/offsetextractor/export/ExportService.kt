@@ -34,13 +34,17 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Foreground service that owns a download from start to finish.
@@ -54,6 +58,23 @@ class ExportService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
+
+    /**
+     * Serialises the jobs that share the partial path, the repository and the
+     * startId. A cancelled job holds it until its cleanup finishes, so a newer
+     * job can never start writing while the old one is still unwinding.
+     */
+    private val runLock = Mutex()
+
+    /**
+     * The job that currently owns the repository, the persisted record and the
+     * cached ZIP paths.
+     *
+     * A cancelled job must not touch those while a newer one runs, so every
+     * shared-state write is guarded by this id.
+     */
+    @Volatile
+    private var activeJobId: String? = null
     private var lastNotificationMillis = 0L
     private var lastPersistMillis = 0L
 
@@ -93,14 +114,30 @@ class ExportService : Service() {
             )
         )
 
+        // Two overlapping starts used to run two `runJob` coroutines that share
+        // the same partial path, repository and startId. Claim the new job
+        // before cancelling the old one so its cleanup cannot reset the new
+        // state, and let the lock hold the new job until that cleanup is done.
+        // `runJob` has no suspension points, so it only observes the cancel
+        // through the explicit `ensureActive` checks below.
+        val previous = job
+        activeJobId = jobId
+        lastPersistMillis = 0L
+        lastNotificationMillis = 0L
+        previous?.cancel()
         job = scope.launch {
-            runJob(
-                destination = Uri.parse(destination),
-                fileName = fileName,
-                jobId = jobId,
-                retryOnly = retryOnly
-            )
-            stopSelf(startId)
+            runLock.withLock {
+                runJob(
+                    destination = Uri.parse(destination),
+                    fileName = fileName,
+                    jobId = jobId,
+                    retryOnly = retryOnly
+                )
+            }
+            if (jobId == activeJobId) {
+                activeJobId = null
+                stopSelf(startId)
+            }
         }
         return START_NOT_STICKY
     }
@@ -126,6 +163,10 @@ class ExportService : Service() {
         var zipRows = 0
         var zipBytes = 0L
         var stage = if (retryOnly) ExportStage.Saving else ExportStage.Building
+        // The body is entirely blocking, so the coroutine only stops if these
+        // checks throw; `job.cancel()` alone would let it run to completion.
+        val context = coroutineContext
+        context.ensureActive()
         try {
             if (!retryOnly) {
                 val summary = ExportJobRepository.pendingSummary
@@ -158,6 +199,7 @@ class ExportService : Service() {
                     target = partial,
                     includeCombined = ExportJobRepository.includeCombined
                 ) { fraction, _ ->
+                    context.ensureActive()
                     val overall = fraction * BUILD_SHARE
                     publish(
                         stage = ExportStage.Building,
@@ -180,6 +222,7 @@ class ExportService : Service() {
                         zipPath = null
                     )
                 }
+                context.ensureActive()
                 if (!result.verified) {
                     throw IOException("The archive failed verification; nothing was saved.")
                 }
@@ -213,6 +256,7 @@ class ExportService : Service() {
                 throw IOException("The cached archive is missing; run the scan again.")
             }
 
+            context.ensureActive()
             val total = zip.length()
             var done = 0L
             val output = contentResolver.openOutputStream(destination, "wt")
@@ -221,6 +265,7 @@ class ExportService : Service() {
                 BufferedOutputStream(output, COPY_BUFFER_BYTES).use { out ->
                     val buffer = ByteArray(COPY_BUFFER_BYTES)
                     while (true) {
+                        context.ensureActive()
                         val read = input.read(buffer)
                         if (read < 0) break
                         out.write(buffer, 0, read)
@@ -260,44 +305,49 @@ class ExportService : Service() {
                 TAG_ZIP,
                 "ZIP: saved $total bytes to $fileName ($zipFiles files, $zipRows rows)"
             )
-            ExportJobRepository.complete(
-                zipPath = zip.absolutePath,
-                files = zipFiles,
-                internalRows = zipRows,
-                archiveBytes = zipBytes
-            )
-            store.save(
-                PersistedExportJob(
-                    jobId = jobId,
-                    zipName = fileName,
-                    destinationUri = destination.toString(),
-                    stage = ExportStage.Saving.name,
-                    bytesDone = total,
-                    bytesTotal = total,
-                    state = ExportState.Done.name,
-                    zipPath = zip.absolutePath
+            if (jobId == activeJobId) {
+                ExportJobRepository.complete(
+                    zipPath = zip.absolutePath,
+                    files = zipFiles,
+                    internalRows = zipRows,
+                    archiveBytes = zipBytes
                 )
-            )
-            // The user's copy is written and synced, so the cache copy is now
-            // dead weight: one archive is a fifth of a gigabyte on the largest
-            // build. An interrupted copy keeps it, which is what makes Retry
-            // resume instead of rescanning.
-            runCatching { if (zip.isFile) zip.delete() }
-            store.clear()
-            // The cached copy is gone, so the snapshot keeps the destination
-            // URI: Share resolves that, not a path that no longer exists.
-            ExportJobRepository.publish(
-                ExportJobRepository.snapshot().copy(
-                    zipPath = null,
-                    destinationUri = destination.toString()
+                store.save(
+                    PersistedExportJob(
+                        jobId = jobId,
+                        zipName = fileName,
+                        destinationUri = destination.toString(),
+                        stage = ExportStage.Saving.name,
+                        bytesDone = total,
+                        bytesTotal = total,
+                        state = ExportState.Done.name,
+                        zipPath = zip.absolutePath
+                    )
                 )
-            )
-            notifyFinished(fileName, success = true)
+                // The user's copy is written and synced, so the cache copy is
+                // now dead weight: one archive is a fifth of a gigabyte on the
+                // largest build. An interrupted copy keeps it, which is what
+                // makes Retry resume instead of rescanning.
+                runCatching { if (zip.isFile) zip.delete() }
+                store.clear()
+                // The cached copy is gone, so the snapshot keeps the destination
+                // URI: Share resolves that, not a path that no longer exists.
+                ExportJobRepository.publish(
+                    ExportJobRepository.snapshot().copy(
+                        zipPath = null,
+                        destinationUri = destination.toString()
+                    )
+                )
+                notifyFinished(fileName, success = true)
+            }
         } catch (cancelled: CancellationException) {
+            runCatching { partial.delete() }
             deleteDestination(destination)
-            ExportJobRepository.cancel()
-            store.load()?.let { store.save(it.copy(state = ExportState.Cancelled.name)) }
-            notifyFinished(fileName, success = false, message = "Download cancelled")
+            if (jobId == activeJobId) {
+                ExportJobRepository.cancel()
+                store.load()?.let { store.save(it.copy(state = ExportState.Cancelled.name)) }
+                notifyFinished(fileName, success = false, message = "Download cancelled")
+            }
         } catch (outOfMemory: OutOfMemoryError) {
             deleteDestination(destination)
             runCatching { partial.delete() }
@@ -313,17 +363,19 @@ class ExportService : Service() {
                     "max ${formatBytes(runtime.maxMemory())})",
                 outOfMemory
             )
-            ExportJobRepository.fail(
-                "The archive could not be built because the app ran out of memory. " +
-                    "Close other apps and try again.",
-                interrupted = false
-            )
-            store.clear()
-            notifyFinished(
-                fileName,
-                success = false,
-                message = "the app ran out of memory"
-            )
+            if (jobId == activeJobId) {
+                ExportJobRepository.fail(
+                    "The archive could not be built because the app ran out of memory. " +
+                        "Close other apps and try again.",
+                    interrupted = false
+                )
+                store.clear()
+                notifyFinished(
+                    fileName,
+                    success = false,
+                    message = "the app ran out of memory"
+                )
+            }
         } catch (error: Throwable) {
             deleteDestination(destination)
             // A partial archive is never resumable: the ZIP central directory
@@ -341,13 +393,17 @@ class ExportService : Service() {
                 listOfNotNull(friendly.message, friendly.hint).joinToString(" ")
             }
             android.util.Log.e(TAG_ZIP, "Export failed at stage $stage: $message", error)
-            ExportJobRepository.fail(message, interrupted = !noSpace && zip.isFile)
-            if (!noSpace && zip.isFile) {
-                store.load()?.let { store.save(it.copy(state = ExportState.Interrupted.name)) }
-            } else {
-                store.clear()
+            if (jobId == activeJobId) {
+                ExportJobRepository.fail(message, interrupted = !noSpace && zip.isFile)
+                if (!noSpace && zip.isFile) {
+                    store.load()?.let {
+                        store.save(it.copy(state = ExportState.Interrupted.name))
+                    }
+                } else {
+                    store.clear()
+                }
+                notifyFinished(fileName, success = false, message = message)
             }
-            notifyFinished(fileName, success = false, message = message)
         }
     }
 
@@ -360,6 +416,7 @@ class ExportService : Service() {
         destination: Uri,
         jobId: String
     ) {
+        if (jobId != activeJobId) return
         ExportJobRepository.publish(
             ExportProgress(
                 stage = stage,
@@ -385,6 +442,7 @@ class ExportService : Service() {
         state: ExportState,
         zipPath: String?
     ) {
+        if (jobId != activeJobId) return
         val now = System.currentTimeMillis()
         if (state == ExportState.Running && now - lastPersistMillis < PERSIST_INTERVAL_MILLIS) {
             return

@@ -146,7 +146,7 @@ class StorageManager(
      * @param keepZipPath cached ZIP an interrupted job still needs.
      */
     fun usage(keepTablePath: String? = null, keepZipPath: String? = null): StorageUsage {
-        val keep = setOfNotNull(keepTablePath?.takeIf { it.isNotBlank() }, keepZipPath)
+        val keep = keepState(keepTablePath, keepZipPath)
         val areas = listOf(
             StorageAreaId.Apks to apkDir,
             StorageAreaId.Libraries to libraryDir,
@@ -177,7 +177,7 @@ class StorageManager(
         keepApks: Boolean = false
     ): Long {
         var freed = 0L
-        val keep = setOfNotNull(keepTablePath?.takeIf { it.isNotBlank() }, keepZipPath)
+        val keep = keepState(keepTablePath, keepZipPath)
         // A `.part` or `.tmp` file is always a leftover: every writer either
         // renames it into place or deletes it in its own failure path.
         for (dir in listOf(apkDir, libraryDir, internalDir, exportDir, documentDir, logDir)) {
@@ -196,13 +196,12 @@ class StorageManager(
                 }
             }
         }
-        val table = keepTablePath?.takeIf { it.isNotBlank() }?.let(::File)
-        val keepDirectory = table?.parentFile
         for (file in listFiles(internalDir)) {
-            if (file.isFile && file.absolutePath !in keep) {
+            if (file.isFile) {
+                if (keep.needs(file)) continue
                 freed += sizeOf(file)
                 delete(file)
-            } else if (file.isDirectory && file.absolutePath != keepDirectory?.absolutePath) {
+            } else if (file.isDirectory && !keep.needsDirectory(file)) {
                 freed += sizeOf(file)
                 deleteTree(file)
             }
@@ -214,7 +213,7 @@ class StorageManager(
             }
         }
         for (file in listFiles(exportDir)) {
-            if (file.isFile && file.absolutePath !in keep) {
+            if (file.isFile && !keep.needs(file)) {
                 freed += sizeOf(file)
                 delete(file)
             }
@@ -229,20 +228,18 @@ class StorageManager(
      * @return bytes reclaimed.
      */
     fun freeUpSpace(keepTablePath: String? = null): Long {
-        val table = keepTablePath?.takeIf { it.isNotBlank() }?.let(::File)
+        val keep = keepState(keepTablePath, null)
         var freed = 0L
         for (dir in listOf(apkDir, libraryDir, exportDir, documentDir, logDir)) {
             freed += sizeOf(dir)
             deleteTree(dir)
         }
-        val keepDirectory = table?.parentFile
         for (file in listFiles(internalDir)) {
-            val keep = file.absolutePath == table?.absolutePath ||
-                file.absolutePath == keepDirectory?.absolutePath
-            if (!keep) {
-                freed += sizeOf(file)
-                if (file.isDirectory) deleteTree(file) else delete(file)
+            if (keep.needs(file) || (file.isDirectory && keep.needsDirectory(file))) {
+                continue
             }
+            freed += sizeOf(file)
+            if (file.isDirectory) deleteTree(file) else delete(file)
         }
         return freed
     }
@@ -256,15 +253,14 @@ class StorageManager(
      */
     fun deleteArea(id: StorageAreaId, keepTablePath: String? = null): Long {
         val dir = directoryOf(id)
-        val table = keepTablePath?.takeIf { it.isNotBlank() }?.let(::File)
+        val keep = if (id == StorageAreaId.Internal) keepState(keepTablePath, null) else null
         var freed = 0L
         for (file in listFiles(dir)) {
-            val keep = id == StorageAreaId.Internal &&
-                (
-                    file.absolutePath == table?.absolutePath ||
-                        file.absolutePath == table?.parentFile?.absolutePath
-                    )
-            if (keep) continue
+            if (keep != null &&
+                (keep.needs(file) || (file.isDirectory && keep.needsDirectory(file)))
+            ) {
+                continue
+            }
             freed += sizeOf(file)
             if (file.isDirectory) deleteTree(file) else delete(file)
         }
@@ -312,11 +308,80 @@ class StorageManager(
      * Newest internal table on disk, or `null` when there is none.
      *
      * The sweep keeps it so the cached result of the previous scan can still be
-     * exported after the app restarts.
+     * exported after the app restarts. A category scan writes one `.json`
+     * document per category plus `map.json` directly into [internalDir]; there
+     * is no single table file to keep, so the directory itself is returned and
+     * the whole set survives.
      */
-    fun newestTable(): File? = listFiles(internalDir)
-        .filter { it.isFile && it.name.endsWith(".ndjson") }
-        .maxByOrNull { it.lastModified() }
+    fun newestTable(): File? {
+        val newest = listFiles(internalDir)
+            .filter {
+                (it.isFile && (it.name.endsWith(".ndjson") || it.name.endsWith(".json"))) ||
+                    it.isDirectory
+            }
+            .maxByOrNull { it.lastModified() } ?: return null
+        return when {
+            newest.isDirectory -> newest
+            newest.name.endsWith(".ndjson") -> newest
+            else -> internalDir
+        }
+    }
+
+    /**
+     * Which files a result still needs.
+     *
+     * A single-table result needs one path. A category result points at the
+     * directory that holds every shard, so all of its direct files are needed.
+     *
+     * @property tablePath path of a single table, when the result has one.
+     * @property tableDirectory directory whose files the result needs, when the
+     *   result is a set of category documents.
+     * @property zipPath cached ZIP an interrupted job still needs.
+     */
+    private class KeepState(
+        private val tablePath: String?,
+        private val tableDirectory: File?,
+        private val zipPath: String?
+    ) {
+        /** Whether [file] must survive a sweep. */
+        fun needs(file: File): Boolean {
+            if (file.absolutePath == zipPath) return true
+            if (file.absolutePath == tablePath) return true
+            return file.isFile &&
+                tableDirectory != null &&
+                file.parentFile?.absolutePath == tableDirectory.absolutePath
+        }
+
+        /** Whether the directory [dir] holds files the result needs. */
+        fun needsDirectory(dir: File): Boolean = dir.absolutePath == tablePath ||
+            dir.absolutePath == tableDirectory?.absolutePath
+    }
+
+    /**
+     * Resolves [keepTablePath] into the paths a sweep must leave alone.
+     *
+     * @param keepTablePath table, shard directory or `null`.
+     * @param keepZipPath cached ZIP or `null`.
+     */
+    private fun keepState(keepTablePath: String?, keepZipPath: String?): KeepState {
+        val table = keepTablePath?.takeIf { it.isNotBlank() }?.let(::File)
+        // A top-level file keeps only itself; a file in a sub-directory keeps
+        // its siblings too, because the whole sub-directory is one result.
+        val directory = table?.let {
+            if (it.isDirectory) {
+                it
+            } else {
+                it.parentFile?.takeIf { parent ->
+                    parent.absolutePath != internalDir.absolutePath
+                }
+            }
+        }
+        return KeepState(
+            tablePath = table?.absolutePath,
+            tableDirectory = directory,
+            zipPath = keepZipPath?.takeIf { it.isNotBlank() }
+        )
+    }
 
     /**
      * Deletes one file, used by the per-item delete button.
@@ -344,15 +409,13 @@ class StorageManager(
         StorageAreaId.Logs -> logDir
     }
 
-    private fun areaOf(id: StorageAreaId, dir: File, keep: Set<String>): StorageArea {
-        val keepParents = keep.mapNotNull { File(it).parentFile?.absolutePath }.toSet()
+    private fun areaOf(id: StorageAreaId, dir: File, keep: KeepState): StorageArea {
         val files = listFiles(dir).map { file ->
             StorageFile(
                 file = file,
                 area = id,
                 bytes = sizeOf(file),
-                neededByResult = file.absolutePath in keep ||
-                    file.absolutePath in keepParents
+                neededByResult = keep.needs(file)
             )
         }.sortedByDescending { it.bytes }
         return StorageArea(id, files.sumOf { it.bytes }, files)

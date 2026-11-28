@@ -92,6 +92,90 @@ class StorageManagerTest {
     }
 
     @Test
+    fun `newestTable can be a shard directory`() {
+        val older = file(internalDir, "older.ndjson", 10)
+        older.setLastModified(1_000L)
+        val newest = File(internalDir, "categories-new").apply {
+            mkdirs()
+            file(this, "a.json", 10)
+            setLastModified(2_000L)
+        }
+
+        assertEquals(newest.absolutePath, manager.newestTable()?.absolutePath)
+    }
+
+    @Test
+    fun `sweep keeps the shard directory the current result points at`() {
+        val kept = File(internalDir, "categories-abc").apply {
+            mkdirs()
+            file(this, "block_placement.json", 10)
+        }
+        val stale = File(internalDir, "categories-old").apply {
+            mkdirs()
+            file(this, "old.json", 10)
+        }
+        val staleTable = file(internalDir, "old.ndjson", 10)
+
+        manager.sweep(keepTablePath = kept.absolutePath)
+
+        assertTrue(kept.isDirectory)
+        assertTrue(File(kept, "block_placement.json").isFile)
+        assertFalse(stale.exists())
+        assertFalse(staleTable.exists())
+    }
+
+    @Test
+    fun `sweep keeps the direct shards when the keep path is the internal directory`() {
+        val shard = file(internalDir, "actor_entity.json", 10)
+        val map = file(internalDir, "map.json", 10)
+
+        manager.sweep(keepTablePath = internalDir.absolutePath)
+
+        assertTrue(shard.isFile)
+        assertTrue(map.isFile)
+    }
+
+    @Test
+    fun `usage marks direct shards as needed when the keep path is the internal directory`() {
+        val shard = file(internalDir, "actor_entity.json", 10)
+
+        val usage = manager.usage(keepTablePath = internalDir.absolutePath)
+
+        val entry = usage.areas
+            .first { it.id == StorageAreaId.Internal }
+            .files
+            .first { it.file.name == shard.name }
+        assertTrue(entry.neededByResult)
+    }
+
+    @Test
+    fun `newestTable points at the directory when direct category shards are newest`() {
+        val older = file(internalDir, "older.ndjson", 10)
+        older.setLastModified(1_000L)
+        val shard = file(internalDir, "actor_entity.json", 10)
+        shard.setLastModified(2_000L)
+
+        assertEquals(internalDir.absolutePath, manager.newestTable()?.absolutePath)
+    }
+
+    @Test
+    fun `freeUpSpace keeps the shard directory the current result points at`() {
+        val kept = File(internalDir, "categories-abc").apply {
+            mkdirs()
+            file(this, "block_placement.json", 10)
+        }
+        val stale = File(internalDir, "categories-old").apply {
+            mkdirs()
+            file(this, "old.json", 10)
+        }
+
+        manager.freeUpSpace(kept.absolutePath)
+
+        assertTrue(kept.isDirectory)
+        assertFalse(stale.exists())
+    }
+
+    @Test
     fun `sweep keeps the newest table so a cached result can still export`() {
         val older = file(internalDir, "older.ndjson", 10)
         val newer = file(internalDir, "newer.ndjson", 10)

@@ -141,12 +141,12 @@ class OffsetZipBuilder(
                 categoryPaths += name
                 val document = part.documentFile
                 manifest += if (document != null) {
+                    // The shard stays on disk: the in-app internal search and
+                    // a second export (or `includeCombined`) still need it.
+                    // StorageManager.sweep removes it once the result no longer
+                    // points at it.
                     writeStreamEntry(zip, name, part.counts.total) { out ->
                         copyFile(document, out)
-                    }.also {
-                        // The archive holds the only copy now, so the shard is
-                        // deleted as soon as its entry is closed.
-                        document.delete()
                     }
                 } else {
                     writeEntry(zip, name, part.counts.total) { writer ->
