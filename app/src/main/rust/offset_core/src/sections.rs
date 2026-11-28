@@ -39,6 +39,12 @@ pub const DYNSYM_SECTION: &str = ".dynsym";
 /// Dynamic string table.
 pub const DYNSTR_SECTION: &str = ".dynstr";
 
+/// Full static symbol table, present when the library is not stripped.
+pub const SYMTAB_SECTION: &str = ".symtab";
+
+/// String table that backs [`SYMTAB_SECTION`].
+pub const STRTAB_SECTION: &str = ".strtab";
+
 /// Role a section plays for the scanner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

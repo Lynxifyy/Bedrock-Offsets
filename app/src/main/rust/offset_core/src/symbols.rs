@@ -15,7 +15,9 @@ use sha2::{Digest, Sha256};
 
 use crate::elf::parse_elf_bytes;
 use crate::error::{CoreError, CoreResult};
-use crate::sections::{build_section_map, DYNSTR_SECTION, DYNSYM_SECTION, TEXT_SECTION};
+use crate::sections::{
+    build_section_map, DYNSTR_SECTION, DYNSYM_SECTION, STRTAB_SECTION, SYMTAB_SECTION, TEXT_SECTION,
+};
 
 /// Prefix every exported JNI function carries.
 pub const JNI_SYMBOL_PREFIX: &str = "Java_";
@@ -357,6 +359,10 @@ const STT_NOTYPE: u8 = 0;
 const STT_OBJECT: u8 = 1;
 /// `st_info` type: function.
 const STT_FUNC: u8 = 2;
+/// `st_info` type: section symbol, which names no code or data.
+const STT_SECTION: u8 = 3;
+/// `st_info` type: source file name, which names no code or data.
+const STT_FILE: u8 = 4;
 /// `st_info` type: thread-local storage.
 const STT_TLS: u8 = 6;
 /// Section index meaning "absolute, not relocated".
@@ -396,8 +402,8 @@ fn data_reason_for(
     }
 }
 
-/// Reads every defined global or weak symbol that carries a name, split into
-/// functions and data.
+/// Reads every defined symbol that carries a name, split into functions and
+/// data.
 ///
 /// Unlike [`read_dynamic_symbols`], which keeps only `Java_` entry points, this
 /// is the naming source for the internal function table. A symbol is treated as
@@ -405,37 +411,94 @@ fn data_reason_for(
 /// address inside an executable section. Everything else is returned as data so
 /// the function table, its stats and its suspect count stay honest.
 ///
+/// `.symtab` is preferred when the library is not stripped: it is a superset of
+/// `.dynsym` and carries the local and hidden C++ symbols that never reach the
+/// dynamic table, which is where most internal names live. A stripped release
+/// library falls back to `.dynsym`, so exports still name what they can.
+///
 /// # Errors
 ///
 /// Returns [`CoreError::InvalidElf`] when the symbol or string table cannot be
 /// read.
 pub fn read_named_symbols(image: &[u8]) -> CoreResult<NamedSymbols> {
     let map = build_section_map(image)?;
-    let Some(dynsym) = map.find(DYNSYM_SECTION) else {
-        return Ok(NamedSymbols::default());
+    let mut named = NamedSymbols::default();
+    let used_static = read_named_from(
+        &map,
+        image,
+        SYMTAB_SECTION,
+        STRTAB_SECTION,
+        true,
+        &mut named,
+    )?;
+    if !used_static || (named.functions.is_empty() && named.data.is_empty()) {
+        read_named_from(
+            &map,
+            image,
+            DYNSYM_SECTION,
+            DYNSTR_SECTION,
+            false,
+            &mut named,
+        )?;
+    }
+    Ok(named)
+}
+
+/// Reads one symbol table into `named`.
+///
+/// # Returns
+///
+/// `true` when the table exists and was read; `false` when it is absent, empty
+/// or has no string table, which is the signal to try the next source.
+///
+/// # Errors
+///
+/// Returns [`CoreError::InvalidElf`] when the symbol or string table cannot be
+/// parsed.
+fn read_named_from(
+    map: &crate::sections::SectionMap,
+    image: &[u8],
+    sym_section: &str,
+    str_section: &str,
+    allow_local: bool,
+    named: &mut NamedSymbols,
+) -> CoreResult<bool> {
+    let Some(sym) = map.find(sym_section) else {
+        return Ok(false);
     };
-    if dynsym.size == 0 {
-        return Ok(NamedSymbols::default());
+    if sym.size == 0 {
+        return Ok(false);
     }
 
     let context = section_context(image)?;
-    let dynsym_bytes = map.bytes_of(DYNSYM_SECTION, image);
+    let sym_bytes = map.bytes_of(sym_section, image);
     let entry_size = Sym::size(context.container);
-    let count = (dynsym.size as usize) / entry_size;
-    let symbols = Sym::parse(dynsym_bytes, 0, count, context)
-        .map_err(|error| CoreError::InvalidElf(format!("cannot read {DYNSYM_SECTION}: {error}")))?;
+    let count = (sym.size as usize) / entry_size;
+    if count == 0 {
+        return Ok(false);
+    }
+    let symbols = Sym::parse(sym_bytes, 0, count, context)
+        .map_err(|error| CoreError::InvalidElf(format!("cannot read {sym_section}: {error}")))?;
 
-    let strings = map.bytes_of(DYNSTR_SECTION, image);
+    let strings = map.bytes_of(str_section, image);
+    if strings.is_empty() {
+        return Ok(false);
+    }
     let table = goblin::strtab::Strtab::parse(strings, 0, strings.len(), 0x0)
-        .map_err(|error| CoreError::InvalidElf(format!("cannot read {DYNSTR_SECTION}: {error}")))?;
+        .map_err(|error| CoreError::InvalidElf(format!("cannot read {str_section}: {error}")))?;
 
-    let mut named = NamedSymbols::default();
     for symbol in &symbols {
         if named.functions.len() + named.data.len() >= MAX_NAMED_SYMBOLS {
             break;
         }
         let binding = symbol.st_bind();
-        if symbol.st_shndx == 0 || (binding != STB_GLOBAL && binding != STB_WEAK) {
+        if symbol.st_shndx == 0 || (!allow_local && binding != STB_GLOBAL && binding != STB_WEAK) {
+            continue;
+        }
+        let symbol_type = symbol.st_type();
+        // A local `.symtab` also carries its source files and section symbols;
+        // neither names code or data, so they must not reach the table.
+        if symbol_type == STT_FILE || symbol_type == STT_SECTION {
             continue;
         }
         let Some(name) = table.get_at(symbol.st_name) else {
@@ -444,11 +507,8 @@ pub fn read_named_symbols(image: &[u8]) -> CoreResult<NamedSymbols> {
         if name.is_empty() {
             continue;
         }
-        let symbol_type = symbol.st_type();
-        let executable = in_executable_section(&map, symbol.st_value);
-        let data_reason = data_reason_for(symbol_type, symbol.st_shndx, executable);
-
-        if let Some(reason) = data_reason {
+        let executable = in_executable_section(map, symbol.st_value);
+        if let Some(reason) = data_reason_for(symbol_type, symbol.st_shndx, executable) {
             named.data.push(DataSymbol {
                 name: demangle(name).unwrap_or_else(|| name.to_string()),
                 mangled: name.to_string(),
@@ -473,7 +533,7 @@ pub fn read_named_symbols(image: &[u8]) -> CoreResult<NamedSymbols> {
             binding,
         });
     }
-    Ok(named)
+    Ok(true)
 }
 
 /// Returns the address of the defined symbol named `name`, if it is exported.

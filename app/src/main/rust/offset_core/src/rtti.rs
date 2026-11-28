@@ -317,7 +317,12 @@ struct ResolvedVtable {
     offset_to_top: i64,
 }
 
-/// Walks `.data.rel.ro` and returns every vtable whose class name parses.
+/// Walks `.data.rel.ro*` and returns every vtable whose class name parses.
+///
+/// LLD splits the section by linkage: `.data.rel.ro` holds the externally
+/// visible vtables and `.data.rel.ro.local` the internal/hidden ones, which is
+/// where most of a game's C++ classes live. Matching only the exact name would
+/// silently drop them.
 ///
 /// # Returns
 ///
@@ -337,7 +342,7 @@ fn collect_vtables(
     for section in map
         .sections
         .iter()
-        .filter(|section| section.name == DATA_REL_RO_SECTION)
+        .filter(|section| section.name.starts_with(DATA_REL_RO_SECTION))
     {
         let bytes = map.bytes_of(&section.name, image);
         if bytes.len() < slot {
@@ -504,8 +509,10 @@ fn read_type_name(
     }
 
     // The name must live in read-only data; a pointer into `.text` is a
-    // coincidence, not a type name.
-    if section.name != RODATA_SECTION && section.name != DATA_REL_RO_SECTION {
+    // coincidence, not a type name. LLD puts string literals in `.rodata.str*`
+    // subsections, so the check matches the whole family rather than `.rodata`
+    // alone.
+    if !section.name.starts_with(RODATA_SECTION) && !section.name.starts_with(DATA_REL_RO_SECTION) {
         return None;
     }
 

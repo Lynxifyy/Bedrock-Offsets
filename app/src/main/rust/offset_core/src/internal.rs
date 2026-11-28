@@ -2659,7 +2659,19 @@ fn parse_fde(
     Some((initial, range))
 }
 
+/// `DW_EH_PE_omit`: the encoded value is absent.
+///
+/// It is a sentinel, not a format: reading it as `0x0f` would run off the
+/// augmentation record. A CIE without an `R` augmentation leaves `fde_encoding`
+/// at `0`, which is `DW_EH_PE_absptr` and is valid, so the two must be
+/// distinguished.
+const DW_EH_PE_OMIT: u8 = 0xff;
+
 /// Reads an encoded DWARF pointer.
+///
+/// `encoding == 0` (that is, `DW_EH_PE_absptr`) is a real encoding: a
+/// pointer-sized absolute address. Treating it as invalid dropped every FDE
+/// whose CIE omits the `R` augmentation.
 fn read_encoded(
     bytes: &[u8],
     position: &mut usize,
@@ -2667,7 +2679,7 @@ fn read_encoded(
     section_address: u64,
     datarel_base: u64,
 ) -> Option<u64> {
-    if encoding == 0 {
+    if encoding == DW_EH_PE_OMIT {
         return None;
     }
     let format = encoding & 0x0f;
@@ -2683,6 +2695,8 @@ fn read_encoded(
 }
 
 /// Skips an encoded pointer without returning it.
+///
+/// An omitted value occupies no bytes, so it succeeds without advancing.
 fn skip_encoded(
     bytes: &[u8],
     position: &mut usize,
@@ -2690,6 +2704,9 @@ fn skip_encoded(
     section_address: u64,
     datarel_base: u64,
 ) -> Option<()> {
+    if encoding == DW_EH_PE_OMIT {
+        return Some(());
+    }
     read_encoded(bytes, position, encoding, section_address, datarel_base)?;
     Some(())
 }
@@ -3233,6 +3250,28 @@ mod tests {
             parse_eh_frame(&map, &image).expect("parse"),
             vec![(0x1000, 0x40)]
         );
+    }
+
+    #[test]
+    fn directional_encoding_zero_is_absptr_and_ff_is_omit() {
+        let bytes = 0x1234_5678u64.to_le_bytes();
+
+        // DW_EH_PE_absptr (0) is a real encoding: one pointer-sized address.
+        let mut position = 0;
+        assert_eq!(
+            read_encoded(&bytes, &mut position, 0x00, 0, 0),
+            Some(0x1234_5678)
+        );
+        assert_eq!(position, 8);
+
+        // DW_EH_PE_omit (0xff) has no value and must not consume bytes.
+        let mut position = 0;
+        assert_eq!(read_encoded(&bytes, &mut position, 0xff, 0, 0), None);
+        assert_eq!(position, 0);
+
+        let mut position = 0;
+        assert_eq!(skip_encoded(&bytes, &mut position, 0xff, 0, 0), Some(()));
+        assert_eq!(position, 0);
     }
 
     #[test]
