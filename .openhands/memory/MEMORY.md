@@ -279,3 +279,22 @@ path stays device-UNVERIFIED.
 - Gates here: `cargo test` (208 unit + integration), `gradle :app:ktlintCheck`,
   `gradle :app:testDebugUnitTest` (373 tests, all green). `cargo fmt --check` + `cargo clippy
   --all-targets` are clean.
+
+### Bedrock-Offsets v1.1.0 release (2026-11-28)
+- v1.1.0 is the first non-prerelease of the 1.1 line (`versionCode 19`). Published asset:
+  `bedrock-offset-extractor-v1.1.0.apk`, SHA-256
+  `1f3ed86edc64aceb9a9a1a010e150dd62526228d81d2c8e6cb92fc0054ffaed5`.
+- The persistent release keystore lives **outside the repo** at
+  `/workspace/release-signing/` (`bedrock-offsets-release.jks`, `keystore.b64`, `store_password`,
+  `README.txt`; all mode 600). Certificate SHA-256:
+  `BB:ED:38:B2:23:94:B3:0E:1C:21:20:C3:A2:64:EE:F0:F4:B2:BA:78:C8:B5:C3:2C:58:D0:2A:6E:DA:16:5D:5C`.
+  Never commit it.
+- The current GitHub token is a `ghu_` user-to-server token without secrets permission: the Actions
+  secrets API returns 403. The four `SIGNING_*` secrets must be added by a repo admin; until then
+  `release.yml` hard-fails instead of publishing a debug-signed APK. It pins the certificate
+  fingerprint above, so a different key also fails.
+- Creating a release/tag through the GitHub API **does trigger** the tag-push `release.yml` workflow
+  (the v1.1.0 run was cancelled after the locally built APK was published). A draft release is
+  `untagged` until published; publishing creates the tag.
+- GitHub rejected pushes with `GH007` until the author email was changed to
+  `297587416+Lynxifyy@users.noreply.github.com`; the existing commits used a private address.
