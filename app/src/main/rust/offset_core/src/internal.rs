@@ -707,11 +707,7 @@ pub fn analyze_with_writer(
         )?
     } else {
         drop(xrefs);
-        (
-            HashMap::new(),
-            false,
-            crate::signature::PlanStats::default(),
-        )
+        (Vec::new(), false, crate::signature::PlanStats::default())
     };
 
     check_cancelled(control)?;
@@ -736,89 +732,35 @@ pub fn analyze_with_writer(
     let fde_sizes = FdeSizes::new(functions);
     let verifier = PrologueVerifier::new()?;
 
-    // Join every slot to the function at the same address, so a slot carries
-    // the same size, prologue form and status as the function table entry.
-    let mut slot_meta: HashMap<u64, (u64, String, String)> = HashMap::new();
+    // The header is written before the class rows, so the two slot counters
+    // must be known first. Count them without building the per-slot string map
+    // that used to hold two Strings for every unique slot while every class was
+    // still resident.
+    let mut vtable_slots = 0usize;
+    let mut slots_with_size_zero = 0usize;
     for class in &classes {
         for group in &class.record.vtable_groups {
+            vtable_slots += group.slots.len();
             for slot in &group.slots {
-                if slot.address == 0 || slot_meta.contains_key(&slot.address) {
+                if slot.address == 0 {
+                    slots_with_size_zero += 1;
                     continue;
                 }
                 let size = fde_sizes
                     .get(slot.address)
                     .or_else(|| named_size(named_symbols, slot.address, &slot.name))
                     .unwrap_or(0);
-                let (prologue, _) = classify_function(map, image, slot.address, &verifier);
-                let status = if fde_sizes.contains(slot.address) {
-                    "verified"
-                } else if is_executable(map, slot.address) {
-                    "fde_missing"
-                } else {
-                    "import"
-                };
-                slot_meta.insert(slot.address, (size, prologue, status.to_string()));
-            }
-        }
-    }
-
-    let mut slots_with_size_zero = 0usize;
-    for class in &mut classes {
-        if class.record.vtable_groups.is_empty() {
-            continue;
-        }
-        // `record.slots` and `vtable_groups[0].slots` share every Arc. Dropping
-        // the second reference before mutation makes `Arc::make_mut` update in
-        // place; otherwise it clones every primary SlotRecord at the peak.
-        class.record.slots = Vec::new();
-        for group in &mut class.record.vtable_groups {
-            for slot in &mut group.slots {
-                let slot = Arc::make_mut(slot);
-                if slot.address == 0 {
-                    slot.status = "import".to_string();
+                if size == 0 {
                     slots_with_size_zero += 1;
-                } else if let Some((size, prologue, status)) = slot_meta.get(&slot.address) {
-                    slot.size = *size;
-                    slot.prologue_kind = prologue.clone();
-                    slot.status = status.clone();
-                    if *size == 0 {
-                        slots_with_size_zero += 1;
-                    }
-                }
-                if let Some((signature, unique)) = signatures.get(&slot.address) {
-                    let extra = SignatureExtras::of(signature);
-                    slot.signature = extra.pattern;
-                    slot.signature_unique = Some(*unique);
-                    slot.signature_hex = extra.hex;
-                    slot.signature_mask = extra.mask;
-                    slot.signature_stability = extra.stability;
-                    slot.signature_anchor = extra.anchor;
-                    slot.identical_group = extra.group;
-                    slot.identical_group_size = extra.group_size;
                 }
             }
         }
-        if let Some(primary) = class.record.vtable_groups.first() {
-            class.record.slots = primary.slots.clone();
-        }
     }
-    // The metadata map is keyed by slot address and carries two strings per
-    // entry. Nothing after the class pass reads it, so drop it before the
-    // class and function writes rather than at function exit.
-    drop(slot_meta);
 
-    let signatures_unique = signatures.values().filter(|(_, unique)| *unique).count();
-    let vtable_slots = classes
+    let signatures_unique = signatures
         .iter()
-        .map(|class| {
-            class
-                .record
-                .vtable_groups
-                .iter()
-                .map(|group| group.slots.len())
-                .sum::<usize>()
-        })
-        .sum();
+        .filter(|(_, signature)| signature.is_unique())
+        .count();
 
     let mut stats = InternalSummary {
         classes: classes.len(),
@@ -861,10 +803,56 @@ pub fn analyze_with_writer(
 
     writer.meta(&stats)?;
 
-    // Hand each class row to the writer and drop its strings, slots and
-    // groups immediately. Keeping the whole Vec alive through the function
-    // loop is hundreds of megabytes of dead weight on a real library.
-    for class in classes.drain(..) {
+    // Materialise each class's slot metadata and signature extras only while
+    // that class is being written. The old pre-pass attached them to every
+    // class at once and held them through the function pass, which is the
+    // string spike this avoids. Dropping each drained class frees its slots,
+    // groups and extras before the next row starts.
+    for mut class in classes.drain(..) {
+        if !class.record.vtable_groups.is_empty() {
+            // `record.slots` and `vtable_groups[0].slots` share every Arc.
+            // Drop the second reference before mutation so `Arc::make_mut`
+            // updates in place instead of cloning each primary SlotRecord.
+            class.record.slots = Vec::new();
+            for group in &mut class.record.vtable_groups {
+                for slot in &mut group.slots {
+                    let slot = Arc::make_mut(slot);
+                    if slot.address == 0 {
+                        slot.status = "import".to_string();
+                    } else {
+                        let size = fde_sizes
+                            .get(slot.address)
+                            .or_else(|| named_size(named_symbols, slot.address, &slot.name))
+                            .unwrap_or(0);
+                        let (prologue, _) = classify_function(map, image, slot.address, &verifier);
+                        let status = if fde_sizes.contains(slot.address) {
+                            "verified"
+                        } else if is_executable(map, slot.address) {
+                            "fde_missing"
+                        } else {
+                            "import"
+                        };
+                        slot.size = size;
+                        slot.prologue_kind = prologue;
+                        slot.status = status.to_string();
+                    }
+                    if let Some(signature) = find_signature(&signatures, slot.address) {
+                        let extra = SignatureExtras::of(signature);
+                        slot.signature = extra.pattern;
+                        slot.signature_unique = Some(signature.is_unique());
+                        slot.signature_hex = extra.hex;
+                        slot.signature_mask = extra.mask;
+                        slot.signature_stability = extra.stability;
+                        slot.signature_anchor = extra.anchor;
+                        slot.identical_group = extra.group;
+                        slot.identical_group_size = extra.group_size;
+                    }
+                }
+            }
+            if let Some(primary) = class.record.vtable_groups.first() {
+                class.record.slots = primary.slots.clone();
+            }
+        }
         writer.class(&class.record)?;
     }
     drop(classes);
@@ -876,6 +864,10 @@ pub fn analyze_with_writer(
     // current address are never read again. Hand them back as the loop
     // advances; otherwise a 340 MB library stays resident for the whole write.
     let mut released_to = 0usize;
+    // `addresses` and `signatures` are both sorted, so a cursor frees each
+    // signature as the function row is written without the O(n) removal a
+    // sorted Vec would otherwise need.
+    let mut signature_cursor = 0usize;
     for address in &addresses {
         let entry = names.remove(address);
         let size = fde_sizes.get(*address).unwrap_or_else(|| {
@@ -964,15 +956,22 @@ pub fn analyze_with_writer(
             stats.ambiguous += 1;
         }
 
-        // `remove` hands the entry back as the row is written, so the map
-        // shrinks with the loop instead of staying resident to the end.
-        let (signature_unique, extras) = signatures
-            .remove(address)
-            .map(|(signature, unique)| {
-                let extras = SignatureExtras::of(&signature);
-                (Some(unique), extras)
-            })
-            .unwrap_or((None, SignatureExtras::default()));
+        while signature_cursor < signatures.len() && signatures[signature_cursor].0 < *address {
+            signature_cursor += 1;
+        }
+        let (signature_unique, extras) =
+            if signature_cursor < signatures.len() && signatures[signature_cursor].0 == *address {
+                // Replace the entry with an empty signature so its word buffer is
+                // freed now, while the cursor prevents a second visit.
+                let signature = std::mem::replace(
+                    &mut signatures[signature_cursor].1,
+                    Signature::from_words(&[]),
+                );
+                signature_cursor += 1;
+                (Some(signature.is_unique()), SignatureExtras::of(&signature))
+            } else {
+                (None, SignatureExtras::default())
+            };
 
         let kind = if thunk_target.is_some() {
             "thunk"
@@ -2117,8 +2116,19 @@ impl SignatureExtras {
     }
 }
 
-/// Signature per address, plus whether it is unique among function starts.
-type SignatureMap = HashMap<u64, (Signature, bool)>;
+/// Signatures sorted by address.
+///
+/// The planner already returns this order, so reusing it avoids a second
+/// allocation for every signature and the bucket overhead of a hash map.
+type SignatureMap = Vec<(u64, Signature)>;
+
+/// Looks one slot up in the sorted signature vector.
+fn find_signature(signatures: &SignatureMap, address: u64) -> Option<&Signature> {
+    signatures
+        .binary_search_by_key(&address, |(candidate, _)| *candidate)
+        .ok()
+        .map(|index| &signatures[index].1)
+}
 
 /// Generates a signature per named function and per vtable slot.
 ///
@@ -2146,11 +2156,7 @@ fn generate_signatures(
 ) -> CoreResult<(SignatureMap, bool, crate::signature::PlanStats)> {
     let text = map.bytes_of(TEXT_SECTION, image);
     if text.is_empty() {
-        return Ok((
-            HashMap::new(),
-            false,
-            crate::signature::PlanStats::default(),
-        ));
+        return Ok((Vec::new(), false, crate::signature::PlanStats::default()));
     }
 
     let mut addresses: Vec<u64> = names
@@ -2239,17 +2245,17 @@ fn generate_signatures(
     // Everything needed from it is now in the filtered indexes above.
     drop(xrefs);
 
-    let mut signatures: SignatureMap = HashMap::new();
-    signatures
-        .try_reserve(planned.len())
-        .map_err(|error| CoreError::OutOfMemory(format!("signature map: {error}")))?;
-    for (address, mut signature) in planned {
+    // The planner already returns the signatures sorted by address. Mutating
+    // that vector in place avoids copying every Signature into a hash map while
+    // both allocations are live.
+    let mut signatures: SignatureMap = planned;
+    for (address, signature) in &mut signatures {
         if signature.identical_group().is_some() {
             // A group member has no byte pattern of its own, so the last resort
             // is its ordinal inside the group: resolve the shared pattern, then
             // take the Nth hit in address order.
             let anchor = find_anchor(
-                address,
+                *address,
                 &slot_names,
                 &anchor_data_refs,
                 &anchor_calls,
@@ -2269,8 +2275,6 @@ fn generate_signatures(
             });
             signature.set_anchor(anchor);
         }
-        let unique = signature.is_unique();
-        signatures.insert(address, (signature, unique));
     }
     report(
         sink,

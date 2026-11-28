@@ -30,7 +30,12 @@ class ResultCache(private val cache: ScanCache) {
             summary = summary
         )
         val key = keyFor(summary.buildId, summary.engineVersion, summary.imageBase)
-        return cache.writeDocument(key, gson.toJson(envelope))
+        // Serialize straight into the temporary file. `gson.toJson(envelope)`
+        // built a second 30-100 MB String while the vtables and internal rows
+        // were still live.
+        return cache.writeDocument(key) { writer ->
+            gson.toJson(envelope, writer)
+        }
     }
 
     /**
@@ -49,13 +54,22 @@ class ResultCache(private val cache: ScanCache) {
      */
     fun load(buildId: String, engineVersion: String, imageBase: Long): ScanResultSummary? {
         if (buildId.isBlank()) return null
-        val text = cache.readDocument(keyFor(buildId, engineVersion, imageBase)) ?: return null
+        val file = cache.documentFor(keyFor(buildId, engineVersion, imageBase))
+        if (!file.isFile) return null
+        // Gson's Reader overload parses incrementally, so a cache hit never
+        // materialises the whole document as a String first.
         val envelope = try {
-            gson.fromJson(text, Envelope::class.java)
+            file.bufferedReader(Charsets.UTF_8).use { reader ->
+                gson.fromJson(reader, Envelope::class.java)
+            }
         } catch (malformed: JsonParseException) {
             // Covers a truncated document (JsonSyntaxException) and a payload
             // model that did not survive shrinking (JsonIOException). Either way
             // the cache is unusable, so the scan simply runs again.
+            return null
+        } catch (unreadable: java.io.IOException) {
+            // The file disappeared or became unreadable between the isFile
+            // check and the open. A cache read stays fail-closed.
             return null
         }
         if (envelope == null || envelope.schemaVersion != SCHEMA_VERSION) {

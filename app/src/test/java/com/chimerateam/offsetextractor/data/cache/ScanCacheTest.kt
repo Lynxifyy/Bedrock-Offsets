@@ -28,6 +28,19 @@ class ScanCacheTest {
     }
 
     @Test
+    fun aStreamedDocumentCanBeReadBack() {
+        val cache = cache()
+
+        assertTrue(
+            cache.writeDocument("streamed") { writer ->
+                writer.write("{\"streamed\":true}")
+            }
+        )
+
+        assertEquals("{\"streamed\":true}", cache.readDocument("streamed"))
+    }
+
+    @Test
     fun readingAMissingDocumentYieldsNull() {
         val cache = cache()
 

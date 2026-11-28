@@ -320,6 +320,56 @@ pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLi
     }
 }
 
+/// Resolves the RTTI vtables and writes the JSON directly to a file.
+///
+/// # Returns
+///
+/// `true` when the file was written.
+///
+/// # Errors
+///
+/// Throws `EngineFailure` when the library or destination cannot be read or
+/// written.
+#[no_mangle]
+pub extern "system" fn Java_com_chimerateam_offsetextractor_data_native_NativeLib_resolveVtablesToFileNative(
+    mut env: JNIEnv,
+    _this: JObject,
+    path: JString,
+    sha256: JString,
+    output_path: JString,
+) -> jboolean {
+    install();
+
+    let library_path = match read_jstring(&mut env, &path, "library path") {
+        Some(value) => value,
+        None => return 0,
+    };
+    let library_hash = match read_jstring(&mut env, &sha256, "library hash") {
+        Some(value) => value,
+        None => return 0,
+    };
+    let destination = match read_jstring(&mut env, &output_path, "vtable output path") {
+        Some(value) => value,
+        None => return 0,
+    };
+
+    let outcome = catch_panics("resolving vtables", move || {
+        resolve_vtables_to_file(&library_path, &library_hash, &destination)
+    });
+
+    match outcome {
+        Ok(Ok(())) => 1,
+        Ok(Err(core_error)) => {
+            throw_core_error(&mut env, &core_error);
+            0
+        }
+        Err(panic_message) => {
+            throw_engine_failure(&mut env, "unknown", &panic_message);
+            0
+        }
+    }
+}
+
 /// Extracts every internal C++ function and virtual slot into an NDJSON file.
 ///
 /// The library is mapped once for sections, symbols, vtables and the internal
@@ -657,6 +707,28 @@ pub fn resolve_vtables_json(path: &str, sha256: &str) -> CoreResult<String> {
     // call; dropping them keeps the next pass from starting with them resident.
     library.advise_pages_droppable();
     Ok(serde_json::to_string(&map).unwrap_or_default())
+}
+
+/// Maps `path` and streams its RTTI vtables into `output_path`.
+///
+/// Used by the Android bridge so a 60k-class library never has to materialise
+/// its JSON as a Rust `String`, cross JNI as a `jstring`, or become a second
+/// UTF-16 copy on the JVM heap before Gson can read it.
+///
+/// # Errors
+///
+/// Propagates any mapping, vtable-resolution, file or serialisation failure.
+pub fn resolve_vtables_to_file(path: &str, sha256: &str, output_path: &str) -> CoreResult<()> {
+    let library = MappedLibrary::open_shared(std::path::Path::new(path), sha256.to_string())?;
+    let map = resolve_vtables_with_releaser(library.bytes(), Some(library.as_ref()))?;
+    library.advise_pages_droppable();
+    let file = std::fs::File::create(output_path)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(&mut writer, &map)
+        .map_err(|error| CoreError::Io(format!("cannot serialise vtables: {error}")))?;
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    Ok(())
 }
 
 /// Payload returned by the internal analysis entry point.

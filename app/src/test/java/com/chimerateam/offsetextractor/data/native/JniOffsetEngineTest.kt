@@ -381,6 +381,16 @@ class JniOffsetEngineTest {
             return vtables
         }
 
+        override fun resolveVtablesToFile(
+            path: String,
+            sha256: String,
+            outputPath: String
+        ): Boolean {
+            failure?.let { throw it }
+            File(outputPath).writeText(vtables)
+            return true
+        }
+
         override fun analyzeInternal(
             path: String,
             sha256: String,

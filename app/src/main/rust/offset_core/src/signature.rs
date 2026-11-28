@@ -158,7 +158,10 @@ pub const fn is_relocatable(word: u32) -> bool {
 #[derive(Debug, Clone)]
 pub struct Signature {
     words: Box<[u32]>,
-    masks: Box<[u32]>,
+    /// Custom masks read back from an export. Generated signatures leave this
+    /// empty and derive the mask from `words` on demand, which halves the
+    /// per-signature heap allocations.
+    masks: Option<Box<[u32]>>,
     /// Group id when the body is byte-identical to another function.
     identical_group: Option<u32>,
     /// Members in that group, including this one.
@@ -179,14 +182,12 @@ pub struct Signature {
 /// signature is the same, so equality is defined on the bits the mask keeps.
 impl PartialEq for Signature {
     fn eq(&self, other: &Self) -> bool {
-        self.masks == other.masks
-            && self.words.len() == other.words.len()
-            && self
-                .words
-                .iter()
-                .zip(other.words.iter())
-                .zip(self.masks.iter())
-                .all(|((left, right), mask)| (left & mask) == (right & mask))
+        self.words.len() == other.words.len()
+            && (0..self.words.len()).all(|index| {
+                let mask = self.mask_at(index);
+                mask == other.mask_at(index)
+                    && (self.words[index] & mask) == (other.words[index] & mask)
+            })
     }
 }
 
@@ -196,11 +197,9 @@ impl Signature {
     /// Builds a signature from raw instruction words.
     #[must_use]
     pub fn from_words(words: &[u32]) -> Self {
-        let words: Box<[u32]> = words.into();
-        let masks: Box<[u32]> = words.iter().map(|word| keep_mask(*word)).collect();
         Self {
-            words,
-            masks,
+            words: words.into(),
+            masks: None,
             identical_group: None,
             group_size: 1,
             truncated: false,
@@ -242,7 +241,7 @@ impl Signature {
         }
         Ok(Self {
             words: words.into(),
-            masks: word_masks.into(),
+            masks: Some(word_masks.into()),
             identical_group: None,
             group_size: 1,
             truncated: false,
@@ -267,7 +266,17 @@ impl Signature {
     /// Bytes the signature holds in memory.
     #[must_use]
     pub fn storage_bytes(&self) -> usize {
-        (self.words.len() + self.masks.len()) * 4
+        let custom = self.masks.as_ref().map_or(0, |masks| masks.len() * 4);
+        self.words.len() * 4 + custom
+    }
+
+    /// The mask for one word, derived from the instruction unless this
+    /// signature carries an explicit mask read back from an export.
+    fn mask_at(&self, index: usize) -> u32 {
+        match &self.masks {
+            Some(masks) => masks.get(index).copied().unwrap_or(0),
+            None => self.words.get(index).copied().map_or(0, keep_mask),
+        }
     }
 
     /// The identical-body group this signature belongs to, if any.
@@ -294,11 +303,13 @@ impl Signature {
     /// code around; one that is mostly wildcards survives by luck.
     #[must_use]
     pub fn stability(&self) -> u8 {
-        let total: u32 = self.masks.len() as u32 * 32;
+        let total: u32 = self.words.len() as u32 * 32;
         if total == 0 {
             return 0;
         }
-        let kept: u32 = self.masks.iter().map(|mask| mask.count_ones()).sum();
+        let kept: u32 = (0..self.words.len())
+            .map(|index| self.mask_at(index).count_ones())
+            .sum();
         u8::try_from(kept * 100 / total).unwrap_or(100)
     }
 
@@ -313,10 +324,7 @@ impl Signature {
     pub fn mask_byte(&self, index: usize) -> u8 {
         let word = index / 4;
         let byte = index % 4;
-        match self.masks.get(word) {
-            Some(mask) => ((mask >> (byte * 8)) & 0xFF) as u8,
-            None => 0,
-        }
+        ((self.mask_at(word) >> (byte * 8)) & 0xFF) as u8
     }
 
     /// The raw byte at `index`, ignoring the mask.
@@ -399,12 +407,13 @@ impl Signature {
         let Some(tail) = data.get(offset..) else {
             return false;
         };
-        for (word_index, (value, mask)) in self.words.iter().zip(self.masks.iter()).enumerate() {
+        for (word_index, value) in self.words.iter().enumerate() {
             let start = word_index * 4;
             let Some(chunk) = tail.get(start..start + 4) else {
                 return false;
             };
             let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            let mask = self.mask_at(word_index);
             if word & mask != value & mask {
                 return false;
             }

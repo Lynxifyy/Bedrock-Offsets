@@ -119,10 +119,28 @@ class JniOffsetEngine(
      * @throws EngineException when the library cannot be parsed.
      */
     override suspend fun resolveVtables(library: ExtractedNativeLibrary): VtableMap {
-        val json = call("resolving vtables") {
-            nativeLibrary.resolveVtables(library.path, library.sha256)
+        // Let the engine write the 60k-class payload straight to disk. Returning
+        // it as a String made a Rust String, a jstring and a JVM UTF-16 copy
+        // coexist with the Gson object graph at the end of the scan.
+        val payload = File.createTempFile("offset-vtables-", ".json")
+        return try {
+            val written = call("resolving vtables") {
+                nativeLibrary.resolveVtablesToFile(
+                    library.path,
+                    library.sha256,
+                    payload.absolutePath
+                )
+            }
+            if (!written) {
+                throw EngineException(
+                    kind = EngineErrorKind.Unknown,
+                    message = "the engine could not write the vtable payload"
+                )
+            }
+            EnginePayloads.parseVtableMap(payload)
+        } finally {
+            payload.delete()
         }
-        return EnginePayloads.parseVtableMap(json)
     }
 
     /**
@@ -189,7 +207,7 @@ class JniOffsetEngine(
         return EnginePayloads.parseInspection(json)
     }
 
-    private inline fun call(what: String, block: () -> String): String = try {
+    private inline fun <T> call(what: String, block: () -> T): T = try {
         block()
     } catch (failure: EngineFailure) {
         throw EnginePayloads.toEngineException(failure)
@@ -279,6 +297,23 @@ interface NativeLibrary {
     fun resolveVtables(path: String, sha256: String): String
 
     /**
+     * Resolves the RTTI vtables and writes the payload to [outputPath].
+     *
+     * The default keeps test doubles working by writing what [resolveVtables]
+     * returns; production writes straight from the engine so the JSON never
+     * becomes a large JVM string.
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param outputPath file that receives the JSON payload.
+     * @return whether the file was written.
+     */
+    fun resolveVtablesToFile(path: String, sha256: String, outputPath: String): Boolean {
+        File(outputPath).writeText(resolveVtables(path, sha256))
+        return true
+    }
+
+    /**
      * Extracts every internal C++ function and virtual slot.
      *
      * @param path absolute path of the extracted library.
@@ -361,6 +396,9 @@ object JniNativeLibrary : NativeLibrary {
 
     override fun resolveVtables(path: String, sha256: String): String =
         NativeLib.resolveVtables(path, sha256)
+
+    override fun resolveVtablesToFile(path: String, sha256: String, outputPath: String): Boolean =
+        NativeLib.resolveVtablesToFile(path, sha256, outputPath)
 
     override fun analyzeInternal(
         path: String,

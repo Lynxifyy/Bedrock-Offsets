@@ -188,6 +188,20 @@ object NativeLib {
     }
 
     /**
+     * Resolves the RTTI vtables and writes the JSON directly to [outputPath].
+     *
+     * @param path absolute path of the extracted library.
+     * @param sha256 SHA-256 recorded during extraction.
+     * @param outputPath file that receives the JSON payload.
+     * @return whether the file was written.
+     * @throws EngineFailure when the library cannot be parsed.
+     */
+    fun resolveVtablesToFile(path: String, sha256: String, outputPath: String): Boolean {
+        ensureLoaded()
+        return resolveVtablesToFileNative(path, sha256, outputPath)
+    }
+
+    /**
      * Extracts every internal C++ function and virtual slot into an NDJSON file.
      *
      * @param path absolute path of the extracted library.
@@ -244,6 +258,11 @@ object NativeLib {
     ): String
 
     private external fun resolveVtablesNative(path: String, sha256: String): String
+    private external fun resolveVtablesToFileNative(
+        path: String,
+        sha256: String,
+        outputPath: String
+    ): Boolean
 
     private external fun analyzeInternalNative(
         path: String,

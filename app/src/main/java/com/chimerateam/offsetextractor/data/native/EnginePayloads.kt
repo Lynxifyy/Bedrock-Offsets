@@ -7,6 +7,9 @@ import com.google.gson.Gson
 import com.google.gson.JsonParseException
 import com.google.gson.JsonSyntaxException
 import com.google.gson.annotations.SerializedName
+import java.io.File
+import java.io.Reader
+import java.io.StringReader
 
 /**
  * Description of a native library as reported by the engine's ELF parser.
@@ -292,13 +295,38 @@ object EnginePayloads {
      */
     fun parseVtableMap(json: String?): VtableMap {
         val payload = decode(json, VtableMapPayload::class.java, "vtable")
-        return VtableMap(
-            source = payload.source ?: VtableMap.SOURCE_DIRECT_SCAN,
-            typeInfoCandidates = payload.typeInfoCandidates ?: 0,
-            relocationsExamined = payload.relocationsExamined ?: 0,
-            entries = payload.entries ?: emptyMap()
-        )
+        return vtableMap(payload)
     }
+
+    /**
+     * Parses the vtable payload written directly by the engine.
+     *
+     * Reading through a [Reader] keeps the 60k-class JSON from becoming one
+     * `String` and then a second UTF-16 copy on the JVM heap.
+     *
+     * @param file payload written by the engine.
+     * @return the resolved vtables.
+     * @throws EngineException when the payload is missing or malformed.
+     */
+    fun parseVtableMap(file: File): VtableMap {
+        if (!file.isFile || file.length() == 0L) {
+            throw EngineException(
+                kind = EngineErrorKind.Unknown,
+                message = "the engine returned no vtable payload"
+            )
+        }
+        val payload = file.bufferedReader().use { reader ->
+            decode(reader, VtableMapPayload::class.java, "vtable")
+        }
+        return vtableMap(payload)
+    }
+
+    private fun vtableMap(payload: VtableMapPayload): VtableMap = VtableMap(
+        source = payload.source ?: VtableMap.SOURCE_DIRECT_SCAN,
+        typeInfoCandidates = payload.typeInfoCandidates ?: 0,
+        relocationsExamined = payload.relocationsExamined ?: 0,
+        entries = payload.entries ?: emptyMap()
+    )
 
     /**
      * Parses the payload returned by the internal-analysis entry point.
@@ -418,8 +446,12 @@ object EnginePayloads {
                 message = "the engine returned no $what payload"
             )
         }
+        return decode(StringReader(json), type, what)
+    }
+
+    private fun <T> decode(reader: Reader, type: Class<T>, what: String): T {
         return try {
-            gson.fromJson(json, type)
+            gson.fromJson(reader, type)
                 ?: throw EngineException(
                     kind = EngineErrorKind.Unknown,
                     message = "the engine returned an empty $what payload"

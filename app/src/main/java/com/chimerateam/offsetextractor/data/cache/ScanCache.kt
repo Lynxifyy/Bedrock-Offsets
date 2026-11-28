@@ -1,6 +1,7 @@
 package com.chimerateam.offsetextractor.data.cache
 
 import java.io.File
+import java.io.Writer
 
 /**
  * On-disk store of extracted libraries, internal tables and offset documents.
@@ -71,13 +72,27 @@ class ScanCache(private val root: File) {
      * @param json the document text.
      * @return whether the document was stored.
      */
-    fun writeDocument(buildId: String, json: String): Boolean {
+    fun writeDocument(buildId: String, json: String): Boolean =
+        writeDocument(buildId) { writer -> writer.write(json) }
+
+    /**
+     * Streams a document for [buildId] through [write].
+     *
+     * The write is atomic in the same way as [writeDocument] with a String, but
+     * the caller can serialize straight into the file instead of first building
+     * the whole document on the JVM heap.
+     *
+     * @param buildId build identifier of the library.
+     * @param write receives the temporary file writer; it must not close it.
+     * @return whether the document was stored.
+     */
+    fun writeDocument(buildId: String, write: (Writer) -> Unit): Boolean {
         if (buildId.isBlank()) return false
         ensureDirectories()
         val target = documentFor(buildId)
         val temporary = File(target.parentFile, "${target.name}.tmp")
         return runCatching {
-            temporary.writeText(json)
+            temporary.bufferedWriter(Charsets.UTF_8).use(write)
             if (!temporary.renameTo(target)) {
                 // The rename failed, so the payload never became the document.
                 // Drop the temporary file rather than leaving a stray copy.
