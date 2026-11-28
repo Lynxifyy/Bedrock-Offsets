@@ -1,3 +1,21 @@
+## v1.1.2
+
+### Engine
+
+- the internal C++ pass no longer builds a per-slot string map or attaches every vtable-slot signature before the first class is written. Slot metadata and signature extras are materialised one class at a time and freed after that class is written
+- signature generation reuses the planner's address-sorted vector in place instead of copying every signature into a hash map. Vtable-slot lookup is a binary search and the function pass consumes signatures with a forward cursor
+- generated signatures no longer allocate a second word mask. Masks are derived from the instruction on demand, while signatures read back from an export keep their explicit masks
+
+### JVM
+
+- vtable JSON is written straight from the engine to a temporary file and parsed through a Gson reader. The Rust string, JNI string and JVM UTF-16 copies of the 60,000-class payload are gone
+- result-cache writes serialize directly into the cache file and loads parse through a reader, so a 30-100 MB JSON string is no longer allocated at the end of a scan
+
+### Tests
+
+- 374 Kotlin tests, including a streamed-cache round trip
+- all Rust unit and integration targets, plus `cargo fmt --check`, `clippy`, rustdoc, `ktlintCheck`, Android lint, `assembleRelease` and the release verifier
+
 ## v1.1.1
 
 ### Engine
