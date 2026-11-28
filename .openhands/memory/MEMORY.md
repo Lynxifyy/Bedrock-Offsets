@@ -310,8 +310,14 @@ path stays device-UNVERIFIED.
 - `generate_signatures` takes `XrefTable` by value, copies only per-anchor data refs/first calls,
   then drops the full table before allocating the signature map. `classes` is drained before the
   function write loop and `slot_meta` is dropped after the class pass.
+- 2026-11-28 follow-up (commit `2d76d19`): generated `Signature.masks` is now `Option`, so there is
+  no second `Box<[u32]>` and masks are derived with `keep_mask`; the planner's sorted vector is
+  reused in place (`SignatureMap = Vec`), binary-searched for slots and cursor-drained for
+  functions. Slot metadata/extras are attached one class at a time. Vtable JSON is streamed by
+  `resolveVtablesToFileNative` to a temp file and parsed via a Gson `Reader`; `ScanCache` has a
+  streaming `writeDocument` overload and `ResultCache` streams store and load. A JDK exists at
+  `/workspace/tools/jdk-21.0.13+9`, so Android tests are runnable here (374 tests pass).
 - Gates after this pass: `cargo test --all-targets` = 210 unit tests (1 ignored) plus all
   integration targets, `cargo clippy --all-targets -- -D warnings`, `cargo doc` with
   `RUSTDOCFLAGS=-D warnings`, and `scripts/build_rust.py` (4,137,504-byte
-  `liboffset_core.so`). `:app:testDebugUnitTest` cannot run in this container because there is no
-  JDK / `JAVA_HOME`.
+  `liboffset_core.so`). `:app:testDebugUnitTest` runs with `JAVA_HOME` set (374 tests, 0 failures).
